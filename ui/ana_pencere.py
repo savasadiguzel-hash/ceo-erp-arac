@@ -1,6 +1,6 @@
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QFrame, QHBoxLayout,
-    QLabel, QStackedWidget, QStatusBar,
+    QLabel, QStackedWidget, QStatusBar, QMessageBox,
 )
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QFont
@@ -78,10 +78,16 @@ class AnaPencere(QMainWindow):
         self._adim_guncelle(idx)
 
     def _tarama_baslat(self):
+        tarihler = self.s1.tarih_araligi()
+        if tarihler is None:
+            QMessageBox.warning(self, "Eksik Bilgi",
+                                "Lütfen geçerli bir başlangıç ve bitiş tarihi girin.\n\n"
+                                "Format: GG.AA.YYYY  (örn: 01.01.2025)")
+            return
         conn = self._baglanti_al()
         turleri = self.s1.secili_fatura_turleri()
         self.sayfa_gec(2)
-        self.s2.baslat(conn, turleri)
+        self.s2.baslat(conn, turleri, tarihler[0], tarihler[1])
 
     def _eslestirme_baslat(self, stoklar: list):
         conn = self._baglanti_al()

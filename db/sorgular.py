@@ -23,9 +23,11 @@ def mamul_agaci_listesi(conn) -> list[tuple[str, str]]:
     raise NotImplementedError("Gerçek sorgu henüz yazılmadı.")
 
 
-def recetesiz_faturali_stoklar(conn, fatura_turleri: list[str]) -> list[dict]:
+def recetesiz_faturali_stoklar(conn, fatura_turleri: list[str],
+                               bas_tarih: str, bit_tarih: str) -> list[dict]:
     """
-    Kesişim kümesi: reçete/mamül ağacında olmayan VE faturası olan stoklar.
+    Kesişim kümesi: reçete/mamül ağacında olmayan VE belirtilen tarih aralığında
+    faturası olan stoklar. bas_tarih / bit_tarih: 'DD.MM.YYYY' formatı.
     Her eleman: stok_kodu, stok_adi, fatura_sayisi, toplam_tutar,
                 ilk_fatura, son_fatura, tedarikci, fatura_turleri
     """
@@ -33,7 +35,7 @@ def recetesiz_faturali_stoklar(conn, fatura_turleri: list[str]) -> list[dict]:
         return DEMO_STOKLAR
     # TODO: iki adımlı sorgu
     # 1) Reçetede/mamül ağacında olmayan stok kodları
-    # 2) Bu kodlardan fatura olanlar
+    # 2) Bu kodlardan bas_tarih–bit_tarih aralığında fatura olanlar
     raise NotImplementedError("Gerçek sorgu henüz yazılmadı.")
 
 

@@ -9,10 +9,12 @@ class TaramaThread(QThread):
     adim  = pyqtSignal(str, int, int)
     bitti = pyqtSignal(list)   # kesişim stokları
 
-    def __init__(self, conn, fatura_turleri):
+    def __init__(self, conn, fatura_turleri, bas_tarih: str, bit_tarih: str):
         super().__init__()
         self.conn = conn
         self.fatura_turleri = fatura_turleri
+        self.bas_tarih = bas_tarih
+        self.bit_tarih = bit_tarih
 
     def run(self):
         adimlar = tarama_istatistikleri(self.conn)
@@ -23,7 +25,8 @@ class TaramaThread(QThread):
                 time.sleep(0.016)
             self.adim.emit(mesaj, toplam, toplam)
             time.sleep(0.15)
-        stoklar = recetesiz_faturali_stoklar(self.conn, self.fatura_turleri)
+        stoklar = recetesiz_faturali_stoklar(self.conn, self.fatura_turleri,
+                                             self.bas_tarih, self.bit_tarih)
         self.bitti.emit(stoklar)
 
 
@@ -37,6 +40,10 @@ class TaramaSayfasi(QWidget):
         ana = QVBoxLayout(self)
         ana.setAlignment(Qt.AlignCenter)
         ana.setSpacing(14)
+
+        self.tarih_lbl = QLabel("")
+        self.tarih_lbl.setAlignment(Qt.AlignCenter)
+        self.tarih_lbl.setStyleSheet("color:#5c6bc0;font-size:11px;")
 
         self.adim_lbl = QLabel("Başlatılıyor...")
         self.adim_lbl.setAlignment(Qt.AlignCenter)
@@ -66,6 +73,7 @@ class TaramaSayfasi(QWidget):
         ana.addStretch()
         ana.addWidget(etiket("Stok Analizi Yapılıyor...", "#1a237e", size=15),
                       alignment=Qt.AlignCenter)
+        ana.addWidget(self.tarih_lbl)
         ana.addWidget(self.adim_lbl)
         ana.addWidget(self.bar, alignment=Qt.AlignCenter)
         ana.addWidget(self.sayac)
@@ -74,11 +82,12 @@ class TaramaSayfasi(QWidget):
         ana.addWidget(self.devam_btn, alignment=Qt.AlignCenter)
         ana.addStretch()
 
-    def baslat(self, conn, fatura_turleri: list[str]):
+    def baslat(self, conn, fatura_turleri: list[str], bas_tarih: str, bit_tarih: str):
+        self.tarih_lbl.setText(f"Tarih aralığı: {bas_tarih} – {bit_tarih}")
         self.ozet_grup.hide()
         self.devam_btn.hide()
         self.bar.setValue(0)
-        self.thread = TaramaThread(conn, fatura_turleri)
+        self.thread = TaramaThread(conn, fatura_turleri, bas_tarih, bit_tarih)
         self.thread.adim.connect(self._guncelle)
         self.thread.bitti.connect(self._bitti)
         self.thread.start()

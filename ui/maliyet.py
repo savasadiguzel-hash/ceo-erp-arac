@@ -1,10 +1,10 @@
-from datetime import datetime
+from datetime import datetime, date as bugun_tipi
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QGroupBox, QGridLayout,
-    QLineEdit, QPushButton, QRadioButton, QButtonGroup, QDateEdit,
+    QLineEdit, QPushButton, QRadioButton, QButtonGroup,
     QDoubleSpinBox, QScrollArea, QFrame, QCheckBox, QSizePolicy, QMessageBox, QFileDialog,
 )
-from PyQt5.QtCore import Qt, QDate
+from PyQt5.QtCore import Qt, QEvent
 from PyQt5.QtGui import QFont
 from config import DB_DEFAULTS
 from db.sorgular import bom_listesi
@@ -57,16 +57,21 @@ class MaliyetSayfasi(QWidget):
         tarih_grup = QGroupBox("Tarih Aralığı")
         tg = QGridLayout(tarih_grup)
         tg.setSpacing(8)
-        self.tarih_bas = QDateEdit(QDate(2024, 1, 1))
-        self.tarih_bas.setCalendarPopup(True)
-        self.tarih_bas.setDisplayFormat("dd.MM.yyyy")
-        self.tarih_bit = QDateEdit(QDate(2024, 3, 31))
-        self.tarih_bit.setCalendarPopup(True)
-        self.tarih_bit.setDisplayFormat("dd.MM.yyyy")
+        self.tarih_bas = QLineEdit()
+        self.tarih_bas.setPlaceholderText("GG.AA.YYYY")
+        self.tarih_bit = QLineEdit()
+        self.tarih_bit.setPlaceholderText("GG.AA.YYYY")
+        hint = QLabel("Geçersiz veya gelecek tarih girilirse kutu temizlenir.  Bitiş kutusunda Ctrl+N → bugün.")
+        hint.setStyleSheet("color:#9e9e9e;font-size:10px;")
+        hint.setWordWrap(True)
         tg.addWidget(etiket("Başlangıç:"), 0, 0)
-        tg.addWidget(self.tarih_bas, 0, 1)
+        tg.addWidget(self.tarih_bas,       0, 1)
         tg.addWidget(etiket("Bitiş:"),     1, 0)
-        tg.addWidget(self.tarih_bit, 1, 1)
+        tg.addWidget(self.tarih_bit,       1, 1)
+        tg.addWidget(hint,                 2, 0, 1, 2)
+        self.tarih_bas.editingFinished.connect(self._bas_validate)
+        self.tarih_bit.editingFinished.connect(self._bit_validate)
+        self.tarih_bit.installEventFilter(self)
         lay.addWidget(tarih_grup)
 
         # Maliyet yöntemi
@@ -154,6 +159,48 @@ class MaliyetSayfasi(QWidget):
         lay.addWidget(self.durum_lbl)
         return w
 
+    # ── Kısayol & tarih doğrulama ────────────────────────────────────────────
+    def eventFilter(self, obj, event):
+        if (obj is self.tarih_bit
+                and event.type() == QEvent.KeyPress
+                and event.key() == Qt.Key_N
+                and event.modifiers() == Qt.ControlModifier):
+            self.tarih_bit.setText(bugun_tipi.today().strftime("%d.%m.%Y"))
+            return True
+        return super().eventFilter(obj, event)
+
+    @staticmethod
+    def _parse(metin: str):
+        """DD.MM.YYYY veya DDMMYYYY → date; geçersiz/gelecekse None döner."""
+        metin = metin.strip()
+        if len(metin) == 8 and metin.isdigit():
+            metin = f"{metin[:2]}.{metin[2:4]}.{metin[4:]}"
+        try:
+            dt = datetime.strptime(metin, "%d.%m.%Y").date()
+            return None if dt > bugun_tipi.today() else dt
+        except ValueError:
+            return None
+
+    def _bas_validate(self):
+        dt = self._parse(self.tarih_bas.text())
+        if dt is None:
+            self.tarih_bas.clear()
+            return
+        self.tarih_bas.setText(dt.strftime("%d.%m.%Y"))
+        bit_dt = self._parse(self.tarih_bit.text())
+        if bit_dt is not None and dt > bit_dt:
+            self.tarih_bit.setText(dt.strftime("%d.%m.%Y"))
+
+    def _bit_validate(self):
+        dt = self._parse(self.tarih_bit.text())
+        if dt is None:
+            self.tarih_bit.clear()
+            return
+        self.tarih_bit.setText(dt.strftime("%d.%m.%Y"))
+        bas_dt = self._parse(self.tarih_bas.text())
+        if bas_dt is not None and dt < bas_dt:
+            self.tarih_bit.setText(bas_dt.strftime("%d.%m.%Y"))
+
     def baslat(self, conn):
         """Mamül listesini (yeniden) yükler."""
         self.conn = conn
@@ -218,11 +265,18 @@ class MaliyetSayfasi(QWidget):
         if not dosya:
             return
 
+        bas_dt = self._parse(self.tarih_bas.text())
+        bit_dt = self._parse(self.tarih_bit.text())
+        if bas_dt is None or bit_dt is None:
+            QMessageBox.warning(self, "Eksik Bilgi",
+                                "Lütfen geçerli bir başlangıç ve bitiş tarihi girin.\n\n"
+                                "Format: GG.AA.YYYY  (örn: 01.01.2025)")
+            return
         metod = self._secili_metod()
-        bas   = self.tarih_bas.date().toString("yyyy-MM-dd")
-        bit   = self.tarih_bit.date().toString("yyyy-MM-dd")
-        bas_g = self.tarih_bas.date().toString("dd.MM.yyyy")
-        bit_g = self.tarih_bit.date().toString("dd.MM.yyyy")
+        bas   = bas_dt.strftime("%Y-%m-%d")
+        bit   = bit_dt.strftime("%Y-%m-%d")
+        bas_g = bas_dt.strftime("%d.%m.%Y")
+        bit_g = bit_dt.strftime("%d.%m.%Y")
 
         try:
             maliyet_excel_kaydet(dosya, self.conn, secili, metod, bas, bit, bas_g, bit_g)
