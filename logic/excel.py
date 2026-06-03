@@ -63,8 +63,9 @@ def _hucre(ws, row, col, val, fill_key, font_key, alignment=_ORTA, sayi_fmt=None
 
 def maliyet_excel_kaydet(
     dosya: str, conn,
-    secili: list[tuple],   # [(mamul_kodu, cb_widget, spin_widget), ...]
+    secili: list[tuple[str, float]],   # [(mamul_kodu, iscilik_float), ...]
     metod: str, bas: str, bit: str, bas_g: str, bit_g: str,
+    ilerleme_cb=None,   # callable(str) | None — her mamül başında çağrılır
 ) -> None:
     metod_ad = {"WA": "Ağırlıklı Ortalama", "FIFO": "FIFO", "LIFO": "LIFO"}[metod]
     bom = bom_listesi(conn)
@@ -93,11 +94,12 @@ def maliyet_excel_kaydet(
     cache: dict = {}
 
     satir = 3
-    for mamul_kodu, _cb, spin in secili:
+    for mamul_kodu, iscilik in secili:
         mamul = bom.get(mamul_kodu)
         if not mamul:
             continue
-        iscilik = spin.value()
+        if ilerleme_cb:
+            ilerleme_cb(f"{mamul_kodu} — {mamul['ad']} hesaplanıyor...")
         bilesenleri, hammadde_top = mamul_maliyet_hesapla(
             conn, mamul_kodu, metod, bas, bit, _cache=cache
         )

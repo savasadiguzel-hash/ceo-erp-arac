@@ -1,22 +1,78 @@
+import logging
 from datetime import datetime, date as bugun_tipi
+
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QGroupBox, QGridLayout,
     QLineEdit, QPushButton, QRadioButton, QButtonGroup,
     QDoubleSpinBox, QScrollArea, QFrame, QCheckBox, QSizePolicy, QMessageBox, QFileDialog,
 )
-from PyQt5.QtCore import Qt, QEvent
+from PyQt5.QtCore import Qt, QEvent, QThread, QTimer, pyqtSignal
 from PyQt5.QtGui import QFont
+
 from config import DB_DEFAULTS
 from db.sorgular import bom_listesi
 from logic.excel import maliyet_excel_kaydet
 from ui.stil import etiket, buton, ayrac
 
+_BTN_AKTIF = (
+    "background:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #2e7d32,stop:1 #43a047);"
+    "color:white;border-radius:6px;padding:9px 20px;font-weight:bold;font-size:13px;"
+)
+_BTN_PASIF = (
+    "background:#bdbdbd;color:#757575;"
+    "border-radius:6px;padding:9px 20px;font-weight:bold;font-size:13px;"
+)
+
+
+# ── Hesaplama Thread'i ────────────────────────────────────────────────────────
+
+class MaliyetHesaplamaThread(QThread):
+    """
+    Excel üretimini ve maliyet hesabını arka planda çalıştırır;
+    ana thread (UI) bloke olmaz.
+
+    Sinyaller
+    ---------
+    ilerleme(str) : her mamül işlenmeye başlarken yayımlanır
+    bitti(str)    : başarı — kaydedilen dosya yolu
+    hata(str)     : hata — hata mesajı
+    """
+    ilerleme = pyqtSignal(str)
+    bitti    = pyqtSignal(str)
+    hata     = pyqtSignal(str)
+
+    def __init__(self, dosya: str, conn, secili_data: list[tuple[str, float]],
+                 metod: str, bas: str, bit: str, bas_g: str, bit_g: str):
+        super().__init__()
+        self.dosya       = dosya
+        self.conn        = conn
+        self.secili_data = secili_data   # [(mamul_kodu, iscilik_float), ...]
+        self.metod       = metod
+        self.bas, self.bit, self.bas_g, self.bit_g = bas, bit, bas_g, bit_g
+
+    def run(self):
+        try:
+            maliyet_excel_kaydet(
+                self.dosya, self.conn, self.secili_data,
+                self.metod, self.bas, self.bit, self.bas_g, self.bit_g,
+                ilerleme_cb=self.ilerleme.emit,
+            )
+            self.bitti.emit(self.dosya)
+        except Exception as e:
+            logging.error("MaliyetHesaplamaThread hatasi: %s", e)
+            self.hata.emit(str(e))
+
+
+# ── Maliyet Sayfası ───────────────────────────────────────────────────────────
 
 class MaliyetSayfasi(QWidget):
     def __init__(self):
         super().__init__()
         self.conn = None
         self._mamul_satirlari: dict[str, tuple] = {}
+        self._thread: MaliyetHesaplamaThread | None = None
+        self._spinner_timer: QTimer | None = None
+        self._spinner_sayac = 0
         self._kur()
 
     def _kur(self):
@@ -61,7 +117,8 @@ class MaliyetSayfasi(QWidget):
         self.tarih_bas.setPlaceholderText("GG.AA.YYYY")
         self.tarih_bit = QLineEdit()
         self.tarih_bit.setPlaceholderText("GG.AA.YYYY")
-        hint = QLabel("Geçersiz veya gelecek tarih girilirse kutu temizlenir.  Bitiş kutusunda Ctrl+N → bugün.")
+        hint = QLabel("Geçersiz veya gelecek tarih girilirse kutu temizlenir.  "
+                      "Bitiş kutusunda Ctrl+N → bugün.")
         hint.setStyleSheet("color:#9e9e9e;font-size:10px;")
         hint.setWordWrap(True)
         tg.addWidget(etiket("Başlangıç:"), 0, 0)
@@ -96,9 +153,7 @@ class MaliyetSayfasi(QWidget):
                                "border-radius:6px;padding:7px 16px;font-weight:bold;")
         geri_btn.clicked.connect(lambda: self.window().sayfa_gec(0))
         self.hesapla_btn = QPushButton("📊  Hesapla ve Excel'e Aktar")
-        self.hesapla_btn.setStyleSheet(
-            "background:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #2e7d32,stop:1 #43a047);"
-            "color:white;border-radius:6px;padding:9px 20px;font-weight:bold;font-size:13px;")
+        self.hesapla_btn.setStyleSheet(_BTN_AKTIF)
         self.hesapla_btn.clicked.connect(self._hesapla)
         alt.addWidget(geri_btn)
         alt.addStretch()
@@ -171,7 +226,6 @@ class MaliyetSayfasi(QWidget):
 
     @staticmethod
     def _parse(metin: str):
-        """DD.MM.YYYY veya DDMMYYYY → date; geçersiz/gelecekse None döner."""
         metin = metin.strip()
         if len(metin) == 8 and metin.isdigit():
             metin = f"{metin[:2]}.{metin[2:4]}.{metin[4:]}"
@@ -201,11 +255,10 @@ class MaliyetSayfasi(QWidget):
         if bas_dt is not None and dt < bas_dt:
             self.tarih_bit.setText(bas_dt.strftime("%d.%m.%Y"))
 
+    # ── Mamül listesi ────────────────────────────────────────────────────────
     def baslat(self, conn):
-        """Mamül listesini (yeniden) yükler."""
         self.conn = conn
         self._mamul_satirlari.clear()
-        # stretch'i koru, diğerlerini temizle
         while self.mamul_layout.count() > 1:
             item = self.mamul_layout.takeAt(0)
             if item.widget():
@@ -250,6 +303,7 @@ class MaliyetSayfasi(QWidget):
                 return btn_w.property("metod")
         return "WA"
 
+    # ── Hesaplama akışı ──────────────────────────────────────────────────────
     def _hesapla(self):
         secili = [(kod, cb, spin)
                   for kod, (cb, spin) in self._mamul_satirlari.items()
@@ -272,16 +326,65 @@ class MaliyetSayfasi(QWidget):
                                 "Lütfen geçerli bir başlangıç ve bitiş tarihi girin.\n\n"
                                 "Format: GG.AA.YYYY  (örn: 01.01.2025)")
             return
+
         metod = self._secili_metod()
         bas   = bas_dt.strftime("%Y-%m-%d")
         bit   = bit_dt.strftime("%Y-%m-%d")
         bas_g = bas_dt.strftime("%d.%m.%Y")
         bit_g = bit_dt.strftime("%d.%m.%Y")
 
-        try:
-            maliyet_excel_kaydet(dosya, self.conn, secili, metod, bas, bit, bas_g, bit_g)
-            self.durum_lbl.setText(f"✓  Rapor oluşturuldu: {dosya}")
-            self.durum_lbl.setStyleSheet("color:#2e7d32;font-size:11px;padding:4px;")
-            QMessageBox.information(self, "Başarılı", f"Maliyet raporu kaydedildi:\n{dosya}")
-        except Exception as e:
-            QMessageBox.critical(self, "Hata", f"Excel oluşturulamadı:\n{e}")
+        # Widget değerlerini thread başlamadan önce çıkar (thread-safe)
+        secili_data: list[tuple[str, float]] = [
+            (kod, spin.value()) for kod, cb, spin in secili
+        ]
+
+        self._ui_kilitle()
+        self._thread = MaliyetHesaplamaThread(
+            dosya, self.conn, secili_data, metod, bas, bit, bas_g, bit_g
+        )
+        self._thread.ilerleme.connect(self._ilerleme_guncelle)
+        self._thread.bitti.connect(self._hesaplama_bitti)
+        self._thread.hata.connect(self._hesaplama_hatasi)
+        self._thread.finished.connect(self._ui_serbest_birak)
+        self._thread.start()
+
+    # ── UI durum yönetimi ────────────────────────────────────────────────────
+    def _ui_kilitle(self):
+        """Hesaplama süresince butonu devre dışı bırakır, spinner başlatır."""
+        self.hesapla_btn.setEnabled(False)
+        self.hesapla_btn.setStyleSheet(_BTN_PASIF)
+        self.hesapla_btn.setText("⏳  Hesaplanıyor.")
+        self.durum_lbl.setText("Hesaplama başlatıldı, lütfen bekleyin...")
+        self.durum_lbl.setStyleSheet("color:#1565c0;font-size:11px;padding:4px;")
+        self._spinner_sayac = 0
+        self._spinner_timer = QTimer(self)
+        self._spinner_timer.timeout.connect(self._spinner_adim)
+        self._spinner_timer.start(400)
+
+    def _spinner_adim(self):
+        noktalar = "." * ((self._spinner_sayac % 3) + 1)
+        self.hesapla_btn.setText(f"⏳  Hesaplanıyor{noktalar}")
+        self._spinner_sayac += 1
+
+    def _ilerleme_guncelle(self, mesaj: str):
+        self.durum_lbl.setText(f"⚙  {mesaj}")
+
+    def _ui_serbest_birak(self):
+        """Thread bittikten sonra UI'ı normale döndürür."""
+        if self._spinner_timer:
+            self._spinner_timer.stop()
+            self._spinner_timer.deleteLater()
+            self._spinner_timer = None
+        self.hesapla_btn.setEnabled(True)
+        self.hesapla_btn.setText("📊  Hesapla ve Excel'e Aktar")
+        self.hesapla_btn.setStyleSheet(_BTN_AKTIF)
+
+    def _hesaplama_bitti(self, dosya: str):
+        self.durum_lbl.setText(f"Rapor olusturuldu: {dosya}")
+        self.durum_lbl.setStyleSheet("color:#2e7d32;font-size:11px;padding:4px;")
+        QMessageBox.information(self, "Basarili", f"Maliyet raporu kaydedildi:\n{dosya}")
+
+    def _hesaplama_hatasi(self, mesaj: str):
+        self.durum_lbl.setText("Hesaplama basarisiz.")
+        self.durum_lbl.setStyleSheet("color:#c62828;font-size:11px;padding:4px;")
+        QMessageBox.critical(self, "Hata", f"Excel olusturulamadi:\n{mesaj}")
