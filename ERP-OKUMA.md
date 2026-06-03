@@ -1,4 +1,9 @@
-# CEO ERP — Mamül Ağacı Bağlantı Aracı
+# CEO ERP — Mamül Ağacı Bağlantı ve Maliyet Hesaplama Aracı
+
+**GitHub:** https://github.com/savasadiguzel-hash/ceo-erp-arac  
+**Son güncelleme:** 2026-06-03
+
+---
 
 ## Proje Amaçları
 
@@ -14,7 +19,7 @@ Tüm işler dışarıya yaptırıldığından (montaj hariç) tüm faturalar top
 
 ---
 
-## Tespit Mantığı (İki Filtreli Kesişim)
+## Tespit Mantığı — Araç 1 (İki Filtreli Kesişim)
 
 ```
 Tüm Stok Kodları
@@ -25,11 +30,11 @@ Tüm Stok Kodları
                         │
                         ▼
               KESİŞİM KÜMESİ
-              → Bunlar ekranda gösterilir, kullanıcı her biri için mamül ağacı seçer
+              → Ekranda gösterilir, kullanıcı her biri için mamül ağacı seçer
 ```
 
 **Neden kesişim?**
-- Sadece reçetesiz stok: faturası yoksa maliyeti sıfır, sorun değil
+- Sadece reçetesiz stok: faturası yoksa maliyeti sıfır → sorun değil
 - Sadece faturası olan stok: reçetedeyse zaten doğru yerde
 - İkisi birden → gerçek "boşta maliyet" = düzeltilmesi gereken kayıt
 
@@ -38,121 +43,113 @@ Tüm Stok Kodları
 ## Uygulama Akışı
 
 ### Ana Menü (Sayfa 0)
-İki araç kartı gösterilir, kullanıcı hangisini kullanacağını seçer.
+İki araç kartı — kullanıcı hangisini kullanacağını seçer.
+
+### Araç 1: ① Bağlantı → ② Tarama → ③ Eşleştirme → ④ Rapor
+### Araç 2: Tek sayfa (parametreler + mamül listesi + Excel çıktısı)
 
 ---
 
-## Araç 1 Akışı (4 Aşama)
+## Dosya Yapısı (Refactor Sonrası)
 
-### ① Bağlantı Sayfası
-- SQL Server bağlantı bilgileri (sunucu, veritabanı, kullanıcı, şifre)
-- Hangi fatura türlerinin taranacağı seçilir:
-  - Alış Faturası
-  - Masraf Faturası
-  - Hizmet Faturası
-  - İthalat Faturası
-- "Demo Modunda Çalıştır" seçeneği (gerçek DB olmadan test için)
-
-### ② Tarama Sayfası
-Animasyonlu ilerleme çubuğuyla şu adımlar sırayla çalışır:
-1. Tüm stok kodları listelenir
-2. Reçeteler kontrol edilir
-3. Mamül ağaçları kontrol edilir
-4. Reçete/ağaç dışı stoklar filtrelenir
-5. Bu stoklar için alış faturaları kontrol edilir
-6. Kesişim kümesi hesaplanır
-
-Tarama sonunda özet gösterilir:
-- Toplam stok sayısı
-- Reçete/mamül ağacında olmayan stok sayısı
-- Bunlardan faturası olan (işlenecek) stok sayısı
-
-### ③ Eşleştirme Sayfası
-Her stok için iki panelli ekran:
-
-**Sol Panel — Stok Detayları:**
-| Alan | Açıklama |
-|---|---|
-| Stok Kodu | Kırmızı/kalın — sorunlu stok |
-| Stok Adı | |
-| Fatura Türleri | Hangi tür faturalarla gelmiş |
-| Fatura Sayısı | Toplam kaç fatura girilmiş |
-| Toplam Tutar | Bu stoğun yarattığı toplam maliyet |
-| İlk / Son Fatura | Tarih aralığı |
-| Tedarikçi | |
-
-**Sağ Panel — Mamül Ağacı Seçimi:**
-- Arama kutusu: kod veya ada göre filtreler
-- Tıklanınca seçilen mamül yeşil kutuya düşer
-- İşlem geçmişi (bu oturumda yapılanlar)
-
-**Alt Butonlar:**
-- `← Geri` — önceki stoğa dön, işlemi iptal et
-- `⊘ Şimdilik Atla` — bu stoğu atla, ileride tekrar bak
-- `✓ Mamüle Bağla ve İleri` — seçilen mamüle bağla, kaydet, ilerle
-
-### ④ Rapor Sayfası
-- Oturum özeti (kaç bağlandı, kaç atlandı)
-- Excel çıktısı alma
-- Yeni tarama başlatma
+```
+C:\yeni-erp\
+├── main.py              ← Giriş noktası (7 satır)
+├── config.py            ← USE_DEMO bayrağı + DB varsayılanları
+├── requirements.txt     ← PyQt5, openpyxl, pyodbc
+├── ERP-OKUMA.md         ← Bu dosya
+├── talimat.txt          ← İlk fikir notu
+│
+├── db/
+│   ├── demo_data.py     ← Tüm demo sabitler (DEMO_BOM, DEMO_STOKLAR vb.)
+│   ├── baglanti.py      ← get_connection(), test_baglanti()
+│   └── sorgular.py      ← Veri erişim katmanı (USE_DEMO'ya göre demo↔gerçek)
+│
+├── logic/
+│   ├── maliyet.py       ← birim_maliyet(), mamul_maliyet_hesapla()
+│   └── excel.py         ← maliyet_excel_kaydet(), baglama_excel_kaydet()
+│
+└── ui/
+    ├── stil.py          ← STIL sabiti + etiket/buton/ayrac yardımcıları
+    ├── ana_menu.py      ← Sayfa 0: Ana menü kartları
+    ├── baglanti.py      ← Sayfa 1: DB bağlantı formu
+    ├── tarama.py        ← Sayfa 2: Animasyonlu tarama + TaramaThread
+    ├── eslestirme.py    ← Sayfa 3: Stok–mamül eşleştirme
+    ├── rapor.py         ← Sayfa 4: Özet + Excel kaydet
+    ├── maliyet.py       ← Sayfa 5: Maliyet parametreleri + hesaplama
+    └── ana_pencere.py   ← QMainWindow, sayfa yönetimi, adım çubuğu
+```
 
 ---
 
+## Demo / Gerçek Mod Ayrımı
+
+`config.py` dosyasındaki tek satırla geçiş yapılır:
+
+```python
+USE_DEMO = True   # demo verisiyle çalışır, DB gerekmez
+USE_DEMO = False  # db/sorgular.py gerçek SQL çalıştırır
+```
+
+`db/sorgular.py` içindeki her fonksiyon bu bayrağa göre ya demo datayı döner ya da gerçek sorguyu çalıştırır.
+
 ---
 
-## Araç 2 — Maliyet Hesaplama
+## Düzeltilen Hata
 
-### Parametreler (tek sayfa)
-| Alan | Açıklama |
-|---|---|
-| Veritabanı | Sunucu, DB adı, kullanıcı, şifre |
-| Tarih Aralığı | Başlangıç – Bitiş (takvim seçici) |
-| Maliyet Yöntemi | Ağırlıklı Ortalama / FIFO / LIFO |
-| Mamül Listesi | Tüm reçete/mamül ağaçları, her biri seçilebilir |
-| İşçilik Tutarı | Her mamül için ayrı alan — kullanıcı manuel girer |
+**`mamul_maliyet_hesapla` return tipi tutarsızlığı** (`logic/maliyet.py`):
 
-### Hesaplama Mantığı
-- **Ağırlıklı Ortalama:** Dönem içi faturalar → Σ(qty×fiyat) / Σ(qty)
-- **FIFO:** Dönem içinde en eski fatura fiyatı
-- **LIFO:** Dönem içinde en yeni fatura fiyatı
-- **Çok seviyeli BOM:** Yarı mamüller özyinelemeli olarak hesaplanır
+```python
+# Eskiden — mamül bulunamazsa list döner, çağıran tuple bekler:
+if not mamul:
+    return []
 
-### Excel Çıktısı (Maliyet Raporu)
+# Şimdi — her zaman (list, float) tuple döner:
+if not mamul:
+    return [], 0.0
+```
 
-Her mamül için 4 farklı satır tipi (renkli):
+---
 
-| Renk | Tip | İçerik |
+## Sayfa Yapısı (Stack Index)
+
+| Index | Sayfa | Araç |
 |---|---|---|
-| Koyu mavi | MAMÜL | Mamül kodu, adı, hammadde toplamı, işçilik, genel toplam |
-| Açık gri | BİLEŞEN | Stok kodu, adı, BOM miktarı, birim maliyet, satır maliyeti |
-| Turuncu | İŞÇİLİK | Manuel girilen işçilik tutarı |
-| Yeşil | TOPLAM | Hammadde + işçilik = genel toplam |
-
-Üst bilgi satırı: yöntem, dönem, oluşturma tarihi.
+| 0 | Ana Menü | — |
+| 1 | Veritabanı Bağlantısı | Araç 1 |
+| 2 | Tarama (animasyonlu) | Araç 1 |
+| 3 | Eşleştirme | Araç 1 |
+| 4 | Rapor + Excel | Araç 1 |
+| 5 | Maliyet Hesaplama | Araç 2 |
 
 ---
 
-## Araç 1 — Excel Raporu Yapısı
+## Excel Raporu Yapıları
 
-Tek sayfa, otomatik filtreli, ilk satır dondurulmuş:
+### Araç 1 — Mamül Bağlama Raporu
+Tek sayfa, otomatik filtreli, ilk satır dondurulmuş.
 
 | Sütun | Açıklama |
 |---|---|
-| Stok Kodu | |
-| Stok Adı | |
+| Stok Kodu / Adı | |
 | Fatura Türleri | Alış / Masraf / Hizmet / İthalat |
-| Fatura Sayısı | |
-| Toplam Tutar | |
-| İlk Fatura | |
-| Son Fatura | |
+| Fatura Sayısı / Toplam Tutar | |
+| İlk Fatura / Son Fatura | |
 | Tedarikçi | |
-| Mamül Kodu | Kullanıcının atadığı |
-| Mamül Adı | |
-| İşlem | Bağlandı / Atlandı |
+| Mamül Kodu / Adı | Kullanıcının atadığı |
+| İşlem | Bağlandı (yeşil) / Atlandı (sarı) |
 
-**Renk Kodlaması:**
-- Yeşil satır → Mamül ağacına bağlandı
-- Sarı satır → Atlandı / ileride işlenecek
+### Araç 2 — Maliyet Raporu
+Her mamül için 4 satır tipi (renkli):
+
+| Renk | Tip | İçerik |
+|---|---|---|
+| Koyu mavi | MAMÜL | Hammadde toplamı, işçilik, genel toplam |
+| Açık gri | BİLEŞEN | Stok kodu/adı, BOM miktarı, birim maliyet |
+| Turuncu | İŞÇİLİK | Manuel girilen işçilik tutarı |
+| Yeşil | TOPLAM | Hammadde + işçilik |
+
+Üst bilgi satırı: yöntem, dönem, oluşturma tarihi. Otomatik filtre açık.
 
 ---
 
@@ -161,49 +158,37 @@ Tek sayfa, otomatik filtreli, ilk satır dondurulmuş:
 | Bileşen | Teknoloji |
 |---|---|
 | Dil | Python 3.14 |
-| Arayüz | PyQt5 (Fusion teması) |
-| Excel çıktı | openpyxl |
-| Veritabanı (planlanan) | Microsoft SQL Server (pyodbc) |
+| Arayüz | PyQt5 5.15.11 (Fusion teması) |
+| Excel çıktı | openpyxl 3.1.5 |
+| Veritabanı sürücüsü | pyodbc 5.3.0 (kurulu ✓) |
 | Dağıtım (planlanan) | PyInstaller → .exe |
 
 ---
 
-## Mevcut Dosyalar
-
-```
-C:\yeni-erp\
-├── main.py        ← Uygulamanın tamamı (GUI + demo verisi)
-├── ERP-OKUMA.md   ← Bu dosya
-└── talimat.txt    ← İlk fikir notu
-```
-
----
-
-## Sayfa Yapısı (Stack)
-
-| Sayfa | İçerik | Araç |
-|---|---|---|
-| 0 | Ana Menü — araç seçimi | — |
-| 1 | Veritabanı Bağlantısı | Araç 1 |
-| 2 | Tarama (animasyonlu) | Araç 1 |
-| 3 | Eşleştirme | Araç 1 |
-| 4 | Rapor + Excel | Araç 1 |
-| 5 | Maliyet Parametreleri + Excel | Araç 2 |
-
 ## Yapılacaklar (Sonraki Oturum)
 
+### ⏳ Önce Cevaplanması Gereken Sorular
+
+1. **Bağlantı yöntemi:** SQL Authentication (kullanıcı/şifre) mi, Windows Authentication mi?
+2. **Sunucu konumu:** Bu bilgisayar (localhost) mı, ağdaki başka sunucu mu?
+3. **Sunucu adı / IP:** Örn: `192.168.1.10\CEOERP` veya `localhost\SQLEXPRESS`
+4. **Veritabanı adı:** CEO ERP'nin kullandığı DB adı
+5. **Kullanıcı adı / şifre:** (SQL Auth ise)
+
+Sorular cevaplanınca bağlantı kurulur, CEO ERP tablo yapısı keşfedilir ve `db/sorgular.py` içindeki stub'lar gerçek SQL ile doldurulur.
+
+### Bağlantı Kurulduktan Sonra
+
 **Araç 1:**
-- [ ] `pyodbc` ile gerçek SQL Server bağlantısı
 - [ ] CEO ERP tablo yapısının incelenmesi (stok, reçete, mamül ağacı, fatura satırları)
-- [ ] Kesişim kümesini döndüren SQL sorgusunun yazılması
-- [ ] Mamül ağacı listesini veritabanından çeken sorgu
-- [ ] "Mamüle Bağla" butonunun veritabanına yazma işlemi
+- [ ] `recetesiz_faturali_stoklar()` için gerçek SQL yazılması
+- [ ] `mamul_agaci_listesi()` için gerçek SQL yazılması
+- [ ] `stoku_mamule_bagla()` için INSERT/UPDATE yazılması
 
 **Araç 2:**
-- [ ] Reçete/mamül ağacı listesini veritabanından çeken sorgu
-- [ ] Stok bazlı fatura fiyat geçmişini çeken sorgu (tarih + birim fiyat + miktar)
-- [ ] Çok seviyeli BOM için özyinelemeli hesaplama (yarı mamül → mamül)
-- [ ] Veritabanı bağlantısı gerçek veriye bağlanınca LIFO/FIFO/WA testleri
+- [ ] `bom_listesi()` için gerçek SQL yazılması
+- [ ] `stok_fiyat_gecmisi()` için gerçek SQL yazılması
+- [ ] Çok seviyeli BOM özyinelemeli hesaplama testi
 
 **Ortak:**
-- [ ] PyInstaller ile tek .exe çıktısı
+- [ ] PyInstaller ile tek `.exe` çıktısı
