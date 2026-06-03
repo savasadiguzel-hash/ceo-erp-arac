@@ -29,3 +29,6 @@ Thumbs.db
 
 # Excel çıktıları (geçici)
 ceo_erp_*.xlsx
+
+# Log dosyaları
+*.log

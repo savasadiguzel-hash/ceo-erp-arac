@@ -1,3 +1,4 @@
+import logging
 import pyodbc
 from config import USE_DEMO
 
@@ -16,15 +17,28 @@ def get_connection(sunucu: str, veritabani: str, kullanici: str, sifre: str):
             f"UID={kullanici};PWD={sifre};"
             f"TrustServerCertificate=yes;"
         )
-        _conn = pyodbc.connect(dsn, timeout=10)
+        try:
+            _conn = pyodbc.connect(dsn, timeout=10)
+            logging.info("Veritabani baglantisi kuruldu: sunucu=%s db=%s", sunucu, veritabani)
+        except pyodbc.Error as e:
+            logging.error("Veritabani baglanti hatasi: %s", e)
+            raise
+        except Exception as e:
+            logging.critical("Beklenmeyen baglanti hatasi: %s", e)
+            raise
     return _conn
 
 
 def baglanti_kapat():
     global _conn
     if _conn:
-        _conn.close()
-        _conn = None
+        try:
+            _conn.close()
+            logging.info("Veritabani baglantisi kapatildi.")
+        except Exception as e:
+            logging.error("Baglanti kapatma hatasi: %s", e)
+        finally:
+            _conn = None
 
 
 def test_baglanti(sunucu: str, veritabani: str, kullanici: str, sifre: str) -> tuple[bool, str]:
@@ -32,6 +46,11 @@ def test_baglanti(sunucu: str, veritabani: str, kullanici: str, sifre: str) -> t
     try:
         conn = get_connection(sunucu, veritabani, kullanici, sifre)
         conn.cursor().execute("SELECT 1")
+        logging.info("Baglanti testi basarili: sunucu=%s", sunucu)
         return True, "Bağlantı başarılı."
+    except pyodbc.Error as e:
+        logging.error("Baglanti testi basarisiz: %s", e)
+        return False, str(e)
     except Exception as e:
+        logging.critical("Baglanti testinde beklenmeyen hata: %s", e)
         return False, str(e)
