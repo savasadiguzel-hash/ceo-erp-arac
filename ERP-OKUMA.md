@@ -1,8 +1,8 @@
 # CEO ERP — Mamül Ağacı Bağlantı ve Maliyet Hesaplama Aracı
 
 **GitHub:** https://github.com/savasadiguzel-hash/ceo-erp-arac  
-**Son güncelleme:** 2026-06-03  
-**Dağıtım:** `dist/CEO-ERP.exe` (PyInstaller, tek dosya, ~43 MB)
+**Son güncelleme:** 2026-06-04  
+**Dağıtım:** `dist/CEO-ERP.exe` (PyInstaller 6.20.0, tek dosya, ~43 MB)
 
 ---
 
@@ -16,7 +16,7 @@ Bu stoklar, ürün maliyet hesabında "boşta görünen maliyet" olarak kalmakta
 ### Araç 2 — Maliyet Hesaplama
 Tüm reçete ve mamül ağaçları taranarak **LIFO, FIFO veya Ağırlıklı Ortalama** yöntemiyle seçilen tarih aralığında ürün bazında maliyet raporu oluşturulması.
 
-Tüm işler dışarıya yaptırıldığından (montaj hariç) tüm faturalar toplanarak doğru bir ürün maliyeti elde edilebilir. İşçilik tutarı mamül bazında manuel girilir.
+İşçilik tutarı mamül bazında manuel girilir. Hesaplama arka planda (`QThread`) çalışır; UI kilitlenmez.
 
 ---
 
@@ -34,11 +34,6 @@ Tüm Stok Kodları
               → Ekranda gösterilir, kullanıcı her biri için mamül ağacı seçer
 ```
 
-**Neden kesişim?**
-- Sadece reçetesiz stok: faturası yoksa maliyeti sıfır → sorun değil
-- Sadece faturası olan stok: reçetedeyse zaten doğru yerde
-- İkisi birden → gerçek "boşta maliyet" = düzeltilmesi gereken kayıt
-
 ---
 
 ## Uygulama Akışı
@@ -53,8 +48,6 @@ Tüm Stok Kodları
 
 ## Tarih Aralığı Girişi (Her İki Araçta Ortak Kurallar)
 
-Her iki araçtaki tarih kutucukları aynı kurallara göre çalışır:
-
 | Durum | Davranış |
 |---|---|
 | `26052025` (8 rakam, noktalarsız) | Otomatik `26.05.2025` olarak tanınır |
@@ -62,71 +55,116 @@ Her iki araçtaki tarih kutucukları aynı kurallara göre çalışır:
 | `10.15.2026` (geçersiz ay) | Kutu temizlenir |
 | Bugünden sonraki tarih | Kutu temizlenir |
 | Başlangıç > Bitiş | Bitiş otomatik başlangıca eşitlenir |
-| Bitiş < Başlangıç | Bitiş otomatik başlangıca eşitlenir |
 | **Ctrl+N** (bitiş kutusunda) | Bugünün tarihi otomatik gelir |
 
 Kutular **boş açılır** — her iki tarih girilmeden tarama/hesaplama başlamaz.
 
 ---
 
-## Dosya Yapısı (Refactor Sonrası)
+## Dosya Yapısı
 
 ```
 C:\yeni-erp\
-├── main.py              ← Giriş noktası (7 satır)
-├── config.py            ← USE_DEMO bayrağı + DB varsayılanları
+├── main.py              ← Giriş noktası; logging.basicConfig burada başlatılır
+├── config.py            ← config.json'dan okur; config_kaydet() ile yazar
+├── config.json          ← Yerel DB bilgileri (gitignore'da, repoya gitmez)
+├── ceo_erp.log          ← Uygulama log dosyası (gitignore'da)
 ├── requirements.txt     ← PyQt5, openpyxl, pyodbc
 ├── ERP-OKUMA.md         ← Bu dosya
-├── talimat.txt          ← İlk fikir notu
 │
 ├── db/
 │   ├── demo_data.py     ← Tüm demo sabitler (DEMO_BOM, DEMO_STOKLAR vb.)
-│   ├── baglanti.py      ← get_connection(), test_baglanti()
-│   └── sorgular.py      ← Veri erişim katmanı (USE_DEMO'ya göre demo↔gerçek)
+│   ├── baglanti.py      ← get_connection() · cursor_ctx() · baglanti_ctx()
+│   └── sorgular.py      ← Veri erişim katmanı; stub'lar cursor_ctx kullanır
 │
 ├── logic/
-│   ├── maliyet.py       ← birim_maliyet(), mamul_maliyet_hesapla()
-│   └── excel.py         ← maliyet_excel_kaydet(), baglama_excel_kaydet()
+│   ├── maliyet.py       ← birim_maliyet() · mamul_maliyet_hesapla() + memoization
+│   └── excel.py         ← maliyet_excel_kaydet() · baglama_excel_kaydet()
 │
 └── ui/
     ├── stil.py          ← STIL sabiti + etiket/buton/ayrac yardımcıları
     ├── ana_menu.py      ← Sayfa 0: Ana menü kartları
-    ├── baglanti.py      ← Sayfa 1: DB bağlantı formu
+    ├── baglanti.py      ← Sayfa 1: DB bağlantı formu + tarih doğrulama
     ├── tarama.py        ← Sayfa 2: Animasyonlu tarama + TaramaThread
     ├── eslestirme.py    ← Sayfa 3: Stok–mamül eşleştirme
     ├── rapor.py         ← Sayfa 4: Özet + Excel kaydet
-    ├── maliyet.py       ← Sayfa 5: Maliyet parametreleri + hesaplama
+    ├── maliyet.py       ← Sayfa 5: MaliyetHesaplamaThread + UI kilitleme
     └── ana_pencere.py   ← QMainWindow, sayfa yönetimi, adım çubuğu
 ```
 
 ---
 
-## Demo / Gerçek Mod Ayrımı
+## Yapılan Geliştirmeler (Bu Oturum)
 
-`config.py` dosyasındaki tek satırla geçiş yapılır:
+### Loglama Altyapısı
+- `main.py`: `logging.basicConfig` yerel import'lardan **önce** çağrılır; tüm modüllerin log'ları `ceo_erp.log`'a düşer
+- `db/baglanti.py`: `pyodbc.Error` → `logging.error`, beklenmeyen → `logging.critical`
+- Format: `%(asctime)s - %(levelname)s - %(module)s - %(message)s`
 
-```python
-USE_DEMO = True   # demo verisiyle çalışır, DB gerekmez
-USE_DEMO = False  # db/sorgular.py gerçek SQL çalıştırır
+### Dinamik Yapılandırma (`config.py` + `config.json`)
+- DB bilgileri artık kodda sabit değil; `config.json`'dan okunur
+- Dosya yoksa varsayılan şablon otomatik oluşturulur
+- Şifre **base64** ile gizlenerek `sifre_enc` alanına yazılır
+- Başarılı bağlantı sonrası `config_kaydet()` otomatik çağrılır
+- PyInstaller exe'siyle çalışırken `config.json` exe'nin yanında aranır
+- `config.json` ve `*.log` `.gitignore`'a eklendi
+
+### Kurumsal DB Bağlantı Yönetimi (`db/baglanti.py`)
+| Fonksiyon | Açıklama |
+|---|---|
+| `get_connection()` | Oturum boyunca tekil singleton bağlantı |
+| `cursor_ctx(conn)` | `@contextmanager` — cursor `finally`'de kesinlikle kapatılır |
+| `baglanti_ctx(...)` | `@contextmanager` — tek seferlik bağlantı, singleton'ı etkilemez |
+
+`test_baglanti()` artık `baglanti_ctx + cursor_ctx` kullanır — cursor sızıntısı yok.
+
+### Sorgu Stub Mimarisi (`db/sorgular.py`)
+Tüm stub'lar `with cursor_ctx(conn) as cur:` bloğuna taşındı. `NotImplementedError` fırlatılsa dahi cursor kapatılır. Gerçek SQL eklenirken yalnızca yorumlar açılacak.
+
+### Memoization + Çok Seviyeli BOM (`logic/maliyet.py`)
+- `_cache: dict` — oturum boyunca paylaşılan RAM önbelleği
+  - Anahtar: `("birim", stok_kodu, metod, bas, bit)` veya `("mamul", mamul_kodu, ...)`
+  - Paylaşılan alt bileşenler tek sorgulanır (ör. STK-022 dört mamülde geçse bile)
+- `_visiting: frozenset` — döngüsel BOM referansına karşı sonsuz özyineleme koruması
+- Alt bileşen BOM'da mamül olarak tanımlıysa özyinelemeli hesaplanır
+- `excel.py` döngüsünden önce tek `cache = {}` oluşturulur; tüm mamüller paylaşır
+
+### Non-Blocking Hesaplama (`ui/maliyet.py`)
 ```
+MaliyetHesaplamaThread(QThread)
+  ├── ilerleme(str) → durum_lbl güncellenir (hangi mamül işleniyor)
+  ├── bitti(str)    → başarı diyalogu gösterilir
+  ├── hata(str)     → hata diyalogu gösterilir
+  └── finished()    → buton restore edilir (QTimer spinner durur)
+```
+- Widget değerleri thread başlamadan `(kod, iscilik_float)` listesine kopyalanır (thread-safe)
+- Hesaplama sırasında buton gri + `⏳ Hesaplanıyor.` / `..` / `...` animasyonu
 
-`db/sorgular.py` içindeki her fonksiyon bu bayrağa göre ya demo datayı döner ya da gerçek sorguyu çalıştırır.
+### Excel Sayı Formatları (`logic/excel.py`)
+"Metin olarak saklanan sayı" uyarısı tamamen giderildi:
+
+| Alan | Eski | Yeni |
+|---|---|---|
+| `bom_miktar` (int) | format uygulanmıyordu | `float` + `#,##0.##` |
+| `birim_mal` | `round(4)` float, format yoktu | `float` + `#,##0.0000 "₺"` |
+| Boş sayısal hücre | `""` (metin uyarısı) | `None` (boş hücre) |
+| `fatura_sayisi` | `str(val)` | `int` + `#,##0` |
+| `toplam_tutar` | `"37.500,00 ₺"` (metin) | `_para()` → `float` + `#,##0.00 "₺"` |
+
+Excel'de SUM/TOPLA formülleri çalışır; sıralama/filtreleme sayısal davranır.
 
 ---
 
-## Düzeltilen Hata
+## Demo / Gerçek Mod Ayrımı
 
-**`mamul_maliyet_hesapla` return tipi tutarsızlığı** (`logic/maliyet.py`):
+`config.json` dosyasındaki `use_demo` alanıyla yönetilir:
 
-```python
-# Eskiden — mamül bulunamazsa list döner, çağıran tuple bekler:
-if not mamul:
-    return []
-
-# Şimdi — her zaman (list, float) tuple döner:
-if not mamul:
-    return [], 0.0
+```json
+{ "use_demo": true }   ← demo verisiyle çalışır, DB gerekmez
+{ "use_demo": false }  ← gerçek SQL Server bağlantısı kullanılır
 ```
+
+`db/sorgular.py` içindeki her fonksiyon bu bayrağa göre demo datayı döner veya gerçek sorguyu çalıştırır.
 
 ---
 
@@ -148,27 +186,26 @@ if not mamul:
 ### Araç 1 — Mamül Bağlama Raporu
 Tek sayfa, otomatik filtreli, ilk satır dondurulmuş.
 
-| Sütun | Açıklama |
-|---|---|
-| Stok Kodu / Adı | |
-| Fatura Türleri | Alış / Masraf / Hizmet / İthalat |
-| Fatura Sayısı / Toplam Tutar | |
-| İlk Fatura / Son Fatura | |
-| Tedarikçi | |
-| Mamül Kodu / Adı | Kullanıcının atadığı |
-| İşlem | Bağlandı (yeşil) / Atlandı (sarı) |
+| Sütun | Tip | Format |
+|---|---|---|
+| Stok Kodu / Adı | Metin | — |
+| Fatura Türleri | Metin | — |
+| Fatura Sayısı | **int** | `#,##0` |
+| Toplam Tutar | **float** | `#,##0.00 "₺"` |
+| İlk / Son Fatura | Metin | — |
+| Tedarikçi | Metin | — |
+| Mamül Kodu / Adı | Metin | — |
+| İşlem | Metin | Bağlandı (yeşil) / Atlandı (sarı) |
 
 ### Araç 2 — Maliyet Raporu
 Her mamül için 4 satır tipi (renkli):
 
-| Renk | Tip | İçerik |
+| Renk | Tip | Sayısal Sütunlar |
 |---|---|---|
-| Koyu mavi | MAMÜL | Hammadde toplamı, işçilik, genel toplam |
-| Açık gri | BİLEŞEN | Stok kodu/adı, BOM miktarı, birim maliyet |
-| Turuncu | İŞÇİLİK | Manuel girilen işçilik tutarı |
-| Yeşil | TOPLAM | Hammadde + işçilik |
-
-Üst bilgi satırı: yöntem, dönem, oluşturma tarihi. Otomatik filtre açık.
+| Koyu mavi | MAMÜL | Hammadde Toplamı, İşçilik, Genel Toplam → `#,##0.00 "₺"` |
+| Açık gri | BİLEŞEN | BOM Miktarı `#,##0.##` · Birim Maliyet `#,##0.0000 "₺"` · Satır Maliyeti `#,##0.00 "₺"` |
+| Turuncu | İŞÇİLİK | Satır Maliyeti → `#,##0.00 "₺"` |
+| Yeşil | TOPLAM | Hammadde + İşçilik + Genel Toplam → `#,##0.00 "₺"` |
 
 ---
 
@@ -179,7 +216,7 @@ Her mamül için 4 satır tipi (renkli):
 | Dil | Python 3.14 |
 | Arayüz | PyQt5 5.15.11 (Fusion teması) |
 | Excel çıktı | openpyxl 3.1.5 |
-| Veritabanı sürücüsü | pyodbc 5.3.0 (kurulu ✓) |
+| Veritabanı sürücüsü | pyodbc 5.3.0 |
 | Dağıtım | PyInstaller 6.20.0 → `CEO-ERP.exe` ✓ |
 
 ---
@@ -207,7 +244,13 @@ Sorular cevaplanınca bağlantı kurulur, CEO ERP tablo yapısı keşfedilir ve 
 **Araç 2:**
 - [ ] `bom_listesi()` için gerçek SQL yazılması
 - [ ] `stok_fiyat_gecmisi()` için gerçek SQL yazılması
-- [ ] Çok seviyeli BOM özyinelemeli hesaplama testi
+- [ ] Çok seviyeli BOM özyinelemeli hesaplama gerçek veriyle testi
 
 **Ortak:**
 - [x] PyInstaller ile tek `.exe` çıktısı → `dist/CEO-ERP.exe`
+- [x] Merkezi loglama → `ceo_erp.log`
+- [x] Dinamik `config.json` + base64 şifre gizleme
+- [x] `cursor_ctx` / `baglanti_ctx` context manager altyapısı
+- [x] Memoization + döngüsel BOM koruması
+- [x] Non-blocking `MaliyetHesaplamaThread`
+- [x] Excel sayı formatları düzeltildi
