@@ -25,7 +25,7 @@ class BaglantiSayfasi(QWidget):
         self.sunucu    = QLineEdit(DB_DEFAULTS["sunucu"])
         self.db_adi    = QLineEdit(DB_DEFAULTS["veritabani"])
         self.kullanici = QLineEdit(DB_DEFAULTS["kullanici"])
-        self.sifre     = QLineEdit()
+        self.sifre     = QLineEdit(DB_DEFAULTS.get("sifre", ""))
         self.sifre.setEchoMode(QLineEdit.Password)
         self.sifre.setPlaceholderText("••••••••")
         for i, (k, v) in enumerate([("Sunucu:", self.sunucu), ("Veritabanı:", self.db_adi),

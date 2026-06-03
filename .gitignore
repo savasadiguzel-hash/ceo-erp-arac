@@ -32,3 +32,6 @@ ceo_erp_*.xlsx
 
 # Log dosyaları
 *.log
+
+# Yerel veritabanı bağlantı bilgileri (şifre içerebilir)
+config.json

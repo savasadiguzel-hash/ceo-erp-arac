@@ -4,7 +4,7 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QFont
-from config import USE_DEMO
+from config import USE_DEMO, config_kaydet
 from db.baglanti import get_connection
 from ui.stil import STIL
 from ui.ana_menu    import AnaMenüSayfasi
@@ -84,7 +84,19 @@ class AnaPencere(QMainWindow):
                                 "Lütfen geçerli bir başlangıç ve bitiş tarihi girin.\n\n"
                                 "Format: GG.AA.YYYY  (örn: 01.01.2025)")
             return
-        conn = self._baglanti_al()
+        try:
+            conn = self._baglanti_al()
+        except Exception as e:
+            QMessageBox.critical(self, "Bağlantı Hatası",
+                                 f"Veritabanına bağlanılamadı:\n\n{e}")
+            return
+        if not USE_DEMO:
+            config_kaydet(
+                self.s1.sunucu.text(),
+                self.s1.db_adi.text(),
+                self.s1.kullanici.text(),
+                self.s1.sifre.text(),
+            )
         turleri = self.s1.secili_fatura_turleri()
         self.sayfa_gec(2)
         self.s2.baslat(conn, turleri, tarihler[0], tarihler[1])
