@@ -1,7 +1,8 @@
 # CEO ERP — Mamül Ağacı Bağlantı ve Maliyet Hesaplama Aracı
 
 **GitHub:** https://github.com/savasadiguzel-hash/ceo-erp-arac  
-**Son güncelleme:** 2026-06-03
+**Son güncelleme:** 2026-06-03  
+**Dağıtım:** `dist/CEO-ERP.exe` (PyInstaller, tek dosya, ~43 MB)
 
 ---
 
@@ -47,6 +48,24 @@ Tüm Stok Kodları
 
 ### Araç 1: ① Bağlantı → ② Tarama → ③ Eşleştirme → ④ Rapor
 ### Araç 2: Tek sayfa (parametreler + mamül listesi + Excel çıktısı)
+
+---
+
+## Tarih Aralığı Girişi (Her İki Araçta Ortak Kurallar)
+
+Her iki araçtaki tarih kutucukları aynı kurallara göre çalışır:
+
+| Durum | Davranış |
+|---|---|
+| `26052025` (8 rakam, noktalarsız) | Otomatik `26.05.2025` olarak tanınır |
+| `35.02.2025` (geçersiz gün) | Kutu temizlenir |
+| `10.15.2026` (geçersiz ay) | Kutu temizlenir |
+| Bugünden sonraki tarih | Kutu temizlenir |
+| Başlangıç > Bitiş | Bitiş otomatik başlangıca eşitlenir |
+| Bitiş < Başlangıç | Bitiş otomatik başlangıca eşitlenir |
+| **Ctrl+N** (bitiş kutusunda) | Bugünün tarihi otomatik gelir |
+
+Kutular **boş açılır** — her iki tarih girilmeden tarama/hesaplama başlamaz.
 
 ---
 
@@ -161,7 +180,7 @@ Her mamül için 4 satır tipi (renkli):
 | Arayüz | PyQt5 5.15.11 (Fusion teması) |
 | Excel çıktı | openpyxl 3.1.5 |
 | Veritabanı sürücüsü | pyodbc 5.3.0 (kurulu ✓) |
-| Dağıtım (planlanan) | PyInstaller → .exe |
+| Dağıtım | PyInstaller 6.20.0 → `CEO-ERP.exe` ✓ |
 
 ---
 
@@ -191,4 +210,4 @@ Sorular cevaplanınca bağlantı kurulur, CEO ERP tablo yapısı keşfedilir ve 
 - [ ] Çok seviyeli BOM özyinelemeli hesaplama testi
 
 **Ortak:**
-- [ ] PyInstaller ile tek `.exe` çıktısı
+- [x] PyInstaller ile tek `.exe` çıktısı → `dist/CEO-ERP.exe`
