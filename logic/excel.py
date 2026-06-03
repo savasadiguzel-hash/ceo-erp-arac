@@ -89,13 +89,18 @@ def maliyet_excel_kaydet(
         _hucre(ws, 2, col, ad, "baslik", "baslik")
         ws.column_dimensions[get_column_letter(col)].width = gen
 
+    # Tüm mamüller için paylaşılan önbellek: aynı alt bileşen tekrar SQL'e gitmez
+    cache: dict = {}
+
     satir = 3
     for mamul_kodu, _cb, spin in secili:
         mamul = bom.get(mamul_kodu)
         if not mamul:
             continue
         iscilik = spin.value()
-        bilesenleri, hammadde_top = mamul_maliyet_hesapla(conn, mamul_kodu, metod, bas, bit)
+        bilesenleri, hammadde_top = mamul_maliyet_hesapla(
+            conn, mamul_kodu, metod, bas, bit, _cache=cache
+        )
         genel_top = hammadde_top + iscilik
 
         # Mamül başlık satırı
