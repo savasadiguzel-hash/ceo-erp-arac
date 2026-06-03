@@ -1,22 +1,26 @@
 import logging
 import pyodbc
+from contextlib import contextmanager
 from config import USE_DEMO
 
 _conn = None
 
+_DSN = (
+    "DRIVER={{ODBC Driver 17 for SQL Server}};"
+    "SERVER={sunucu};DATABASE={veritabani};"
+    "UID={kullanici};PWD={sifre};"
+    "TrustServerCertificate=yes;"
+)
+
 
 def get_connection(sunucu: str, veritabani: str, kullanici: str, sifre: str):
-    """Tekil bağlantı nesnesi döner. USE_DEMO=True ise None döner."""
+    """Oturum boyunca tekil bağlantı döner. USE_DEMO=True ise None döner."""
     global _conn
     if USE_DEMO:
         return None
     if _conn is None:
-        dsn = (
-            f"DRIVER={{ODBC Driver 17 for SQL Server}};"
-            f"SERVER={sunucu};DATABASE={veritabani};"
-            f"UID={kullanici};PWD={sifre};"
-            f"TrustServerCertificate=yes;"
-        )
+        dsn = _DSN.format(sunucu=sunucu, veritabani=veritabani,
+                          kullanici=kullanici, sifre=sifre)
         try:
             _conn = pyodbc.connect(dsn, timeout=10)
             logging.info("Veritabani baglantisi kuruldu: sunucu=%s db=%s", sunucu, veritabani)
@@ -27,6 +31,54 @@ def get_connection(sunucu: str, veritabani: str, kullanici: str, sifre: str):
             logging.critical("Beklenmeyen baglanti hatasi: %s", e)
             raise
     return _conn
+
+
+@contextmanager
+def cursor_ctx(conn):
+    """
+    Her sorgu çağrısında cursor'ı finally bloğunda kesinlikle kapatır.
+
+        with cursor_ctx(conn) as cur:
+            cur.execute("SELECT ...")
+            return cur.fetchall()
+    """
+    cur = conn.cursor()
+    try:
+        yield cur
+    except pyodbc.Error as e:
+        logging.error("Sorgu hatasi: %s", e)
+        raise
+    finally:
+        cur.close()
+
+
+@contextmanager
+def baglanti_ctx(sunucu: str, veritabani: str, kullanici: str, sifre: str):
+    """
+    Bağımsız tek-seferlik bağlantı için context manager.
+    Oturum singleton'ını (_conn) etkilemez; finally'de her koşulda kapatılır.
+
+        with baglanti_ctx(...) as conn:
+            with cursor_ctx(conn) as cur:
+                cur.execute("SELECT 1")
+    """
+    dsn = _DSN.format(sunucu=sunucu, veritabani=veritabani,
+                      kullanici=kullanici, sifre=sifre)
+    conn = None
+    try:
+        conn = pyodbc.connect(dsn, timeout=10)
+        logging.info("baglanti_ctx: baglanti acildi sunucu=%s", sunucu)
+        yield conn
+    except pyodbc.Error as e:
+        logging.error("baglanti_ctx pyodbc hatasi: %s", e)
+        raise
+    except Exception as e:
+        logging.critical("baglanti_ctx beklenmeyen hata: %s", e)
+        raise
+    finally:
+        if conn is not None:
+            conn.close()
+            logging.info("baglanti_ctx: baglanti kapatildi.")
 
 
 def baglanti_kapat():
@@ -42,10 +94,11 @@ def baglanti_kapat():
 
 
 def test_baglanti(sunucu: str, veritabani: str, kullanici: str, sifre: str) -> tuple[bool, str]:
-    """Bağlantı testler. (başarılı: bool, mesaj: str) döner."""
+    """Bağlantıyı test eder; singleton'ı etkilemez. (başarılı, mesaj) döner."""
     try:
-        conn = get_connection(sunucu, veritabani, kullanici, sifre)
-        conn.cursor().execute("SELECT 1")
+        with baglanti_ctx(sunucu, veritabani, kullanici, sifre) as conn:
+            with cursor_ctx(conn) as cur:
+                cur.execute("SELECT 1")
         logging.info("Baglanti testi basarili: sunucu=%s", sunucu)
         return True, "Bağlantı başarılı."
     except pyodbc.Error as e:
