@@ -61,21 +61,37 @@ UretimRecete              ← Reçete başlığı (mamül kodu, adı)
 ## BOM Patlatma Mantığı (Araç 2)
 
 ```
-mamul_tum_satirlar()
-  ├── bom_listesi(conn)  →  UretimReceteHatPlaniGirdi'den tüm girdiler
+bom_listesi(conn)
+  ├── 1. Sorgu: UretimReceteHatPlaniGirdi → gerçek reçete girdileri
   │
-  ├── Bileşen BOM'da mamül olarak tanımlıysa → ALT-MAMÜL (özyinelemeli aç)
+  └── 2. Sorgu: StokKarti KOD:XX eşleşmesi → operasyon adımları
+        CEO ERP'de imalat operasyonları ayrı stok kodu olarak tutulur:
+        GMP-200-230602:20  (FREZE)
+        GMP-200-230602:60  (KAPLAMA)
+        GMP-200-230602:100 (LAZER KAZIMA)
+        Gerçek reçetesi olmayan stoklar için bu :XX kodlar
+        otomatik alt bileşen olarak eklenir.
+
+mamul_tum_satirlar()
+  ├── Bileşen BOM'da mamül olarak tanımlıysa → ALT-MAMÜL (özyinelemeli)
   │     └── miktarlar üst seviyeyle çarpılarak taşınır
   │
   └── Bileşen yaprak ise → birim_maliyet() → stok_fiyat_gecmisi()
-        └── LIFO: en son fatura fiyatı
-            FIFO: en eski fatura fiyatı
-            WA:   ağırlıklı ortalama
+        └── LIFO / FIFO / WA
 ```
 
-**Örnek — GMP-101-230022 BORESIGHTER SP 7,62 OTOKAR:**
-- Eski sistem: 5 satır (alt-mamül başlıkları, 0 TL)
-- Yeni sistem: 50 satır (vida, o-ring, lens, freze, kaplama…), **24.755 TL**
+**Örnek — GMP-101-230014 BORESIGHTER SP:**
+```
+MAMÜL: GMP-101-230014
+  BİLEŞEN: OPTICAL RETICLE
+  ALT-MAMÜL: GMP-200-230602  (GÖVDE)
+    BİLEŞEN:  GMP-200-230602:20   FREZE
+    BİLEŞEN:  GMP-200-230602:60   KAPLAMA
+    BİLEŞEN:  GMP-200-230602:100  LAZER KAZIMA
+    BİLEŞEN:  GMP-200-230602:110  ÇAPAK ALMA
+  BİLEŞEN: LENS, VİDA, O-RING...
+TOPLAM
+```
 
 ---
 
