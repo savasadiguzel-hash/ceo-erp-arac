@@ -19,7 +19,9 @@ def birim_maliyet(
 ) -> float:
     """
     Stok için seçilen yönteme göre birim maliyet döner.
-    metod: 'WA' | 'FIFO' | 'LIFO'   bas/bit: 'YYYY-MM-DD'
+    metod: 'WA' | 'FIFO' | 'LIFO'
+    bas/bit: 'DD.MM.YYYY' formatında tarih aralığı
+    Döner: float (birim maliyet)
 
     Aynı (stok_kodu, metod, bas, bit) için _cache varsa DB'ye gidilmez.
     """
@@ -30,19 +32,22 @@ def birim_maliyet(
     if key in _cache:
         return _cache[key]
 
+    # stok_fiyat_gecmisi DD.MM.YYYY formatında tarih bekliyor
     fiyatlar = stok_fiyat_gecmisi(conn, stok_kodu, bas, bit)
-    filtreli  = [f for f in fiyatlar if bas <= f["tarih"] <= bit]
 
-    if not filtreli:
+    if not fiyatlar:
         sonuc = 0.0
     elif metod == "WA":
-        top_t = sum(f["birim_fiyat"] * f["miktar"] for f in filtreli)
-        top_m = sum(f["miktar"] for f in filtreli)
-        sonuc = top_t / top_m if top_m else 0.0
+        # Ağırlıklı Ortalama: (Toplam Tutar) / (Toplam Miktar)
+        top_tutar = sum(f["birim_fiyat"] * f["miktar"] for f in fiyatlar)
+        top_miktar = sum(f["miktar"] for f in fiyatlar)
+        sonuc = top_tutar / top_miktar if top_miktar else 0.0
     elif metod == "FIFO":
-        sonuc = min(filtreli, key=lambda x: x["tarih"])["birim_fiyat"]
+        # FIFO: En eski tarihli işlemin birim fiyatı
+        sonuc = min(fiyatlar, key=lambda x: x["tarih"])["birim_fiyat"]
     elif metod == "LIFO":
-        sonuc = max(filtreli, key=lambda x: x["tarih"])["birim_fiyat"]
+        # LIFO: En yeni tarihli işlemin birim fiyatı
+        sonuc = max(fiyatlar, key=lambda x: x["tarih"])["birim_fiyat"]
     else:
         sonuc = 0.0
 
@@ -67,6 +72,7 @@ def mamul_maliyet_hesapla(
 
     Döner: tuple[list[dict], float]
            Her koşulda ([], 0.0) veya (satirlar, toplam) biçiminde döner.
+           Bileşen satırları: tip, kod, ad, miktar, birim, birim_maliyet, satir_toplam
     """
     if _cache    is None: _cache    = {}
     if _visiting is None: _visiting = frozenset()
@@ -87,29 +93,31 @@ def mamul_maliyet_hesapla(
     ziyaret_edildi = _visiting | {mamul_kodu}   # frozenset birleşimi — orijinal değişmez
 
     satirlar: list[dict] = []
-    toplam = 0.0
+    toplam_malzeme = 0.0
 
     for b in mamul["bilesenleri"]:
         if b["kod"] in bom:
-            # Alt bileşen aynı zamanda bir mamül → özyinelemeli hesapla
-            _, bm = mamul_maliyet_hesapla(
+            # Alt bileşen aynı zamanda bir mamül (montaj) → özyinelemeli hesapla
+            _, bilesen_maliyeti = mamul_maliyet_hesapla(
                 conn, b["kod"], metod, bas, bit, _cache, ziyaret_edildi
             )
         else:
-            bm = birim_maliyet(conn, b["kod"], metod, bas, bit, _cache)
+            # Basit stok bileşeni → birim maliyet hesapla
+            bilesen_maliyeti = birim_maliyet(conn, b["kod"], metod, bas, bit, _cache)
 
-        satir_top = b["miktar"] * bm
-        toplam   += satir_top
+        satir_maliyet = b["miktar"] * bilesen_maliyeti
+        toplam_malzeme += satir_maliyet
+
         satirlar.append({
             "tip":        "BİLEŞEN",
-            "bil_kod":    b["kod"],
-            "bil_ad":     b["ad"],
+            "kod":        b["kod"],
+            "ad":         b["ad"],
             "bom_miktar": b["miktar"],
             "birim":      b["birim"],
-            "birim_mal":  bm,
-            "satir_top":  satir_top,
+            "birim_mal":  bilesen_maliyeti,
+            "satir_top":  satir_maliyet,
         })
 
-    sonuc = (satirlar, toplam)
+    sonuc = (satirlar, toplam_malzeme)
     _cache[mamul_key] = sonuc
     return sonuc

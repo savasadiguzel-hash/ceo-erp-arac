@@ -1,1 +1,14 @@
-Çalıştığımız CEO isimli erp için bazı çalışmalar yapmak istiyorum. ERP de boşta bulduğu bütün masrafları, stok arttıran faturaları vb.. bir stok yada masrafa bağlanmış faturalar var fakat bu stoklardan birçoğu mamül ağaçlarında herhangi bir yere bağlanmamış. Bu tarz şeyleri bana tek tek sorsa (tabi hiç bir mamül ağacına veya reçeteye bağlı olmayanları) bende doğru mamül kodunu ona versem, oda boşta olan masraf, stok girişleri vb.. işleri o mamül ağacına eklese. Böyle bir script yazsak daha sonra da onu exe ye çevirsek. Nasıl olur ?" Bu konuyu nasıl ilerletebiliriz.
+Ağ üzerindeki canlı CEO ERP SQL Server veri tabanına bağlanarak veritabanı şemasını keşfetmek ve projenin sonraki aşamaları için bir veri haritası (data map) çıkarmak istiyorum. Senden bu keşif sürecini otomatize edecek bir altyapı kurmanı bekliyorum:
+
+1. `db/` dizini altında `kesif.py` adında bağımsız bir keşif script'i oluştur. Bu script, `config.py` (veya varsa `config.json`) içerisindeki ağ/sunucu bağlantı parametrelerini (`pyodbc` kullanarak) temel almalı. Bağlantı dizesinde ağ üzerinden erişim için gerekli Driver, Server IP/Instance, Port, Database, UID ve PWD parametrelerinin esnekçe yönetilebileceği bir yapı kur.
+
+2. `kesif.py` script'i veri tabanına başarılı şekilde bağlandıktan sonra SQL Server sistem kataloglarını sorgulayarak şu üç aşamalı taramayı yapmalı:
+   - **Genel Tarama:** Veri tabanındaki tüm kullanıcı tablolarının listesini al (`sys.tables` kullanarak).
+   - **Hedefli Kelime Filtreleme:** ERP sisteminde bizim araçlarımızla doğrudan ilişkili olabilecek şu anahtar kelimeleri içeren tabloları ve bu tabloların tam adlarını tespit et: 'STOK', 'MAMUL', 'RECETE', 'BOM', 'FATURA', 'HAREKET', 'CARI', 'SIPARIS', 'IRSALIYE'. (Büyük/küçük harf ve Türkçe karakter toleranslı `LIKE` sorguları kurgula).
+   - **Detaylı Şema Analizi:** Tespit edilen bu hedef tabloların her biri için; Kolon Adı, Veri Tipi, Karakter Uzunluğu, Nullable durumu, Primary Key (Birincil Anahtar) ve Foreign Key (Yabancı Anahtar - hangi tabloya bağlı olduğu) bilgilerini `sys.columns`, `sys.types` ve `sys.foreign_keys` sistem tablolarını JOIN ederek çözümle.
+
+3. Script, her hedef tablodan veri yapısını, id/kod formatlarını ve fiyat/miktar alanlarının nasıl tutulduğunu anlamamız için (`SELECT TOP 3 * FROM Tablo_Adi`) mantığıyla örnek verileri RAM'e çekmeli.
+
+4. Tüm bu elde edilen ham verileri, projenin kök dizininde veya `db/` altında `CEO_ERP_VERITABANI_HARITASI.md` adında kapsamlı, hiyerarşik ve okunabilir bir Markdown dosyasına yazdır. Dokümanda her tablonun altında kolon tablosu ve hemen altında 3 satırlık örnek veri bloğu (markdown table veya code block formatında) yer alsın.
+
+5. Bu script'i yazdıktan sonra terminal aracılığıyla çalıştır (benden onay isteyebilirsin). Çalışma esnasında ağ gecikmelerini veya olası timeout/yetki hatalarını (`pyodbc.Error`) yakalayarak terminale açıklayıcı loglar bas. Tarama başarıyla bittiğinde üretilen `.md` dosyasını analiz et ve bana hangi tabloların bizim "Mamül Ağacı" ve "Maliyet Hesaplama" araçlarımız için kullanılacağını raporla.

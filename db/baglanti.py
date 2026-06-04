@@ -6,7 +6,7 @@ from config import USE_DEMO
 _conn = None
 
 _DSN = (
-    "DRIVER={{ODBC Driver 17 for SQL Server}};"
+    "DRIVER={{SQL Server}};"
     "SERVER={sunucu};DATABASE={veritabani};"
     "UID={kullanici};PWD={sifre};"
     "TrustServerCertificate=yes;"
