@@ -48,3 +48,6 @@ qt_screenshot.png
 build/
 
 CEO-ERP-Araclar.spec
+
+dist/*.log
+dist/*.png

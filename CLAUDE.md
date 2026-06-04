@@ -1,24 +1,22 @@
-# CEO ERP Proje Kuralları
+# CEO ERP Araçları — Proje Kuralları
 
-## ERP-OKUMA.md Güncelleme Zorunluluğu
+## Her Değişiklik Döngüsü
 
-Her kod değişikliğinden, hata düzeltmesinden veya yeni özellik eklenmesinden sonra
-**ERP-OKUMA.md dosyası mutlaka güncellenmeli ve GitHub'a push edilmelidir.**
-
-Bu adımlar her değişiklik döngüsünün son adımıdır:
 1. Kodu değiştir
-2. Test et
-3. exe derle (gerekiyorsa)
-4. **ERP-OKUMA.md güncelle** ← UNUTMA
+2. Test et (`python main.py`)
+3. Gerekiyorsa exe derle: `build.bat` → sonra `copy config.json dist\config.json`
+4. `ERP-OKUMA.md` güncelle
 5. `git add -A && git commit && git push`
 
-## Dağıtım Kuralları
+## Dağıtım
 
+- Exe adı: `dist/CEO-ERP-Araclar.exe`
 - Her exe derlemesinden sonra `config.json` → `dist/config.json` kopyalanmalı
-- Her push'ta `dist/CEO-ERP.exe` ve `dist/config.json` birlikte gönderilmeli
+- Her push'ta `dist/CEO-ERP-Araclar.exe` ve `dist/config.json` birlikte gönderilmeli
 
-## Proje Bilgileri
+## Proje
 
-- Veritabanı: SQL Server, WIN-3FATBI9RQAA\CEO1, Firma 504
-- Demo mod: Kaldırıldı — sadece canlı DB
-- GitHub: https://github.com/savasadiguzel-hash/ceo-erp-arac
+- **GitHub:** https://github.com/savasadiguzel-hash/ceo-erp-arac
+- **DB:** SQL Server `WIN-3FATBI9RQAA\CEO1`, Firma 504
+- **Kural:** CEO ERP'de SADECE OKUMA (`talimat.txt`). Yazma yalnızca stok kartı akışında.
+- **Yapı:** 4 sekme — Mamül Ağacı / Maliyet / SW Kodlama / Stok Kartı Aktar
