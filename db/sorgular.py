@@ -211,10 +211,12 @@ def stok_fiyat_gecmisi(conn, stok_kodu: str, bas: str, bit: str) -> list[dict]:
                 'ADET' as BirimAciklama
             FROM StokHareketDetay shd
             JOIN StokHareket sh ON sh.Id = shd.HareketId
-            JOIN StokKarti sk ON 1=1
+            JOIN StokKarti sk ON sk.Id = shd.IslemKartId
             WHERE sk.Kodu = ?
               AND CAST(sh.BelgeTarihi AS DATE) >= CAST('{bas_sql}' AS DATE)
               AND CAST(sh.BelgeTarihi AS DATE) <= CAST('{bit_sql}' AS DATE)
+              AND shd.BirimFiyat > 0
+              AND shd.Miktar > 0
             ORDER BY sh.BelgeTarihi ASC
         """, stok_kodu)
 
