@@ -1,7 +1,7 @@
 # CEO ERP — Mamül Ağacı Bağlantı ve Maliyet Hesaplama Aracı
 
 **GitHub:** https://github.com/savasadiguzel-hash/ceo-erp-arac  
-**Son güncelleme:** 2026-06-04  
+**Son güncelleme:** 2026-06-04 (oturum 2)  
 **Dağıtım:** `dist/CEO-ERP.exe` (PyInstaller 6.20.0, tek dosya, ~43 MB)
 
 ---
@@ -73,9 +73,9 @@ C:\yeni-erp\
 ├── ERP-OKUMA.md         ← Bu dosya
 │
 ├── db/
-│   ├── demo_data.py     ← Tüm demo sabitler (DEMO_BOM, DEMO_STOKLAR vb.)
+│   ├── demo_data.py     ← Eski demo sabitler (artık kullanılmıyor)
 │   ├── baglanti.py      ← get_connection() · cursor_ctx() · baglanti_ctx()
-│   └── sorgular.py      ← Veri erişim katmanı; stub'lar cursor_ctx kullanır
+│   └── sorgular.py      ← Veri erişim katmanı; gerçek CEO ERP SQL sorguları
 │
 ├── logic/
 │   ├── maliyet.py       ← birim_maliyet() · mamul_maliyet_hesapla() + memoization
@@ -118,8 +118,8 @@ C:\yeni-erp\
 
 `test_baglanti()` artık `baglanti_ctx + cursor_ctx` kullanır — cursor sızıntısı yok.
 
-### Sorgu Stub Mimarisi (`db/sorgular.py`)
-Tüm stub'lar `with cursor_ctx(conn) as cur:` bloğuna taşındı. `NotImplementedError` fırlatılsa dahi cursor kapatılır. Gerçek SQL eklenirken yalnızca yorumlar açılacak.
+### Gerçek SQL Sorguları (`db/sorgular.py`)
+Demo mod ve tüm `NotImplementedError` stub'ları kaldırıldı. Tüm fonksiyonlar CEO ERP tablolarına (`UretimRecete`, `StokKarti`, `StokHareket`, `StokHareketDetay`) yönelik gerçek SQL çalıştırır.
 
 ### Memoization + Çok Seviyeli BOM (`logic/maliyet.py`)
 - `_cache: dict` — oturum boyunca paylaşılan RAM önbelleği
@@ -154,17 +154,6 @@ MaliyetHesaplamaThread(QThread)
 Excel'de SUM/TOPLA formülleri çalışır; sıralama/filtreleme sayısal davranır.
 
 ---
-
-## Demo / Gerçek Mod Ayrımı
-
-`config.json` dosyasındaki `use_demo` alanıyla yönetilir:
-
-```json
-{ "use_demo": true }   ← demo verisiyle çalışır, DB gerekmez
-{ "use_demo": false }  ← gerçek SQL Server bağlantısı kullanılır
-```
-
-`db/sorgular.py` içindeki her fonksiyon bu bayrağa göre demo datayı döner veya gerçek sorguyu çalıştırır.
 
 ---
 
@@ -221,36 +210,17 @@ Her mamül için 4 satır tipi (renkli):
 
 ---
 
-## Yapılacaklar (Sonraki Oturum)
+## Sistem Durumu
 
-### ⏳ Önce Cevaplanması Gereken Sorular
-
-1. **Bağlantı yöntemi:** SQL Authentication (kullanıcı/şifre) mi, Windows Authentication mi?
-2. **Sunucu konumu:** Bu bilgisayar (localhost) mı, ağdaki başka sunucu mu?
-3. **Sunucu adı / IP:** Örn: `192.168.1.10\CEOERP` veya `localhost\SQLEXPRESS`
-4. **Veritabanı adı:** CEO ERP'nin kullandığı DB adı
-5. **Kullanıcı adı / şifre:** (SQL Auth ise)
-
-Sorular cevaplanınca bağlantı kurulur, CEO ERP tablo yapısı keşfedilir ve `db/sorgular.py` içindeki stub'lar gerçek SQL ile doldurulur.
-
-### Bağlantı Kurulduktan Sonra
-
-**Araç 1:**
-- [ ] CEO ERP tablo yapısının incelenmesi (stok, reçete, mamül ağacı, fatura satırları)
-- [ ] `recetesiz_faturali_stoklar()` için gerçek SQL yazılması
-- [ ] `mamul_agaci_listesi()` için gerçek SQL yazılması
-- [ ] `stoku_mamule_bagla()` için INSERT/UPDATE yazılması
-
-**Araç 2:**
-- [ ] `bom_listesi()` için gerçek SQL yazılması
-- [ ] `stok_fiyat_gecmisi()` için gerçek SQL yazılması
-- [ ] Çok seviyeli BOM özyinelemeli hesaplama gerçek veriyle testi
-
-**Ortak:**
-- [x] PyInstaller ile tek `.exe` çıktısı → `dist/CEO-ERP.exe`
-- [x] Merkezi loglama → `ceo_erp.log`
-- [x] Dinamik `config.json` + base64 şifre gizleme
-- [x] `cursor_ctx` / `baglanti_ctx` context manager altyapısı
-- [x] Memoization + döngüsel BOM koruması
-- [x] Non-blocking `MaliyetHesaplamaThread`
-- [x] Excel sayı formatları düzeltildi
+| Bileşen | Durum |
+|---|---|
+| Araç 1 — Mamül Bağlantı | ✅ Çalışıyor (canlı DB) |
+| Araç 2 — Maliyet Hesaplama | ✅ Çalışıyor (canlı DB) |
+| BOM tüm seviye patlaması | ✅ `UretimReceteHatPlaniGirdi` |
+| LIFO / FIFO / Ağırlıklı Ortalama | ✅ |
+| KOD:XX operasyon genişletme | ✅ |
+| Excel hiyerarşik rapor | ✅ Sayısal formatlar düzgün |
+| Demo mod | ✅ Tamamen kaldırıldı |
+| Demo butonu (Bağlantı ekranı) | ✅ Kaldırıldı |
+| Canlı DB bağlantısı | ✅ `WIN-3FATBI9RQAA\CEO1`, Firma 504 |
+| Exe dağıtımı | ✅ `dist/CEO-ERP.exe` ~44 MB |

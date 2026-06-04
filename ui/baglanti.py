@@ -65,8 +65,6 @@ class BaglantiSayfasi(QWidget):
 
         baglan_btn = buton("  Bağlan ve Taramayı Başlat  ", "#3f51b5", h=42, min_w=230)
         baglan_btn.clicked.connect(self.devam.emit)
-        demo_btn = buton("Demo Modunda Çalıştır", "#eceff1", "#37474f")
-        demo_btn.clicked.connect(self.devam.emit)
         geri_btn = buton("← Ana Menü", "#eceff1", "#37474f")
         geri_btn.clicked.connect(self.geri.emit)
 
@@ -79,7 +77,6 @@ class BaglantiSayfasi(QWidget):
         ana.addWidget(tarih_grup, alignment=Qt.AlignCenter)
         ana.addSpacing(6)
         ana.addWidget(baglan_btn, alignment=Qt.AlignCenter)
-        ana.addWidget(demo_btn,   alignment=Qt.AlignCenter)
         ana.addSpacing(10)
         ana.addWidget(geri_btn,   alignment=Qt.AlignCenter)
         ana.addStretch()
