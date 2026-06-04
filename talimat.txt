@@ -1,16 +1,2 @@
-Dur! Maliyet hesaplama motorunda ve BOM listelemede çok kritik bir endüstriyel mühendislik hatası yapıyorsun. Şu anki yapın sadece Tek Seviyeli (Single-Level) reçeteleri çekiyor. Ancak bizim ürünlerimiz iç içe geçmiş alt montajlar (yarı mamüller) barındırıyor. Sen en alt kaleme kadar (hammadde, civata, lazer kesim parça vb.) reçeteyi patlatmadığın için, maliyet motoru LIFO/FIFO hesaplarken bu hammaddelerin faturalarını bulamıyor ve maliyet analizini tamamen bozuyor. Canlı sistemde tam patlatılmış reçete (Multi-Level Exploded BOM) mimarisine geçmemiz şart.
-
-Senden `db/sorgular.py`, `logic/maliyet.py` ve `logic/excel.py` dosyalarını şu kurallara göre kökten revize etmeni istiyorum:
-
-1. SQL Sorgusunu Özyinelemeli (Recursive) Yap:
-   `db/sorgular.py` içindeki `bom_listesi()` fonksiyonunu tek bir seviyeyi dönecek şekilde bırakma. SQL Server'ın `WITH CTE` (Common Table Expression) yapısını kullanarak, verilen bir mamül kodunun altındaki tüm alt bileşenleri, onların altındaki hammaddeleri en alt kırılıma kadar recursive olarak çeken tek bir sorgu yaz. Sorgu çıktı olarak her satırın hiyerarşik derinliğini (`Seviye / Level`: 1, 2, 3...) de vermeli.
-
-2. Maliyet Motorunu (`logic/maliyet.py`) En Alt Kalemlere Endeksle:
-   - `mamul_maliyet_hesapla()` fonksiyonu, hiyerarşideki yarı mamüllerin kendisine fiyat biçmeye çalışmamalı. 
-   - Reçete ağacını tararken eğer bir kalemin altında başka alt bileşenler varsa (yani o bir yarı mamül ise), onun maliyetini doğrudan faturalarda aramak yerine, altındaki gerçek bileşenlerin maliyetlerinin toplamından (Roll-up Cost) oluşturmalı.
-   - Gerçek LIFO/FIFO/Ortalama hesaplaması sadece ve sadece altındaki başka hiçbir parça bulunmayan "en alt hiyerarşideki" satın alma kalemleri (hammadde ve parçalar) için `stok_fiyat_gecmisi()` üzerinden yapılmalı.
-
-3. Excel Raporlama Yapısını (`logic/excel.py`) Güncelle:
-   Excel çıktısı üretilirken parçaların hangi seviyede olduğu net anlaşılsın. Örneğin Seviye 1 kalemler sola dayalı, Seviye 2 kalemler bir tab içeride, Seviye 3 kalemler iki tab içeride olacak şekilde (Indented BOM formatı) yazdırılsın ve Seviye sütunu açıkça raporda yer alsın.
-
-Bu mantık hatasını düzelterek tüm mimariyi tam patlatılmış hiyerarşik yapıya geçir, kodları güncelle ve gerçek veritabanında bir mamülün en alt vidasına kadar indiğini gösteren test çıktısını terminale bas.
+BİLEŞEN	1	GMP-101-230014	BORESIGHTER SP	GMP-200-230602	BORESIGHTER SP V3 GÖVDE	1,	ADET	7.878,5000 ₺	7.878,50 ₺
+Yukarda örnek verdiğim bileşen için 7878,5 tl lik maliyeti nasıl buldun. Tarih aralığın olarak 01.01.2025 - 01.06.2026 yı seçtim.Maliyet hesap yöntemi LIFO. 

@@ -163,26 +163,54 @@ def bom_listesi(conn) -> dict:
             ORDER BY ur.Kodu, sk.Kodu
         """)
 
-        # Sonuçları DEMO_BOM formatında organize et
+        # Sonuçları organize et; gerçek reçetesi olan mamülleri işaretle
         bom = {}
+        gercek_receteli = set()   # UretimReceteHatPlaniGirdi'den gelen mamüller
         for mamul_kodu, mamul_adi, bilesen_kodu, bilesen_adi, miktar in cur.fetchall():
             if mamul_kodu not in bom:
-                bom[mamul_kodu] = {
-                    "ad": mamul_adi,
-                    "birim": "ADET",  # Varsayılan
-                    "bilesenleri": []
-                }
-
-            # Aynı bileşen zaten eklenmediyse ekle
+                bom[mamul_kodu] = {"ad": mamul_adi, "birim": "ADET", "bilesenleri": []}
             if not any(b["kod"] == bilesen_kodu for b in bom[mamul_kodu]["bilesenleri"]):
                 bom[mamul_kodu]["bilesenleri"].append({
-                    "kod": bilesen_kodu,
-                    "ad": bilesen_adi,
+                    "kod":    bilesen_kodu,
+                    "ad":     bilesen_adi,
                     "miktar": float(miktar) if miktar is not None else 1.0,
-                    "birim": "ADET"  # Varsayılan
+                    "birim":  "ADET",
+                })
+            gercek_receteli.add(mamul_kodu)
+
+    # ── Operasyon alt kodları (KOD:XX) ──────────────────────────────────────
+    # CEO ERP'de imalat operasyonları KOD:20 (FREZE), KOD:60 (KAPLAMA),
+    # KOD:100 (LAZER) gibi ayrı StokKarti kayıtlarıyla tutulur.
+    # Gerçek reçetesi olmayan her stok için KOD:XX alt operasyonlarını
+    # sanal BOM girişi olarak ekle.
+    with cursor_ctx(conn) as cur:
+        cur.execute("""
+            SELECT sk_parent.Kodu, sk_parent.Adi,
+                   sk_child.Kodu,  sk_child.Adi
+            FROM StokKarti sk_parent
+            JOIN StokKarti sk_child
+                ON sk_child.Kodu LIKE sk_parent.Kodu + ':%'
+               AND sk_child.Kodu NOT LIKE sk_parent.Kodu + ':%:%'
+            WHERE sk_parent.Aktif = 1
+              AND sk_child.Aktif  = 1
+              AND sk_parent.Kodu NOT LIKE '%:%'
+            ORDER BY sk_parent.Kodu, sk_child.Kodu
+        """)
+        for p_kod, p_adi, c_kod, c_adi in cur.fetchall():
+            # Gerçek reçetesi olan mamüllere dokunma
+            if p_kod in gercek_receteli:
+                continue
+            if p_kod not in bom:
+                bom[p_kod] = {"ad": p_adi, "birim": "ADET", "bilesenleri": []}
+            if not any(b["kod"] == c_kod for b in bom[p_kod]["bilesenleri"]):
+                bom[p_kod]["bilesenleri"].append({
+                    "kod":    c_kod,
+                    "ad":     c_adi,
+                    "miktar": 1.0,
+                    "birim":  "ADET",
                 })
 
-        return bom
+    return bom
 
 
 def stok_fiyat_gecmisi(conn, stok_kodu: str, bas: str, bit: str) -> list[dict]:
