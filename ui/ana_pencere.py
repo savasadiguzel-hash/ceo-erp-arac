@@ -4,7 +4,7 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QFont
-from config import USE_DEMO, config_kaydet
+from config import config_kaydet
 from db.baglanti import get_connection
 from ui.stil import STIL
 from ui.ana_menu    import AnaMenüSayfasi
@@ -58,13 +58,10 @@ class AnaPencere(QMainWindow):
         self.sb = QStatusBar()
         self.sb.setStyleSheet("background:#f5f5f5;color:#555;font-size:11px;")
         self.setStatusBar(self.sb)
-        mod = "Demo" if USE_DEMO else "Gerçek DB"
-        self.sb.showMessage(f"Mod: {mod} — Araç seçmek için ana menüyü kullanın.")
+        self.sb.showMessage("Araç seçmek için ana menüyü kullanın.")
 
     # ── Bağlantı yönetimi ────────────────────────────────────────────────────
     def _baglanti_al(self):
-        if USE_DEMO:
-            return None
         if self._conn is None:
             self._conn = get_connection(
                 self.s1.sunucu.text(), self.s1.db_adi.text(),
@@ -90,13 +87,12 @@ class AnaPencere(QMainWindow):
             QMessageBox.critical(self, "Bağlantı Hatası",
                                  f"Veritabanına bağlanılamadı:\n\n{e}")
             return
-        if not USE_DEMO:
-            config_kaydet(
-                self.s1.sunucu.text(),
-                self.s1.db_adi.text(),
-                self.s1.kullanici.text(),
-                self.s1.sifre.text(),
-            )
+        config_kaydet(
+            self.s1.sunucu.text(),
+            self.s1.db_adi.text(),
+            self.s1.kullanici.text(),
+            self.s1.sifre.text(),
+        )
         turleri = self.s1.secili_fatura_turleri()
         self.sayfa_gec(2)
         self.s2.baslat(conn, turleri, tarihler[0], tarihler[1])

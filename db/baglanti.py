@@ -1,12 +1,11 @@
 import logging
 import pyodbc
 from contextlib import contextmanager
-from config import USE_DEMO
 
 _conn = None
 
 _DSN = (
-    "DRIVER={{ODBC Driver 17 for SQL Server}};"
+    "DRIVER={{SQL Server}};"
     "SERVER={sunucu};DATABASE={veritabani};"
     "UID={kullanici};PWD={sifre};"
     "TrustServerCertificate=yes;"
@@ -14,10 +13,8 @@ _DSN = (
 
 
 def get_connection(sunucu: str, veritabani: str, kullanici: str, sifre: str):
-    """Oturum boyunca tekil bağlantı döner. USE_DEMO=True ise None döner."""
+    """Oturum boyunca tekil bağlantı döner."""
     global _conn
-    if USE_DEMO:
-        return None
     if _conn is None:
         dsn = _DSN.format(sunucu=sunucu, veritabani=veritabani,
                           kullanici=kullanici, sifre=sifre)
