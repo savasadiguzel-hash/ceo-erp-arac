@@ -38,3 +38,9 @@ ceo_erp_*.xlsx
 
 # Yerel veritabanı bağlantı bilgileri (şifre içerebilir)
 config.json
+
+test_gui.py
+screenshot*.png
+app_screenshot*.png
+app_front.png
+qt_screenshot.png

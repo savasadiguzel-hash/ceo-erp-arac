@@ -8,6 +8,20 @@ from db.baglanti import cursor_ctx
 
 # ── Araç 1: Mamül Ağacı Bağlantı ──────────────────────────────────────────────
 
+def tarama_istatistikleri(conn) -> list[tuple[str, int]]:
+    """İlerleme animasyonu için (mesaj, toplam) çiftleri döner."""
+    adimlar = []
+    with cursor_ctx(conn) as cur:
+        cur.execute("SELECT COUNT(*) FROM StokKarti WHERE Aktif=1")
+        n = cur.fetchone()[0] or 0
+        adimlar.append(("Stok kartları taranıyor…", n))
+    with cursor_ctx(conn) as cur:
+        cur.execute("SELECT COUNT(*) FROM UretimReceteHatPlani")
+        n = cur.fetchone()[0] or 0
+        adimlar.append(("Reçeteler inceleniyor…", max(n, 1)))
+    return adimlar
+
+
 def mamul_agaci_listesi(conn) -> list[tuple[str, str]]:
     """[(kod, ad), ...] döner. Aktif reçete/mamülleri listeler."""
     with cursor_ctx(conn) as cur:

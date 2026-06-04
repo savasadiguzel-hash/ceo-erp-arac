@@ -1,8 +1,31 @@
-# CEO ERP — Mamül Ağacı Bağlantı ve Maliyet Hesaplama Aracı
+# CEO ERP Araçları — Birleşik Uygulama
 
 **GitHub:** https://github.com/savasadiguzel-hash/ceo-erp-arac  
-**Son güncelleme:** 2026-06-04 (oturum 2)  
-**Dağıtım:** `dist/CEO-ERP.exe` (PyInstaller 6.20.0, tek dosya, ~43 MB)
+**Son güncelleme:** 2026-06-04 (oturum 3 — SW-ERP-Agent birleştirildi)  
+**Dağıtım:** `dist/CEO-ERP-Araclar.exe` (PyInstaller, tek dosya)
+
+## Birleşik Mimari (Oturum 3)
+
+SW-ERP-Agent (sw-erp-agent repo) bu projeye entegre edildi.
+Tek PyQt5 uygulaması, 4 sekme:
+
+| Sekme | Kaynak | Durum |
+|---|---|---|
+| 🔗 Mamül Ağacı | CEO ERP aracı (orijinal) | ✅ |
+| 💰 Maliyet | CEO ERP aracı (orijinal) | ✅ |
+| ⚙ SW Kodlama | SW-ERP-Agent v3.6 (PyQt5'e taşındı) | ✅ |
+| 📦 Stok Kartı Aktar | erp_handler.py (yeni sekme) | ✅ |
+
+### Yeni Klasör Yapısı
+
+```
+sw/               ← SW-ERP-Agent modülleri (models, sw_reader, classifier,
+                     excel_handler, renamer, vision_handler, erp_handler, pipeline)
+ui/tab_sw.py      ← SW Kodlama sekmesi (PyQt5, queue+QTimer mimarisi)
+ui/tab_erp_aktar.py ← Stok Kartı Aktar sekmesi
+ui/mamul_agaci_tab.py ← Mevcut wizard'ı saran yeni tab widget
+ui/ana_pencere.py ← QTabWidget ile yeniden yazıldı
+```
 
 ---
 
