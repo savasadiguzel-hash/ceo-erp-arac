@@ -1,0 +1,7 @@
+{
+  "use_demo": true,
+  "sunucu": "localhost\\SQLEXPRESS",
+  "veritabani": "CEO_ERP",
+  "kullanici": "sa",
+  "sifre_enc": ""
+}

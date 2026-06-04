@@ -13,7 +13,7 @@ build/
 
 # dist klasörü: exe ve config.json dahil, geri kalanı hariç
 dist/*
-!dist/CEO-ERP.exe
+!dist/CEO-ERP-Araclar.exe
 !dist/config.json
 
 # Virtual environment
@@ -36,11 +36,15 @@ ceo_erp_*.xlsx
 # Log dosyaları
 *.log
 
-# Yerel veritabanı bağlantı bilgileri (şifre içerebilir)
-config.json
+# Yerel veritabanı bağlantı bilgileri (şifre içerebilir; dist/config.json hariç)
+/config.json
 
 test_gui.py
 screenshot*.png
 app_screenshot*.png
 app_front.png
 qt_screenshot.png
+
+build/
+
+CEO-ERP-Araclar.spec
