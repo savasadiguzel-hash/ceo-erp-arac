@@ -328,10 +328,10 @@ class MaliyetSayfasi(QWidget):
             return
 
         metod = self._secili_metod()
-        bas   = bas_dt.strftime("%Y-%m-%d")
-        bit   = bit_dt.strftime("%Y-%m-%d")
         bas_g = bas_dt.strftime("%d.%m.%Y")
         bit_g = bit_dt.strftime("%d.%m.%Y")
+        bas   = bas_g
+        bit   = bit_g
 
         # Widget değerlerini thread başlamadan önce çıkar (thread-safe)
         secili_data: list[tuple[str, float]] = [
