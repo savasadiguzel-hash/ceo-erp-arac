@@ -13,7 +13,6 @@ Araç 2: Maliyet Hesaplama Aracı
 Veritabanı bağlantısı için config.json dosyasını aşağıdaki şekilde ayarlayın:
 
 {
-  "use_demo": false,
   "sunucu": "WIN-3FATBI9RQAA\\CEO1",
   "veritabani": "504",
   "kullanici": "sa",

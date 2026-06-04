@@ -1,25 +1,15 @@
 """
-Tüm veri erişimi bu modülden yapılır.
-USE_DEMO=True  → demo_data sabitlerini döner
-USE_DEMO=False → gerçek SQL sorgularını çalıştırır
-
+Tüm veri erişimi bu modülden yapılır. SQL Server ile çalışır.
 Kural: her sorgu cursor_ctx(conn) ile açılır; finally bloğu cursor'ı kesinlikle kapatır.
 """
 import logging
-from config import USE_DEMO
 from db.baglanti import cursor_ctx
-from db.demo_data import (
-    DEMO_MAMUL_AGACLARI, DEMO_STOKLAR,
-    DEMO_TARAMA_ADIMLARI, DEMO_BOM, DEMO_FIYATLAR,
-)
 
 
 # ── Araç 1: Mamül Ağacı Bağlantı ──────────────────────────────────────────────
 
 def mamul_agaci_listesi(conn) -> list[tuple[str, str]]:
     """[(kod, ad), ...] döner. Aktif reçete/mamülleri listeler."""
-    if USE_DEMO:
-        return DEMO_MAMUL_AGACLARI
     with cursor_ctx(conn) as cur:
         cur.execute("""
             SELECT DISTINCT sk.Kodu, sk.Adi
@@ -39,8 +29,6 @@ def recetesiz_faturali_stoklar(conn, fatura_turleri: list[str],
     Her eleman: stok_kodu, stok_adi, fatura_sayisi, toplam_tutar,
                 ilk_fatura, son_fatura, tedarikci, fatura_turleri
     """
-    if USE_DEMO:
-        return DEMO_STOKLAR
     with cursor_ctx(conn) as cur:
         # İki filtreli kesişim:
         # 1) Reçete bileşeninde olmayan stoklar
@@ -102,8 +90,6 @@ def recetesiz_faturali_stoklar(conn, fatura_turleri: list[str],
 
 def stoku_mamule_bagla(conn, stok_kodu: str, mamul_kodu: str) -> None:
     """Stoku reçete bileşenlerine ekler (DB güncelleme)."""
-    if USE_DEMO:
-        return
     with cursor_ctx(conn) as cur:
         # Stok ve mamülün ID'sini bul
         cur.execute("SELECT Id FROM StokKarti WHERE Kodu = ?", stok_kodu)
@@ -152,9 +138,7 @@ def stoku_mamule_bagla(conn, stok_kodu: str, mamul_kodu: str) -> None:
 # ── Araç 2: Maliyet Hesaplama ─────────────────────────────────────────────────
 
 def bom_listesi(conn) -> dict:
-    """DEMO_BOM formatında dict döner: {mamul_kodu: {ad, birim, bilesenleri: [...]}}"""
-    if USE_DEMO:
-        return DEMO_BOM
+    """dict döner: {mamul_kodu: {ad, birim, bilesenleri: [...]}}"""
     with cursor_ctx(conn) as cur:
         # Basit sorgu: tüm reçete bileşenlerini getir (şu an recursive olmadan, demo veri flat olduğu için)
         # SQL Server'da recursive CTE'de LEFT JOIN sorunu olduğu için basit INNER JOIN kullanalım
@@ -202,8 +186,6 @@ def stok_fiyat_gecmisi(conn, stok_kodu: str, bas: str, bit: str) -> list[dict]:
     Her eleman: tarih (YYYY-MM-DD), birim_fiyat, miktar, birim
     Tarihi DD.MM.YYYY formatında geçirse de, dönen veriler YYYY-MM-DD'dir.
     """
-    if USE_DEMO:
-        return DEMO_FIYATLAR.get(stok_kodu, [])
     with cursor_ctx(conn) as cur:
         # Tarihi DD.MM.YYYY -> YYYY-MM-DD formatına çevir
         bas_parts = bas.split('.')
@@ -248,13 +230,3 @@ def stok_fiyat_gecmisi(conn, stok_kodu: str, bas: str, bit: str) -> list[dict]:
         return results
 
 
-def tarama_istatistikleri(conn) -> list[tuple[str, int]]:
-    """Tarama animasyonu için (adım_mesajı, kayıt_sayısı) listesi."""
-    if USE_DEMO:
-        return DEMO_TARAMA_ADIMLARI
-    with cursor_ctx(conn) as cur:
-        # TODO: COUNT sorguları ile gerçek kayıt sayıları
-        # cur.execute("SELECT COUNT(*) FROM tbl_Stok")
-        # toplam_stok = cur.fetchone()[0]
-        # ...
-        raise NotImplementedError("Gerçek sorgu henüz yazılmadı.")

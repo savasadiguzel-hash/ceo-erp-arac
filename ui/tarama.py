@@ -1,7 +1,6 @@
-import time
 from PyQt5.QtWidgets import QWidget, QVBoxLayout, QLabel, QProgressBar, QGroupBox
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
-from db.sorgular import tarama_istatistikleri, recetesiz_faturali_stoklar
+from db.sorgular import recetesiz_faturali_stoklar
 from ui.stil import etiket, buton
 
 
@@ -17,16 +16,10 @@ class TaramaThread(QThread):
         self.bit_tarih = bit_tarih
 
     def run(self):
-        adimlar = tarama_istatistikleri(self.conn)
-        for mesaj, toplam in adimlar:
-            adim = max(1, toplam // 50)
-            for i in range(0, toplam + 1, adim):
-                self.adim.emit(mesaj, min(i, toplam), toplam)
-                time.sleep(0.016)
-            self.adim.emit(mesaj, toplam, toplam)
-            time.sleep(0.15)
+        self.adim.emit("Reçetesiz stoklar taranıyor...", 0, 100)
         stoklar = recetesiz_faturali_stoklar(self.conn, self.fatura_turleri,
                                              self.bas_tarih, self.bit_tarih)
+        self.adim.emit("Reçetesiz stoklar taranıyor...", 100, 100)
         self.bitti.emit(stoklar)
 
 

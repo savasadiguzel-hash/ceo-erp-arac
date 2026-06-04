@@ -155,18 +155,6 @@ Excel'de SUM/TOPLA formülleri çalışır; sıralama/filtreleme sayısal davran
 
 ---
 
-## Demo / Gerçek Mod Ayrımı
-
-`config.json` dosyasındaki `use_demo` alanıyla yönetilir:
-
-```json
-{ "use_demo": true }   ← demo verisiyle çalışır, DB gerekmez
-{ "use_demo": false }  ← gerçek SQL Server bağlantısı kullanılır
-```
-
-`db/sorgular.py` içindeki her fonksiyon bu bayrağa göre demo datayı döner veya gerçek sorguyu çalıştırır.
-
----
 
 ## Sayfa Yapısı (Stack Index)
 

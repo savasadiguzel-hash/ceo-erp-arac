@@ -17,7 +17,6 @@ else:
 CONFIG_PATH = _BASE / "config.json"
 
 _SABLON: dict = {
-    "use_demo":   True,
     "sunucu":     "localhost\\SQLEXPRESS",
     "veritabani": "CEO_ERP",
     "kullanici":  "sa",
@@ -67,8 +66,6 @@ def config_kaydet(sunucu: str, veritabani: str, kullanici: str, sifre: str) -> N
 
 
 _cfg = _cfg_oku()
-
-USE_DEMO: bool = bool(_cfg.get("use_demo", True))
 
 DB_DEFAULTS: dict = {
     "sunucu":     _cfg.get("sunucu", ""),
