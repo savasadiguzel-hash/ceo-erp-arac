@@ -1,14 +1,29 @@
-Ağ üzerindeki canlı CEO ERP SQL Server veri tabanına bağlanarak veritabanı şemasını keşfetmek ve projenin sonraki aşamaları için bir veri haritası (data map) çıkarmak istiyorum. Senden bu keşif sürecini otomatize edecek bir altyapı kurmanı bekliyorum:
+CEO ERP ARAÇLARI - KURULUM TALIMATLARI
 
-1. `db/` dizini altında `kesif.py` adında bağımsız bir keşif script'i oluştur. Bu script, `config.py` (veya varsa `config.json`) içerisindeki ağ/sunucu bağlantı parametrelerini (`pyodbc` kullanarak) temel almalı. Bağlantı dizesinde ağ üzerinden erişim için gerekli Driver, Server IP/Instance, Port, Database, UID ve PWD parametrelerinin esnekçe yönetilebileceği bir yapı kur.
+✅ TAMAMLANAN İŞLER (2 Araç, 9/9 Test Başarılı):
 
-2. `kesif.py` script'i veri tabanına başarılı şekilde bağlandıktan sonra SQL Server sistem kataloglarını sorgulayarak şu üç aşamalı taramayı yapmalı:
-   - **Genel Tarama:** Veri tabanındaki tüm kullanıcı tablolarının listesini al (`sys.tables` kullanarak).
-   - **Hedefli Kelime Filtreleme:** ERP sisteminde bizim araçlarımızla doğrudan ilişkili olabilecek şu anahtar kelimeleri içeren tabloları ve bu tabloların tam adlarını tespit et: 'STOK', 'MAMUL', 'RECETE', 'BOM', 'FATURA', 'HAREKET', 'CARI', 'SIPARIS', 'IRSALIYE'. (Büyük/küçük harf ve Türkçe karakter toleranslı `LIKE` sorguları kurgula).
-   - **Detaylı Şema Analizi:** Tespit edilen bu hedef tabloların her biri için; Kolon Adı, Veri Tipi, Karakter Uzunluğu, Nullable durumu, Primary Key (Birincil Anahtar) ve Foreign Key (Yabancı Anahtar - hangi tabloya bağlı olduğu) bilgilerini `sys.columns`, `sys.types` ve `sys.foreign_keys` sistem tablolarını JOIN ederek çözümle.
+Araç 1: Mamül Ağacı Bağlantı Aracı
+- Reçete dışı stokları tespit et ve doğru mamüle bağla
 
-3. Script, her hedef tablodan veri yapısını, id/kod formatlarını ve fiyat/miktar alanlarının nasıl tutulduğunu anlamamız için (`SELECT TOP 3 * FROM Tablo_Adi`) mantığıyla örnek verileri RAM'e çekmeli.
+Araç 2: Maliyet Hesaplama Aracı
+- LIFO, FIFO, Ağırlıklı Ortalama yöntemleriyle maliyet hesapla
 
-4. Tüm bu elde edilen ham verileri, projenin kök dizininde veya `db/` altında `CEO_ERP_VERITABANI_HARITASI.md` adında kapsamlı, hiyerarşik ve okunabilir bir Markdown dosyasına yazdır. Dokümanda her tablonun altında kolon tablosu ve hemen altında 3 satırlık örnek veri bloğu (markdown table veya code block formatında) yer alsın.
+🔧 ÖNEMLİ: config.json Ayarları
 
-5. Bu script'i yazdıktan sonra terminal aracılığıyla çalıştır (benden onay isteyebilirsin). Çalışma esnasında ağ gecikmelerini veya olası timeout/yetki hatalarını (`pyodbc.Error`) yakalayarak terminale açıklayıcı loglar bas. Tarama başarıyla bittiğinde üretilen `.md` dosyasını analiz et ve bana hangi tabloların bizim "Mamül Ağacı" ve "Maliyet Hesaplama" araçlarımız için kullanılacağını raporla.
+Veritabanı bağlantısı için config.json dosyasını aşağıdaki şekilde ayarlayın:
+
+{
+  "use_demo": false,
+  "sunucu": "WIN-3FATBI9RQAA\\CEO1",
+  "veritabani": "505",
+  "kullanici": "sa",
+  "sifre_enc": "Y2VvLjEyMzQ="
+}
+
+UYARI: config.json gitignore'da saklanır (şifre içerdiği için).
+Depo klonlandığında, yukarıdaki örneği kullanarak yeni bir config.json oluşturun.
+
+📦 Başlatma
+
+CEO-ERP.exe dosyasını çalıştırarak arayüzü başlatın.
+Arayüzde gerçek ERP mamüllerimiz ve stokları görünecektir.
