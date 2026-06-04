@@ -18,6 +18,13 @@ class AnaPencere(QMainWindow):
         self.setMinimumSize(960, 700)
         self.resize(1080, 780)
         self.setStyleSheet(STIL + _TAB_STIL)
+        # Pencereyi her zaman ekran merkezinde aç
+        from PyQt5.QtWidgets import QDesktopWidget
+        geo = QDesktopWidget().availableGeometry()
+        self.move(
+            geo.left() + (geo.width()  - 1080) // 2,
+            geo.top()  + (geo.height() - 780)  // 2,
+        )
 
         # ── sekmeler ────────────────────────────────────────────────────────
         self.tabs = QTabWidget()

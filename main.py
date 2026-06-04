@@ -1,8 +1,7 @@
 import sys
 import logging
+import traceback
 
-# basicConfig burada çağrılmalı; aksi halde config.py gibi erken
-# import edilen modüllerdeki log çağrıları dosyaya yazılmaz.
 logging.basicConfig(
     filename="ceo_erp.log",
     level=logging.DEBUG,
@@ -10,12 +9,26 @@ logging.basicConfig(
     encoding="utf-8",
 )
 
-from PyQt5.QtWidgets import QApplication  # noqa: E402
-from ui.ana_pencere import AnaPencere     # noqa: E402
+try:
+    from PyQt5.QtWidgets import QApplication, QMessageBox
+    from ui.ana_pencere import AnaPencere
+except Exception as e:
+    logging.critical("Import hatasi: %s\n%s", e, traceback.format_exc())
+    raise
 
 if __name__ == "__main__":
-    logging.info("Uygulama baslatildi.")
-    app = QApplication(sys.argv)
-    app.setStyle("Fusion")
-    AnaPencere().show()
-    sys.exit(app.exec_())
+    try:
+        logging.info("Uygulama baslatildi.")
+        app = QApplication(sys.argv)
+        app.setStyle("Fusion")
+        pencere = AnaPencere()
+        pencere.show()
+        logging.info("Pencere gosterildi.")
+        sys.exit(app.exec_())
+    except Exception as e:
+        logging.critical("Pencere olusturma hatasi: %s\n%s", e, traceback.format_exc())
+        try:
+            QMessageBox.critical(None, "Hata", f"Uygulama başlatılamadı:\n\n{e}")
+        except Exception:
+            pass
+        sys.exit(1)
