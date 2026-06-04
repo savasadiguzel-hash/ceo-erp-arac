@@ -1,14 +1,11 @@
 """
 Maliyet hesaplama iş mantığı. UI ve DB'den bağımsızdır.
 
-Önbellekleme stratejisi
------------------------
-Her hesaplama oturumu için dışarıdan bir `_cache: dict` geçirilir.
-- Anahtar formatı:  ("birim", stok_kodu, metod, bas, bit)
-                    ("mamul", mamul_kodu, metod, bas, bit)
-- Aynı parametrelerle daha önce hesaplanmış sonuçlar DB'ye gidilmeden döner.
-- Paylaşılan alt bileşenler (çok mamülde geçen stoklar) tek seferinde sorgulanır.
-- `_cache=None` geçilirse fonksiyon kendi önbelleğini oluşturur (bağımsız çağrı).
+Fonksiyonlar
+------------
+birim_maliyet()         : Tek stok için WA/FIFO/LIFO birim fiyat (önbellekli)
+mamul_maliyet_hesapla() : Maliyet toplamı hesabı (önbellekli, iç kullanım)
+mamul_tum_satirlar()    : Excel için tam BOM patlaması — tüm seviyeler dahil
 """
 from db.sorgular import stok_fiyat_gecmisi, bom_listesi
 
@@ -121,3 +118,80 @@ def mamul_maliyet_hesapla(
     sonuc = (satirlar, toplam_malzeme)
     _cache[mamul_key] = sonuc
     return sonuc
+
+
+def mamul_tum_satirlar(
+    conn, mamul_kodu: str, metod: str, bas: str, bit: str,
+    bom: dict,
+    _cache: dict | None = None,
+    _visiting: frozenset | None = None,
+    _seviye: int = 1,
+) -> tuple[list[dict], float]:
+    """
+    Excel için tam BOM patlaması — tüm seviyeler açılır.
+
+    Alt-mamüller de BOM'da tanımlıysa onların bileşenleri de eklenir.
+    Miktarlar BOM ağacı boyunca çarpılarak taşınır (örn. 2 adet A × 3 adet B = 6 adet B).
+
+    Döner: (satirlar, birim_toplam)
+      - satirlar : tip='ALT-MAMÜL' veya 'BİLEŞEN', seviye bilgisi dahil
+      - birim_toplam: bu mamülün 1 biriminin toplam malzeme maliyeti
+    """
+    if _cache   is None: _cache   = {}
+    if _visiting is None: _visiting = frozenset()
+
+    if mamul_kodu in _visiting:
+        return [], 0.0
+
+    mamul = bom.get(mamul_kodu)
+    if not mamul:
+        return [], 0.0
+
+    ziyaret = _visiting | {mamul_kodu}
+    satirlar: list[dict] = []
+    toplam = 0.0
+
+    for b in mamul["bilesenleri"]:
+        if b["kod"] in bom and b["kod"] not in ziyaret:
+            # Alt-mamül: önce kendi birim maliyetini bul, sonra bileşenlerini aç
+            alt_s, alt_birim = mamul_tum_satirlar(
+                conn, b["kod"], metod, bas, bit, bom, _cache, ziyaret, _seviye + 1
+            )
+            satir_maliyet = b["miktar"] * alt_birim
+
+            # Alt-mamül başlık satırı
+            satirlar.append({
+                "tip":        "ALT-MAMÜL",
+                "kod":        b["kod"],
+                "ad":         b["ad"],
+                "bom_miktar": b["miktar"],
+                "birim":      b["birim"],
+                "birim_mal":  alt_birim,
+                "satir_top":  satir_maliyet,
+                "seviye":     _seviye,
+            })
+            # Alt-mamülün bileşenlerini miktarla ölçekleyerek ekle
+            for alt in alt_s:
+                satirlar.append({
+                    **alt,
+                    "bom_miktar": alt["bom_miktar"] * b["miktar"],
+                    "satir_top":  alt["satir_top"]  * b["miktar"],
+                })
+            toplam += satir_maliyet
+        else:
+            # Yaprak bileşen: doğrudan fiyat sorgula
+            bm = birim_maliyet(conn, b["kod"], metod, bas, bit, _cache)
+            satir_maliyet = b["miktar"] * bm
+            satirlar.append({
+                "tip":        "BİLEŞEN",
+                "kod":        b["kod"],
+                "ad":         b["ad"],
+                "bom_miktar": b["miktar"],
+                "birim":      b["birim"],
+                "birim_mal":  bm,
+                "satir_top":  satir_maliyet,
+                "seviye":     _seviye,
+            })
+            toplam += satir_maliyet
+
+    return satirlar, toplam

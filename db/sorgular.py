@@ -138,31 +138,34 @@ def stoku_mamule_bagla(conn, stok_kodu: str, mamul_kodu: str) -> None:
 # ── Araç 2: Maliyet Hesaplama ─────────────────────────────────────────────────
 
 def bom_listesi(conn) -> dict:
-    """dict döner: {mamul_kodu: {ad, birim, bilesenleri: [...]}}"""
+    """dict döner: {mamul_kodu: {ad, birim, bilesenleri: [...]}}
+
+    Gerçek bileşenler UretimReceteHatPlaniGirdi tablosunda saklanır.
+    UretimReceteHatPlani üst satırdır; Girdi alt tablosu hammadde/parça girdilerini içerir.
+    """
     with cursor_ctx(conn) as cur:
-        # Tipi=1 → mamülün kendisi (çıktı ürün satırı, self-reference)
-        # Tipi=2 → gerçek bileşenler (girdiler)
-        # Sadece Tipi=2 AND kendi koduna eşit olmayan satırları al
         cur.execute("""
             SELECT DISTINCT
-                ur.Kodu as MamulKodu,
-                ur.Tanim as MamulAdi,
-                sk.Kodu as BilesenKodu,
-                sk.Adi as BilesenAdi,
-                urhp.Miktar,
-                urhp.BirimId
+                ur.Kodu  AS MamulKodu,
+                ur.Tanim AS MamulAdi,
+                sk.Kodu  AS BilesenKodu,
+                sk.Adi   AS BilesenAdi,
+                urhpg.Miktar
             FROM UretimRecete ur
-            INNER JOIN UretimReceteHatPlani urhp ON urhp.UretimReceteId = ur.Id
-            INNER JOIN StokKarti sk ON urhp.KartId = sk.Id
-            WHERE urhp.KartId IS NOT NULL
-              AND sk.Kodu != ur.Kodu
+            INNER JOIN UretimReceteHatPlani urhp
+                    ON urhp.UretimReceteId = ur.Id
+            INNER JOIN UretimReceteHatPlaniGirdi urhpg
+                    ON urhpg.UretimReceteHatPlaniId = urhp.Id
+            INNER JOIN StokKarti sk
+                    ON sk.Id = urhpg.KartId
+            WHERE urhpg.KartId IS NOT NULL
               AND sk.Aktif = 1
             ORDER BY ur.Kodu, sk.Kodu
         """)
 
         # Sonuçları DEMO_BOM formatında organize et
         bom = {}
-        for mamul_kodu, mamul_adi, bilesen_kodu, bilesen_adi, miktar, birim_id in cur.fetchall():
+        for mamul_kodu, mamul_adi, bilesen_kodu, bilesen_adi, miktar in cur.fetchall():
             if mamul_kodu not in bom:
                 bom[mamul_kodu] = {
                     "ad": mamul_adi,
@@ -175,7 +178,7 @@ def bom_listesi(conn) -> dict:
                 bom[mamul_kodu]["bilesenleri"].append({
                     "kod": bilesen_kodu,
                     "ad": bilesen_adi,
-                    "miktar": float(miktar),
+                    "miktar": float(miktar) if miktar is not None else 1.0,
                     "birim": "ADET"  # Varsayılan
                 })
 

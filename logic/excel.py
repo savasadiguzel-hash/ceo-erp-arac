@@ -4,7 +4,7 @@ import openpyxl
 from openpyxl.styles import PatternFill, Font as XFont, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 
-from logic.maliyet import mamul_maliyet_hesapla
+from logic.maliyet import mamul_tum_satirlar
 from db.sorgular import bom_listesi
 
 # ── Stil sabitleri ────────────────────────────────────────────────────────────
@@ -18,23 +18,25 @@ _SOL  = Alignment(horizontal="left",   vertical="center", wrap_text=True)
 _SAG  = Alignment(horizontal="right",  vertical="center")
 
 _FILL = {
-    "bilgi":    PatternFill("solid", fgColor="E8EAF6"),
-    "baslik":   PatternFill("solid", fgColor="1A237E"),
-    "mamul":    PatternFill("solid", fgColor="3F51B5"),
-    "bileseni": PatternFill("solid", fgColor="F5F5F5"),
-    "iscilik":  PatternFill("solid", fgColor="FFF3E0"),
-    "toplam":   PatternFill("solid", fgColor="E8F5E9"),
-    "baglandi": PatternFill("solid", fgColor="E8F5E9"),
-    "atlandi":  PatternFill("solid", fgColor="FFF8E1"),
+    "bilgi":      PatternFill("solid", fgColor="E8EAF6"),
+    "baslik":     PatternFill("solid", fgColor="1A237E"),
+    "mamul":      PatternFill("solid", fgColor="3F51B5"),
+    "alt_mamul":  PatternFill("solid", fgColor="C5CAE9"),
+    "bileseni":   PatternFill("solid", fgColor="F5F5F5"),
+    "iscilik":    PatternFill("solid", fgColor="FFF3E0"),
+    "toplam":     PatternFill("solid", fgColor="E8F5E9"),
+    "baglandi":   PatternFill("solid", fgColor="E8F5E9"),
+    "atlandi":    PatternFill("solid", fgColor="FFF8E1"),
 }
 _FONT = {
-    "baslik":   XFont(bold=True, color="FFFFFF", name="Segoe UI", size=11),
-    "mamul":    XFont(bold=True, color="FFFFFF", name="Segoe UI", size=11),
-    "bileseni": XFont(name="Segoe UI", size=10),
-    "iscilik":  XFont(italic=True, name="Segoe UI", size=10, color="E65100"),
-    "toplam":   XFont(bold=True, name="Segoe UI", size=11, color="1B5E20"),
-    "bilgi":    XFont(name="Segoe UI", size=10, color="555555"),
-    "veri":     XFont(name="Segoe UI", size=10),
+    "baslik":    XFont(bold=True, color="FFFFFF", name="Segoe UI", size=11),
+    "mamul":     XFont(bold=True, color="FFFFFF", name="Segoe UI", size=11),
+    "alt_mamul": XFont(bold=True, color="1A237E", name="Segoe UI", size=10),
+    "bileseni":  XFont(name="Segoe UI", size=10),
+    "iscilik":   XFont(italic=True, name="Segoe UI", size=10, color="E65100"),
+    "toplam":    XFont(bold=True, name="Segoe UI", size=11, color="1B5E20"),
+    "bilgi":     XFont(name="Segoe UI", size=10, color="555555"),
+    "veri":      XFont(name="Segoe UI", size=10),
 }
 
 # ── Sayı format sabitleri ─────────────────────────────────────────────────────
@@ -49,8 +51,8 @@ _FMT_ADET   = '#,##0'           # tam sayı (fatura sayısı vb.)
 # ── Sütun tanımları ───────────────────────────────────────────────────────────
 
 _MALIYET_SUTUNLAR = [
-    ("Tip", 10), ("Mamül Kodu", 14), ("Mamül Adı", 28),
-    ("Bileşen Kodu", 14), ("Bileşen Adı", 30), ("BOM Miktarı", 13),
+    ("Tip", 12), ("Seviye", 8), ("Mamül Kodu", 14), ("Mamül Adı", 28),
+    ("Bileşen Kodu", 14), ("Bileşen Adı", 34), ("BOM Miktarı", 13),
     ("Birim", 10), ("Birim Maliyet ₺", 18), ("Satır Maliyeti ₺", 18),
     ("Hammadde Toplamı ₺", 20), ("İşçilik ₺", 16), ("Genel Toplam ₺", 20),
 ]
@@ -171,20 +173,21 @@ def maliyet_excel_kaydet(
         if ilerleme_cb:
             ilerleme_cb(f"{mamul_kodu} — {mamul['ad']} hesaplanıyor...")
 
-        bilesenleri, hammadde_top = mamul_maliyet_hesapla(
-            conn, mamul_kodu, metod, bas, bit, _cache=cache
+        # Tüm BOM seviyeleri açılarak tam döküm alınır
+        bilesenleri, hammadde_top = mamul_tum_satirlar(
+            conn, mamul_kodu, metod, bas, bit, bom, _cache=cache
         )
         iscilik   = float(iscilik_ham)
         genel_top = hammadde_top + iscilik
 
         # ── Mamül başlık satırı ──────────────────────────────────────────────
-        # Sütunlar: Tip | MamulKod | MamulAd | — | — | — | — | — | — | HammaddeTop | Iscilik | GenelTop
         ws.row_dimensions[satir].height = 22
         _m = "mamul"
         for col, (val, aln, fmt) in enumerate([
-            ("MAMÜL",       _ORTA, None),
-            (mamul_kodu,    _ORTA, None),
-            (mamul["ad"],   _SOL,  None),
+            ("MAMÜL",  _ORTA, None),
+            (0,        _ORTA, None),   # Seviye
+            (mamul_kodu,  _ORTA, None),
+            (mamul["ad"], _SOL,  None),
             (None, _ORTA, None), (None, _ORTA, None), (None, _ORTA, None),
             (None, _ORTA, None), (None, _ORTA, None), (None, _ORTA, None),
             (round(hammadde_top, 2), _SAG, _FMT_PARA),
@@ -194,26 +197,31 @@ def maliyet_excel_kaydet(
             _hucre(ws, satir, col, val, _m, _m, aln, fmt)
         satir += 1
 
-        # ── Bileşen satırları ────────────────────────────────────────────────
+        # ── Bileşen satırları (tüm seviyeler) ───────────────────────────────
         for b in bilesenleri:
             ws.row_dimensions[satir].height = 18
+            seviye     = b.get("seviye", 1)
+            girinti    = "  " * (seviye - 1)   # her seviye 2 boşluk girinti
+            tip        = b["tip"]              # "BİLEŞEN" veya "ALT-MAMÜL"
+            stil       = "alt_mamul" if tip == "ALT-MAMÜL" else "bileseni"
             bom_miktar = _miktar(b["bom_miktar"])
-            birim_mal  = round(float(b["birim_mal"]),  4)
-            satir_top  = round(float(b["satir_top"]),  2)
-            _b = "bileseni"
+            birim_mal  = round(float(b["birim_mal"]), 4)
+            satir_top  = round(float(b["satir_top"]), 2)
+
             for col, (val, aln, fmt) in enumerate([
-                ("BİLEŞEN",  _ORTA, None),
-                (mamul_kodu, _ORTA, None),
-                (mamul["ad"],_SOL,  None),
-                (b["kod"], _ORTA, None),
-                (b["ad"],  _SOL,  None),
-                (bom_miktar,  _SAG,  _FMT_MIKTAR),
-                (b["birim"],  _ORTA, None),
-                (birim_mal,   _SAG,  _FMT_BIRIM),
-                (satir_top,   _SAG,  _FMT_PARA),
+                (tip,               _ORTA, None),
+                (seviye,            _ORTA, None),
+                (mamul_kodu,        _ORTA, None),
+                (mamul["ad"],       _SOL,  None),
+                (b["kod"],          _ORTA, None),
+                (girinti + b["ad"], _SOL,  None),
+                (bom_miktar,        _SAG,  _FMT_MIKTAR),
+                (b["birim"],        _ORTA, None),
+                (birim_mal,         _SAG,  _FMT_BIRIM),
+                (satir_top,         _SAG,  _FMT_PARA),
                 (None, _ORTA, None), (None, _ORTA, None), (None, _ORTA, None),
             ], 1):
-                _hucre(ws, satir, col, val, _b, _b, aln, fmt)
+                _hucre(ws, satir, col, val, stil, stil, aln, fmt)
             satir += 1
 
         # ── İşçilik satırı ───────────────────────────────────────────────────
@@ -221,13 +229,15 @@ def maliyet_excel_kaydet(
             ws.row_dimensions[satir].height = 18
             _i = "iscilik"
             for col, (val, aln, fmt) in enumerate([
-                ("İŞÇİLİK",              _ORTA, None),
-                (mamul_kodu,             _ORTA, None),
-                (mamul["ad"],            _SOL,  None),
-                ("—",                    _ORTA, None),
-                ("Manuel İşçilik Tutarı",_SOL,  None),
-                (None, _ORTA, None), (None, _ORTA, None), (None, _ORTA, None),
-                (round(iscilik, 2),      _SAG,  _FMT_PARA),
+                ("İŞÇİLİK",               _ORTA, None),
+                (None,                    _ORTA, None),
+                (mamul_kodu,              _ORTA, None),
+                (mamul["ad"],             _SOL,  None),
+                ("—",                     _ORTA, None),
+                ("Manuel İşçilik Tutarı", _SOL,  None),
+                (None, _ORTA, None), (None, _ORTA, None),
+                (round(iscilik, 2),       _SAG,  _FMT_PARA),
+                (round(iscilik, 2),       _SAG,  _FMT_PARA),
                 (None, _ORTA, None), (None, _ORTA, None), (None, _ORTA, None),
             ], 1):
                 _hucre(ws, satir, col, val, _i, _i, aln, fmt)
@@ -237,9 +247,10 @@ def maliyet_excel_kaydet(
         ws.row_dimensions[satir].height = 20
         _t = "toplam"
         for col, (val, aln, fmt) in enumerate([
-            ("TOPLAM",      _ORTA, None),
-            (mamul_kodu,    _ORTA, None),
-            (mamul["ad"],   _SOL,  None),
+            ("TOPLAM",   _ORTA, None),
+            (None,       _ORTA, None),
+            (mamul_kodu, _ORTA, None),
+            (mamul["ad"],_SOL,  None),
             (None, _ORTA, None), (None, _ORTA, None), (None, _ORTA, None),
             (None, _ORTA, None), (None, _ORTA, None), (None, _ORTA, None),
             (round(hammadde_top, 2), _SAG, _FMT_PARA),

@@ -1,28 +1,16 @@
-CEO ERP ARAÇLARI - KURULUM TALIMATLARI
+Dur! Maliyet hesaplama motorunda ve BOM listelemede çok kritik bir endüstriyel mühendislik hatası yapıyorsun. Şu anki yapın sadece Tek Seviyeli (Single-Level) reçeteleri çekiyor. Ancak bizim ürünlerimiz iç içe geçmiş alt montajlar (yarı mamüller) barındırıyor. Sen en alt kaleme kadar (hammadde, civata, lazer kesim parça vb.) reçeteyi patlatmadığın için, maliyet motoru LIFO/FIFO hesaplarken bu hammaddelerin faturalarını bulamıyor ve maliyet analizini tamamen bozuyor. Canlı sistemde tam patlatılmış reçete (Multi-Level Exploded BOM) mimarisine geçmemiz şart.
 
-✅ TAMAMLANAN İŞLER (2 Araç, 9/9 Test Başarılı):
+Senden `db/sorgular.py`, `logic/maliyet.py` ve `logic/excel.py` dosyalarını şu kurallara göre kökten revize etmeni istiyorum:
 
-Araç 1: Mamül Ağacı Bağlantı Aracı
-- Reçete dışı stokları tespit et ve doğru mamüle bağla
+1. SQL Sorgusunu Özyinelemeli (Recursive) Yap:
+   `db/sorgular.py` içindeki `bom_listesi()` fonksiyonunu tek bir seviyeyi dönecek şekilde bırakma. SQL Server'ın `WITH CTE` (Common Table Expression) yapısını kullanarak, verilen bir mamül kodunun altındaki tüm alt bileşenleri, onların altındaki hammaddeleri en alt kırılıma kadar recursive olarak çeken tek bir sorgu yaz. Sorgu çıktı olarak her satırın hiyerarşik derinliğini (`Seviye / Level`: 1, 2, 3...) de vermeli.
 
-Araç 2: Maliyet Hesaplama Aracı
-- LIFO, FIFO, Ağırlıklı Ortalama yöntemleriyle maliyet hesapla
+2. Maliyet Motorunu (`logic/maliyet.py`) En Alt Kalemlere Endeksle:
+   - `mamul_maliyet_hesapla()` fonksiyonu, hiyerarşideki yarı mamüllerin kendisine fiyat biçmeye çalışmamalı. 
+   - Reçete ağacını tararken eğer bir kalemin altında başka alt bileşenler varsa (yani o bir yarı mamül ise), onun maliyetini doğrudan faturalarda aramak yerine, altındaki gerçek bileşenlerin maliyetlerinin toplamından (Roll-up Cost) oluşturmalı.
+   - Gerçek LIFO/FIFO/Ortalama hesaplaması sadece ve sadece altındaki başka hiçbir parça bulunmayan "en alt hiyerarşideki" satın alma kalemleri (hammadde ve parçalar) için `stok_fiyat_gecmisi()` üzerinden yapılmalı.
 
-🔧 ÖNEMLİ: config.json Ayarları
+3. Excel Raporlama Yapısını (`logic/excel.py`) Güncelle:
+   Excel çıktısı üretilirken parçaların hangi seviyede olduğu net anlaşılsın. Örneğin Seviye 1 kalemler sola dayalı, Seviye 2 kalemler bir tab içeride, Seviye 3 kalemler iki tab içeride olacak şekilde (Indented BOM formatı) yazdırılsın ve Seviye sütunu açıkça raporda yer alsın.
 
-Veritabanı bağlantısı için config.json dosyasını aşağıdaki şekilde ayarlayın:
-
-{
-  "sunucu": "WIN-3FATBI9RQAA\\CEO1",
-  "veritabani": "504",
-  "kullanici": "sa",
-  "sifre_enc": "Y2VvLjEyMzQ="
-}
-
-UYARI: config.json gitignore'da saklanır (şifre içerdiği için).
-Depo klonlandığında, yukarıdaki örneği kullanarak yeni bir config.json oluşturun.
-
-📦 Başlatma
-
-CEO-ERP.exe dosyasını çalıştırarak arayüzü başlatın.
-Arayüzde gerçek ERP mamüllerimiz ve stokları görünecektir.
+Bu mantık hatasını düzelterek tüm mimariyi tam patlatılmış hiyerarşik yapıya geçir, kodları güncelle ve gerçek veritabanında bir mamülün en alt vidasına kadar indiğini gösteren test çıktısını terminale bas.
