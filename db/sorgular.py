@@ -140,20 +140,22 @@ def stoku_mamule_bagla(conn, stok_kodu: str, mamul_kodu: str) -> None:
 def bom_listesi(conn) -> dict:
     """dict döner: {mamul_kodu: {ad, birim, bilesenleri: [...]}}"""
     with cursor_ctx(conn) as cur:
-        # Basit sorgu: tüm reçete bileşenlerini getir (şu an recursive olmadan, demo veri flat olduğu için)
-        # SQL Server'da recursive CTE'de LEFT JOIN sorunu olduğu için basit INNER JOIN kullanalım
+        # Tipi=1 → mamülün kendisi (çıktı ürün satırı, self-reference)
+        # Tipi=2 → gerçek bileşenler (girdiler)
+        # Sadece Tipi=2 AND kendi koduna eşit olmayan satırları al
         cur.execute("""
             SELECT DISTINCT
                 ur.Kodu as MamulKodu,
                 ur.Tanim as MamulAdi,
-                sk.Kodu as BilesendKodu,
-                sk.Adi as BilesendAdi,
+                sk.Kodu as BilesenKodu,
+                sk.Adi as BilesenAdi,
                 urhp.Miktar,
                 urhp.BirimId
             FROM UretimRecete ur
             INNER JOIN UretimReceteHatPlani urhp ON urhp.UretimReceteId = ur.Id
             INNER JOIN StokKarti sk ON urhp.KartId = sk.Id
-            WHERE urhp.Tipi = 1  -- Sadece stok tipi bileşenler
+            WHERE urhp.KartId IS NOT NULL
+              AND sk.Kodu != ur.Kodu
               AND sk.Aktif = 1
             ORDER BY ur.Kodu, sk.Kodu
         """)
