@@ -5,13 +5,16 @@ __pycache__/
 *.pyd
 .Python
 *.egg-info/
-dist/
 build/
 *.spec
 
 # PyInstaller çıktıları
-/dist/
 /build/
+
+# dist klasörü: exe ve config.json dahil, geri kalanı hariç
+dist/*
+!dist/CEO-ERP.exe
+!dist/config.json
 
 # Virtual environment
 venv/
