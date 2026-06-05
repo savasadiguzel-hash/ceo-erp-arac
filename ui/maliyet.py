@@ -101,7 +101,7 @@ class MaliyetSayfasi(QWidget):
         self.m_sunucu    = QLineEdit(DB_DEFAULTS["sunucu"])
         self.m_db        = QLineEdit(DB_DEFAULTS["veritabani"])
         self.m_kullanici = QLineEdit(DB_DEFAULTS["kullanici"])
-        self.m_sifre     = QLineEdit()
+        self.m_sifre     = QLineEdit(DB_DEFAULTS.get("sifre", ""))
         self.m_sifre.setEchoMode(QLineEdit.Password)
         self.m_sifre.setPlaceholderText("••••••••")
         for i, (k, v) in enumerate([("Sunucu:", self.m_sunucu), ("Veritabanı:", self.m_db),
