@@ -4,7 +4,8 @@ from datetime import datetime, date as bugun_tipi
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QGroupBox, QGridLayout,
     QLineEdit, QPushButton, QRadioButton, QButtonGroup,
-    QDoubleSpinBox, QScrollArea, QFrame, QCheckBox, QSizePolicy, QMessageBox, QFileDialog,
+    QDoubleSpinBox, QScrollArea, QFrame, QCheckBox, QSizePolicy,
+    QMessageBox, QFileDialog, QProgressBar,
 )
 from PyQt5.QtCore import Qt, QEvent, QThread, QTimer, pyqtSignal
 from PyQt5.QtGui import QFont
@@ -23,6 +24,30 @@ _BTN_PASIF = (
     "background:#bdbdbd;color:#757575;"
     "border-radius:6px;padding:9px 20px;font-weight:bold;font-size:13px;"
 )
+
+
+# ── Bağlantı & BOM Yükleme Thread'i ─────────────────────────────────────────
+
+class BomYuklemeThread(QThread):
+    bitti = pyqtSignal(object, dict)   # (conn, bom_dict)
+    hata  = pyqtSignal(str)
+
+    def __init__(self, sunucu, veritabani, kullanici, sifre):
+        super().__init__()
+        self.sunucu     = sunucu
+        self.veritabani = veritabani
+        self.kullanici  = kullanici
+        self.sifre      = sifre
+
+    def run(self):
+        try:
+            conn = get_connection(self.sunucu, self.veritabani,
+                                  self.kullanici, self.sifre)
+            bom  = bom_listesi(conn)
+            self.bitti.emit(conn, bom)
+        except Exception as e:
+            logging.error("BomYuklemeThread hatasi: %s", e)
+            self.hata.emit(str(e))
 
 
 # ── Hesaplama Thread'i ────────────────────────────────────────────────────────
@@ -228,6 +253,17 @@ class MaliyetSayfasi(QWidget):
 
         lay.addWidget(mamul_grup, stretch=1)
 
+        self.yukleme_bar = QProgressBar()
+        self.yukleme_bar.setRange(0, 0)
+        self.yukleme_bar.setFixedHeight(6)
+        self.yukleme_bar.setTextVisible(False)
+        self.yukleme_bar.setStyleSheet(
+            "QProgressBar{background:#e8eaf6;border-radius:3px;border:none;}"
+            "QProgressBar::chunk{background:#3f51b5;border-radius:3px;}"
+        )
+        self.yukleme_bar.setVisible(False)
+        lay.addWidget(self.yukleme_bar)
+
         self.durum_lbl = QLabel("")
         self.durum_lbl.setStyleSheet("color:#555;font-size:11px;padding:4px;")
         self.durum_lbl.setAlignment(Qt.AlignCenter)
@@ -279,37 +315,53 @@ class MaliyetSayfasi(QWidget):
     def _baglan(self):
         self.baglan_btn.setEnabled(False)
         self.baglan_btn.setText("⏳  Bağlanıyor…")
-        try:
-            conn = get_connection(
-                self.m_sunucu.text(), self.m_db.text(),
-                self.m_kullanici.text(), self.m_sifre.text(),
-            )
-            self.baslat(conn)
-            self.baglan_btn.setText(f"✅  {len(self._mamul_satirlari)} mamül yüklendi")
-            self.baglan_btn.setStyleSheet(
-                "background:#2e7d32;color:white;border-radius:6px;"
-                "padding:8px 16px;font-weight:bold;font-size:12px;"
-            )
-        except Exception as e:
-            logging.error("Maliyet baglanti hatasi: %s", e)
-            QMessageBox.critical(self, "Bağlantı Hatası",
-                                 f"Veritabanına bağlanılamadı:\n\n{e}")
-            self.baglan_btn.setEnabled(True)
-            self.baglan_btn.setText("🔌  Bağlan ve Mamülleri Yükle")
-        finally:
-            self.baglan_btn.setEnabled(True)
+        self.yukleme_bar.setVisible(True)
+        self.yukleme_bar.setRange(0, 0)   # belirsiz animasyon
 
-    # ── Mamül listesi ────────────────────────────────────────────────────────
-    def baslat(self, conn):
+        self._bom_thread = BomYuklemeThread(
+            self.m_sunucu.text(), self.m_db.text(),
+            self.m_kullanici.text(), self.m_sifre.text(),
+        )
+        self._bom_thread.bitti.connect(self._bom_yuklendi)
+        self._bom_thread.hata.connect(self._bom_hatasi)
+        self._bom_thread.start()
+
+    def _bom_yuklendi(self, conn, bom: dict):
+        self.yukleme_bar.setRange(0, len(bom))
+        self.yukleme_bar.setValue(0)
+
         self.conn = conn
         self._mamul_satirlari.clear()
         while self.mamul_layout.count() > 1:
             item = self.mamul_layout.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
-        bom = bom_listesi(conn)
-        for kod, veri in bom.items():
+
+        for i, (kod, veri) in enumerate(bom.items(), 1):
             self._mamul_satiri_ekle(kod, veri["ad"])
+            self.yukleme_bar.setValue(i)
+
+        self.yukleme_bar.setVisible(False)
+        self.baglan_btn.setEnabled(True)
+        self.baglan_btn.setText(f"✅  {len(self._mamul_satirlari)} mamül yüklendi")
+        self.baglan_btn.setStyleSheet(
+            "background:#2e7d32;color:white;border-radius:6px;"
+            "padding:8px 16px;font-weight:bold;font-size:12px;"
+        )
+
+    def _bom_hatasi(self, mesaj: str):
+        logging.error("Maliyet baglanti hatasi: %s", mesaj)
+        self.yukleme_bar.setVisible(False)
+        self.baglan_btn.setEnabled(True)
+        self.baglan_btn.setText("🔌  Bağlan ve Mamülleri Yükle")
+        QMessageBox.critical(self, "Bağlantı Hatası",
+                             f"Veritabanına bağlanılamadı:\n\n{mesaj}")
+
+    # ── Mamül listesi ────────────────────────────────────────────────────────
+    def baslat(self, conn):
+        """Dışarıdan bağlantı verildiğinde direkt yükler (test/programatik kullanım)."""
+        bom = bom_listesi(conn)
+        self._bom_yuklendi(conn, bom)
 
     def _mamul_satiri_ekle(self, kod: str, ad: str):
         satir = QFrame()

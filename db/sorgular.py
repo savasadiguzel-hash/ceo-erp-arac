@@ -247,6 +247,8 @@ def stok_fiyat_gecmisi(conn, stok_kodu: str, bas: str, bit: str) -> list[dict]:
 
         # Yalnızca stok bileşeni olmayan (reçete ağacında yer almayan) hareketleri al
         # Veya tüm hareketleri almaya çalış
+        # IslemKodu=1: Alış Faturası, IslemKodu=5: Alış İrsaliyesi
+        # Üretimden giriş (17,20,21 vb.) maliyet hesabına dahil edilmez
         cur.execute(f"""
             SELECT
                 CONVERT(VARCHAR(10), sh.BelgeTarihi, 120) as Tarih,
@@ -257,6 +259,7 @@ def stok_fiyat_gecmisi(conn, stok_kodu: str, bas: str, bit: str) -> list[dict]:
             JOIN StokHareket sh ON sh.Id = shd.HareketId
             JOIN StokKarti sk ON sk.Id = shd.IslemKartId
             WHERE sk.Kodu = ?
+              AND sh.IslemKodu IN (1, 5)
               AND CAST(sh.BelgeTarihi AS DATE) >= CAST('{bas_sql}' AS DATE)
               AND CAST(sh.BelgeTarihi AS DATE) <= CAST('{bit_sql}' AS DATE)
               AND shd.BirimFiyat > 0
