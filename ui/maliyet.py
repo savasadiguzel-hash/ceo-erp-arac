@@ -10,6 +10,7 @@ from PyQt5.QtCore import Qt, QEvent, QThread, QTimer, pyqtSignal
 from PyQt5.QtGui import QFont
 
 from config import DB_DEFAULTS
+from db.baglanti import get_connection
 from db.sorgular import bom_listesi
 from logic.excel import maliyet_excel_kaydet
 from ui.stil import etiket, buton, ayrac
@@ -108,6 +109,15 @@ class MaliyetSayfasi(QWidget):
             dg.addWidget(etiket(k), i, 0)
             dg.addWidget(v, i, 1)
         lay.addWidget(db_grup)
+
+        # Bağlan butonu
+        self.baglan_btn = QPushButton("🔌  Bağlan ve Mamülleri Yükle")
+        self.baglan_btn.setStyleSheet(
+            "background:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #1565c0,stop:1 #1976d2);"
+            "color:white;border-radius:6px;padding:8px 16px;font-weight:bold;font-size:12px;"
+        )
+        self.baglan_btn.clicked.connect(self._baglan)
+        lay.addWidget(self.baglan_btn)
 
         # Tarih aralığı
         tarih_grup = QGroupBox("Tarih Aralığı")
@@ -255,6 +265,30 @@ class MaliyetSayfasi(QWidget):
         if bas_dt is not None and dt < bas_dt:
             self.tarih_bit.setText(bas_dt.strftime("%d.%m.%Y"))
 
+    # ── Bağlantı ─────────────────────────────────────────────────────────────
+    def _baglan(self):
+        self.baglan_btn.setEnabled(False)
+        self.baglan_btn.setText("⏳  Bağlanıyor…")
+        try:
+            conn = get_connection(
+                self.m_sunucu.text(), self.m_db.text(),
+                self.m_kullanici.text(), self.m_sifre.text(),
+            )
+            self.baslat(conn)
+            self.baglan_btn.setText(f"✅  {len(self._mamul_satirlari)} mamül yüklendi")
+            self.baglan_btn.setStyleSheet(
+                "background:#2e7d32;color:white;border-radius:6px;"
+                "padding:8px 16px;font-weight:bold;font-size:12px;"
+            )
+        except Exception as e:
+            logging.error("Maliyet baglanti hatasi: %s", e)
+            QMessageBox.critical(self, "Bağlantı Hatası",
+                                 f"Veritabanına bağlanılamadı:\n\n{e}")
+            self.baglan_btn.setEnabled(True)
+            self.baglan_btn.setText("🔌  Bağlan ve Mamülleri Yükle")
+        finally:
+            self.baglan_btn.setEnabled(True)
+
     # ── Mamül listesi ────────────────────────────────────────────────────────
     def baslat(self, conn):
         self.conn = conn
@@ -305,6 +339,10 @@ class MaliyetSayfasi(QWidget):
 
     # ── Hesaplama akışı ──────────────────────────────────────────────────────
     def _hesapla(self):
+        if self.conn is None:
+            QMessageBox.warning(self, "Bağlantı Yok",
+                                "Önce 'Bağlan ve Mamülleri Yükle' butonuna basın.")
+            return
         secili = [(kod, cb, spin)
                   for kod, (cb, spin) in self._mamul_satirlari.items()
                   if cb.isChecked()]

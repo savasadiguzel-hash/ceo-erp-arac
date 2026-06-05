@@ -1,8 +1,8 @@
 # CEO ERP Araçları
 
 **GitHub:** https://github.com/savasadiguzel-hash/ceo-erp-arac  
-**Dağıtım:** `dist/CEO-ERP-Araclar.exe` (~52 MB)  
-**Son güncelleme:** 2026-06-04
+**Dağıtım:** `dist/CEO-ERP-Araclar.exe` (~54 MB)  
+**Son güncelleme:** 2026-06-05
 
 ---
 
@@ -13,7 +13,7 @@ Tek PyQt5 penceresi, 4 sekme:
 | Sekme | Açıklama |
 |---|---|
 | 🔗 Mamül Ağacı | Reçeteye bağlı olmayan + faturası olan stokları tespit et, mamüle bağla |
-| 💰 Maliyet | LIFO / FIFO / Ağırlıklı Ortalama ile ürün bazında maliyet raporu (Excel) |
+| 💰 Maliyet | LIFO / FIFO / Ağırlıklı Ortalama ile ürün bazında maliyet raporu (Excel); **"Bağlan ve Mamülleri Yükle"** butonu ile canlı mamül listesi yüklenir |
 | ⚙ SW Kodlama | SolidWorks montaj → AI sınıflandırma → GEM/YMB kodu → kopya üret |
 | 📦 Stok Kartı Aktar | SW çalışması sonrası CEO ERP'ye stok kartı aç (firma 504) |
 
