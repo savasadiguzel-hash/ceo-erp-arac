@@ -234,11 +234,8 @@ def stok_fiyat_gecmisi(conn, stok_kodu: str, bas: str, bit: str) -> list[dict]:
     Tarihi DD.MM.YYYY formatında geçirse de, dönen veriler YYYY-MM-DD'dir.
     """
     with cursor_ctx(conn) as cur:
-        # Tarihi DD.MM.YYYY -> YYYY-MM-DD formatına çevir
-        bas_parts = bas.split('.')
-        bit_parts = bit.split('.')
-        bas_sql = f"{bas_parts[2]}-{bas_parts[1]}-{bas_parts[0]}"
-        bit_sql = f"{bit_parts[2]}-{bit_parts[1]}-{bit_parts[0]}"
+        bas_sql = bas
+        bit_sql = bit
 
         # Tüm mamül reçetelerinin bileşen stok kodlarını ara
         cur.execute("""
