@@ -180,6 +180,16 @@ class MaliyetSayfasi(QWidget):
         mamul_grup = QGroupBox("Mamüller ve İşçilik Tutarları")
         mg = QVBoxLayout(mamul_grup)
 
+        # Arama çubuğu
+        self.arama_kutusu = QLineEdit()
+        self.arama_kutusu.setPlaceholderText("🔍  Kod veya ada göre filtrele…")
+        self.arama_kutusu.setStyleSheet(
+            "border:1px solid #c5cae9;border-radius:6px;padding:6px 10px;font-size:12px;"
+            "background:white;"
+        )
+        self.arama_kutusu.textChanged.connect(self._filtrele)
+        mg.addWidget(self.arama_kutusu)
+
         btn_satir = QHBoxLayout()
         tum_sec = QPushButton("Tümünü Seç")
         tum_sec.setStyleSheet("background:#e8eaf6;color:#3949ab;border-radius:5px;"
@@ -325,11 +335,18 @@ class MaliyetSayfasi(QWidget):
         satir_lay.addWidget(cb, stretch=1)
         satir_lay.addWidget(spin)
         self.mamul_layout.insertWidget(self.mamul_layout.count() - 1, satir)
-        self._mamul_satirlari[kod] = (cb, spin)
+        self._mamul_satirlari[kod] = (cb, spin, satir, kod.lower(), ad.lower())
+
+    def _filtrele(self, metin: str):
+        metin = metin.strip().lower()
+        for kod, (cb, spin, satir, kod_l, ad_l) in self._mamul_satirlari.items():
+            eslesir = not metin or metin in kod_l or metin in ad_l
+            satir.setVisible(eslesir)
 
     def _tum_sec(self, durum: bool):
-        for cb, _ in self._mamul_satirlari.values():
-            cb.setChecked(durum)
+        for cb, spin, satir, *_ in self._mamul_satirlari.values():
+            if satir.isVisible():
+                cb.setChecked(durum)
 
     def _secili_metod(self) -> str:
         for btn_w in self.metod_grup.buttons():
@@ -344,7 +361,7 @@ class MaliyetSayfasi(QWidget):
                                 "Önce 'Bağlan ve Mamülleri Yükle' butonuna basın.")
             return
         secili = [(kod, cb, spin)
-                  for kod, (cb, spin) in self._mamul_satirlari.items()
+                  for kod, (cb, spin, *_) in self._mamul_satirlari.items()
                   if cb.isChecked()]
         if not secili:
             QMessageBox.warning(self, "Uyarı", "Lütfen en az bir mamül seçin.")
