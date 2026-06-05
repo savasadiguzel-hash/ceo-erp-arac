@@ -2,75 +2,73 @@
 
 **GitHub:** https://github.com/savasadiguzel-hash/ceo-erp-arac  
 **Dağıtım:** `dist/CEO-ERP-Araclar.exe` (~54 MB)  
-**Son güncelleme:** 2026-06-05 (5)
+**Son güncelleme:** 2026-06-05
 
 ---
 
-## Uygulama
+## Sekmeler
 
-Tek PyQt5 penceresi, 4 sekme:
-
-| Sekme | Açıklama |
+| Sekme | Ne yapar |
 |---|---|
-| 🔗 Mamül Ağacı | Reçeteye bağlı olmayan + faturası olan stokları tespit et, mamüle bağla |
-| 💰 Maliyet | LIFO / FIFO / Ağırlıklı Ortalama ile ürün bazında maliyet raporu (Excel); sadece alış faturası + irsaliye (IslemKodu 1,5) kullanılır — üretimden giriş hariç; kod/ada göre anlık arama |
-| ⚙ SW Kodlama | SolidWorks montaj → AI sınıflandırma → GEM/YMB kodu → kopya üret |
-| 📦 Stok Kartı Aktar | SW çalışması sonrası CEO ERP'ye stok kartı aç (firma 504) |
+| 🔗 Mamül Ağacı | Reçetesiz + faturalı stokları tespit eder, mamüle bağlar |
+| 💰 Maliyet | LIFO / FIFO / Ağırlıklı Ortalama — Excel maliyet raporu |
+| ⚙ SW Kodlama | SolidWorks montaj → AI sınıflandırma → GEM/YMB kodu |
+| 📦 Stok Kartı Aktar | SW sonrası CEO ERP'ye otomatik stok kartı açar |
 
 ---
 
-## Kurulum
+## Maliyet Sekmesi — Önemli Notlar
 
-```
-git clone https://github.com/savasadiguzel-hash/ceo-erp-arac
-cd ceo-erp-arac
-pip install -r requirements.txt
-```
-
-**Gerekli `.env` (SW Kodlama + Stok Kartı için):**
-```
-GEMINI_API_KEY=...
-CEO_SQL_CONN=DRIVER={SQL Server};SERVER=WIN-3FATBI9RQAA\CEO1;UID=sa;PWD=...
-```
-
-**Çalıştırma:**
-```
-python main.py          # kaynak koddan
-dist\CEO-ERP-Araclar.exe  # derlenmiş exe
-```
-
-**Derleme:**
-```
-build.bat
-```
+- **Bağlan ve Mamülleri Yükle** butonuna bas → DB bağlantısı arka thread'de kurulur, pencere donmaz
+- Yükleme sırasında mavi ilerleme çubuğu görünür; bittikten sonra buton "✅ 545 mamül yüklendi" olur
+- Arama kutusuna yazınca liste anlık daralır (kod veya ada göre)
+- **Fiyat kaynağı:** Yalnızca `IslemKodu IN (1, 5)` — alış faturası + alış irsaliyesi. Üretimden giriş, sayım, devir vb. hariç tutulur
 
 ---
 
 ## Veritabanı
 
 - **Sunucu:** `WIN-3FATBI9RQAA\CEO1`  
-- **Firma:** 504 — veritabanı `[504]`  
-- **Auth:** SQL Server auth, `config.json`'dan okunur  
-- **Kural:** CEO ERP'de **SADECE OKUMA** (`talimat.txt`). Yazma yalnızca stok kartı açma akışında, kullanıcı onayıyla.
+- **Firma:** 504  
+- **Auth:** SQL Server (`sa`), şifre `config.json`'da base64 ile saklanır  
+- **Kural:** CEO ERP'de **SADECE OKUMA**. Yazma yalnızca Stok Kartı Aktar akışında, kullanıcı onayıyla.
+
+---
+
+## Kurulum & Çalıştırma
+
+```
+git clone https://github.com/savasadiguzel-hash/ceo-erp-arac
+cd ceo-erp-arac
+pip install -r requirements.txt
+python main.py
+```
+
+Gerekli `.env` (SW Kodlama + Stok Kartı için):
+```
+GEMINI_API_KEY=...
+CEO_SQL_CONN=DRIVER={SQL Server};SERVER=WIN-3FATBI9RQAA\CEO1;UID=sa;PWD=...
+```
+
+Derleme: `build.bat` → `dist/CEO-ERP-Araclar.exe` + `dist/config.json`
 
 ---
 
 ## Klasör Yapısı
 
 ```
-main.py / config.py / config.json / requirements.txt / build.bat
-db/          → SQL bağlantısı (baglanti.py, sorgular.py)
-logic/       → maliyet hesaplama, Excel çıktısı
-sw/          → SolidWorks modülleri (models, sw_reader, classifier,
-               excel_handler, renamer, vision_handler, erp_handler, pipeline)
-ui/          → PyQt5 arayüz (ana_pencere, 4 sekme widget'ı, yardımcı sayfalar)
-dist/        → CEO-ERP-Araclar.exe + config.json
+main.py / config.py / config.json / build.bat
+db/      → baglanti.py, sorgular.py
+logic/   → maliyet.py, excel.py
+ui/      → ana_pencere.py, maliyet.py, mamul_agaci_tab.py, ...
+sw/      → SW Kodlama modülleri
+dist/    → CEO-ERP-Araclar.exe, config.json
 ```
 
 ---
 
 ## Sıradaki Geliştirmeler
 
-1. **BOM / Ürün Ağacı** — SW çalışması sonrası `UrunAgaci + UrunAgaciDetay` otomatik oluşturma  
+1. **BOM otomasyonu** — SW çalışması sonrası `UrunAgaci + UrunAgaciDetay` otomatik oluşturma  
 2. **PDF gömme** — teknik resim PDF'lerini `StokKarti.DokumanPath`'e bağlama  
-3. **Canlı SW testi** — SW Kodlama sekmesini is makinesinde SolidWorks 2019 ile doğrulama
+3. **Canlı SW testi** — SW Kodlama sekmesini iş makinesinde SolidWorks 2019 ile doğrulama
