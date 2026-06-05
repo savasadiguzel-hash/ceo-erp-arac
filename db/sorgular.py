@@ -231,51 +231,79 @@ def stok_fiyat_gecmisi(conn, stok_kodu: str, bas: str, bit: str) -> list[dict]:
     """
     Verilen tarih aralığında stok için fatura fiyat geçmişi.
     Her eleman: tarih (YYYY-MM-DD), birim_fiyat, miktar, birim
-    Tarihi DD.MM.YYYY formatında geçirse de, dönen veriler YYYY-MM-DD'dir.
     """
     with cursor_ctx(conn) as cur:
-        bas_sql = bas
-        bit_sql = bit
-
-        # Tüm mamül reçetelerinin bileşen stok kodlarını ara
-        cur.execute("""
-            SELECT DISTINCT KartId
-            FROM UretimReceteHatPlani
-            WHERE Tipi = 1
-        """)
-        bilesen_ids = [r[0] for r in cur.fetchall()]
-
-        # Yalnızca stok bileşeni olmayan (reçete ağacında yer almayan) hareketleri al
-        # Veya tüm hareketleri almaya çalış
-        # IslemKodu=1: Alış Faturası, IslemKodu=5: Alış İrsaliyesi
-        # Üretimden giriş (17,20,21 vb.) maliyet hesabına dahil edilmez
         cur.execute(f"""
             SELECT
                 CONVERT(VARCHAR(10), sh.BelgeTarihi, 120) as Tarih,
                 shd.BirimFiyat as BirimFiyat,
-                shd.Miktar as Miktar,
-                'ADET' as BirimAciklama
+                shd.Miktar as Miktar
             FROM StokHareketDetay shd
             JOIN StokHareket sh ON sh.Id = shd.HareketId
             JOIN StokKarti sk ON sk.Id = shd.IslemKartId
             WHERE sk.Kodu = ?
               AND sh.IslemKodu IN (1, 5)
-              AND CAST(sh.BelgeTarihi AS DATE) >= CAST('{bas_sql}' AS DATE)
-              AND CAST(sh.BelgeTarihi AS DATE) <= CAST('{bit_sql}' AS DATE)
+              AND CAST(sh.BelgeTarihi AS DATE) >= CAST('{bas}' AS DATE)
+              AND CAST(sh.BelgeTarihi AS DATE) <= CAST('{bit}' AS DATE)
               AND shd.BirimFiyat > 0
               AND shd.Miktar > 0
             ORDER BY sh.BelgeTarihi ASC
         """, stok_kodu)
 
-        results = []
-        for tarih, birim_fiyat, miktar, birim_aciklama in cur.fetchall():
-            results.append({
+        return [
+            {
                 "tarih": tarih,
                 "birim_fiyat": float(birim_fiyat) if birim_fiyat else 0.0,
                 "miktar": float(miktar) if miktar else 0.0,
-                "birim": birim_aciklama
-            })
+                "birim": "ADET",
+            }
+            for tarih, birim_fiyat, miktar in cur.fetchall()
+        ]
 
-        return results
+
+def stok_fiyatlari_toplu(
+    conn, stok_kodlari: list, bas: str, bit: str
+) -> dict:
+    """
+    Birden fazla stok kodu için fiyat geçmişini TEK sorguda çeker.
+    Döner: {stok_kodu: [{"tarih", "birim_fiyat", "miktar", "birim"}, ...]}
+    IslemKodu 1=Alış Faturası, 5=Alış İrsaliyesi.
+    """
+    if not stok_kodlari:
+        return {}
+
+    sonuc = {k: [] for k in stok_kodlari}
+    # SQL Server IN() parametresi için 2000'lik parçalara böl
+    _YIGIN = 2000
+    for i in range(0, len(stok_kodlari), _YIGIN):
+        parcalar = stok_kodlari[i: i + _YIGIN]
+        yer = ",".join("?" * len(parcalar))
+        with cursor_ctx(conn) as cur:
+            cur.execute(f"""
+                SELECT
+                    sk.Kodu,
+                    CONVERT(VARCHAR(10), sh.BelgeTarihi, 120),
+                    shd.BirimFiyat,
+                    shd.Miktar
+                FROM StokHareketDetay shd
+                JOIN StokHareket sh ON sh.Id = shd.HareketId
+                JOIN StokKarti sk   ON sk.Id = shd.IslemKartId
+                WHERE sk.Kodu IN ({yer})
+                  AND sh.IslemKodu IN (1, 5)
+                  AND CAST(sh.BelgeTarihi AS DATE) >= CAST('{bas}' AS DATE)
+                  AND CAST(sh.BelgeTarihi AS DATE) <= CAST('{bit}' AS DATE)
+                  AND shd.BirimFiyat > 0
+                  AND shd.Miktar > 0
+                ORDER BY sk.Kodu, sh.BelgeTarihi ASC
+            """, *parcalar)
+            for kod, tarih, birim_fiyat, miktar in cur.fetchall():
+                if kod in sonuc:
+                    sonuc[kod].append({
+                        "tarih": tarih,
+                        "birim_fiyat": float(birim_fiyat) if birim_fiyat else 0.0,
+                        "miktar": float(miktar) if miktar else 0.0,
+                        "birim": "ADET",
+                    })
+    return sonuc
 
 

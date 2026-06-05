@@ -9,6 +9,12 @@ Her hesaplama oturumu için dışarıdan bir `_cache: dict` geçirilir.
 - Aynı parametrelerle daha önce hesaplanmış sonuçlar DB'ye gidilmeden döner.
 - Paylaşılan alt bileşenler (çok mamülde geçen stoklar) tek seferinde sorgulanır.
 - `_cache=None` geçilirse fonksiyon kendi önbelleğini oluşturur (bağımsız çağrı).
+
+Performans notu
+---------------
+`bom` parametresi dışarıdan geçilmeli; geçilmezse lazy-load yapılır.
+`excel.py` gibi çok mamül hesaplayan üst katmanlar BOM'u bir kez çekip
+tüm çağrılara aynı dict'i geçerek gereksiz DB round-trip'lerini önler.
 """
 from db.sorgular import stok_fiyat_gecmisi, bom_listesi
 
@@ -54,6 +60,7 @@ def mamul_maliyet_hesapla(
     conn, mamul_kodu: str, metod: str, bas: str, bit: str,
     _cache: dict | None = None,
     _visiting: frozenset | None = None,
+    bom: dict | None = None,
 ) -> tuple[list[dict], float]:
     """
     Mamül için özyinelemeli bileşen bazında maliyet hesaplar.
@@ -64,12 +71,15 @@ def mamul_maliyet_hesapla(
     _cache   : Dışarıdan geçirilirse birden fazla mamül aynı önbelleği paylaşır.
                None ise bu çağrıya özgü dict oluşturulur.
     _visiting: Döngüsel BOM referanslarına karşı koruma (frozenset, değişmez).
+    bom      : Dışarıdan geçirilirse DB'ye tekrar gidilmez (performans).
+               None ise lazy-load yapılır.
 
     Döner: tuple[list[dict], float]
            Her koşulda ([], 0.0) veya (satirlar, toplam) biçiminde döner.
     """
     if _cache    is None: _cache    = {}
     if _visiting is None: _visiting = frozenset()
+    if bom       is None: bom       = bom_listesi(conn)
 
     # Döngüsel BOM koruması: ziyaret yığınındaki mamüle tekrar girilmez
     if mamul_kodu in _visiting:
@@ -79,8 +89,7 @@ def mamul_maliyet_hesapla(
     if mamul_key in _cache:
         return _cache[mamul_key]
 
-    bom    = bom_listesi(conn)
-    mamul  = bom.get(mamul_kodu)
+    mamul = bom.get(mamul_kodu)
     if not mamul:
         return [], 0.0
 
@@ -93,7 +102,7 @@ def mamul_maliyet_hesapla(
         if b["kod"] in bom:
             # Alt bileşen aynı zamanda bir mamül → özyinelemeli hesapla
             _, bm = mamul_maliyet_hesapla(
-                conn, b["kod"], metod, bas, bit, _cache, ziyaret_edildi
+                conn, b["kod"], metod, bas, bit, _cache, ziyaret_edildi, bom
             )
         else:
             bm = birim_maliyet(conn, b["kod"], metod, bas, bit, _cache)

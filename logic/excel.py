@@ -5,7 +5,7 @@ from openpyxl.styles import PatternFill, Font as XFont, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 
 from logic.maliyet import mamul_maliyet_hesapla
-from db.sorgular import bom_listesi
+from db.sorgular import bom_listesi, stok_fiyatlari_toplu
 
 # ── Stil sabitleri ────────────────────────────────────────────────────────────
 
@@ -139,6 +139,33 @@ def maliyet_excel_kaydet(
     metod_ad = {"WA": "Ağırlıklı Ortalama", "FIFO": "FIFO", "LIFO": "LIFO"}[metod]
     bom = bom_listesi(conn)
 
+    # Tüm BOM'daki yaprak bileşen kodlarını topla ve fiyat geçmişini TEK sorguda çek.
+    # Bu cache'i mamul_maliyet_hesapla ile paylaşarak her bileşen için ayrı DB
+    # sorgusu gönderilmesini engeller (N+1 → 1 sorgu).
+    cache: dict = {}
+    yaprak_kodlari = list({
+        b["kod"]
+        for mamul_veri in bom.values()
+        for b in mamul_veri["bilesenleri"]
+        if b["kod"] not in bom
+    })
+    if yaprak_kodlari:
+        toplu = stok_fiyatlari_toplu(conn, yaprak_kodlari, bas, bit)
+        for stok_kodu, fiyat_listesi in toplu.items():
+            key = ("birim", stok_kodu, metod, bas, bit)
+            if not fiyat_listesi:
+                cache[key] = 0.0
+            elif metod == "WA":
+                top_t = sum(f["birim_fiyat"] * f["miktar"] for f in fiyat_listesi)
+                top_m = sum(f["miktar"] for f in fiyat_listesi)
+                cache[key] = top_t / top_m if top_m else 0.0
+            elif metod == "FIFO":
+                cache[key] = min(fiyat_listesi, key=lambda x: x["tarih"])["birim_fiyat"]
+            elif metod == "LIFO":
+                cache[key] = max(fiyat_listesi, key=lambda x: x["tarih"])["birim_fiyat"]
+            else:
+                cache[key] = 0.0
+
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "Maliyet Raporu"
@@ -160,8 +187,6 @@ def maliyet_excel_kaydet(
         _hucre(ws, 2, col, ad, "baslik", "baslik")
         ws.column_dimensions[get_column_letter(col)].width = gen
 
-    # Tüm mamüller için paylaşılan önbellek
-    cache: dict = {}
     satir = 3
 
     for mamul_kodu, iscilik_ham in secili:
@@ -172,7 +197,7 @@ def maliyet_excel_kaydet(
             ilerleme_cb(f"{mamul_kodu} — {mamul['ad']} hesaplanıyor...")
 
         bilesenleri, hammadde_top = mamul_maliyet_hesapla(
-            conn, mamul_kodu, metod, bas, bit, _cache=cache
+            conn, mamul_kodu, metod, bas, bit, _cache=cache, bom=bom
         )
         iscilik   = float(iscilik_ham)
         genel_top = hammadde_top + iscilik
