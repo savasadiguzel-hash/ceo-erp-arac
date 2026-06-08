@@ -14,6 +14,7 @@ from ui.stil import etiket, buton
 class TaramaThread(QThread):
     adim  = pyqtSignal(str, int, int)
     bitti = pyqtSignal(list, list)  # (ozet_list, detay_list)
+    hata  = pyqtSignal(str)
 
     def __init__(self, conn, yontem: str, bas_tarih: str, bit_tarih: str):
         super().__init__()
@@ -23,17 +24,21 @@ class TaramaThread(QThread):
         self.bit_tarih = bit_tarih
 
     def run(self):
-        adimlar = tarama_istatistikleri(self.conn)
-        for mesaj, toplam in adimlar:
-            adim = max(1, toplam // 50)
-            for i in range(0, toplam + 1, adim):
-                self.adim.emit(mesaj, min(i, toplam), toplam)
-                time.sleep(0.016)
-            self.adim.emit(mesaj, toplam, toplam)
-            time.sleep(0.15)
-        hareketler = recetesiz_stok_hareketleri(self.conn, self.bas_tarih, self.bit_tarih)
-        ozet = recetesiz_faturali_ozet(hareketler, self.yontem)
-        self.bitti.emit(ozet, hareketler)
+        try:
+            adimlar = tarama_istatistikleri(self.conn)
+            for mesaj, toplam in adimlar:
+                adim = max(1, toplam // 50)
+                for i in range(0, toplam + 1, adim):
+                    self.adim.emit(mesaj, min(i, toplam), toplam)
+                    time.sleep(0.016)
+                self.adim.emit(mesaj, toplam, toplam)
+                time.sleep(0.15)
+            hareketler = recetesiz_stok_hareketleri(self.conn, self.bas_tarih, self.bit_tarih)
+            ozet = recetesiz_faturali_ozet(hareketler, self.yontem)
+            self.bitti.emit(ozet, hareketler)
+        except Exception as e:
+            import traceback
+            self.hata.emit(f"{type(e).__name__}: {e}\n\n{traceback.format_exc()}")
 
 
 class TaramaSayfasi(QWidget):
@@ -115,6 +120,7 @@ class TaramaSayfasi(QWidget):
         self.thread = TaramaThread(conn, yontem, bas_tarih, bit_tarih)
         self.thread.adim.connect(self._guncelle)
         self.thread.bitti.connect(self._bitti)
+        self.thread.hata.connect(self._hata)
         self.thread.start()
 
     def _guncelle(self, mesaj, mevcut, toplam):
@@ -138,6 +144,11 @@ class TaramaSayfasi(QWidget):
         self.devam_btn.show()
         self.excel_btn.show()
         self.devam_btn.clicked.connect(lambda: self.bitti.emit(stoklar))
+
+    def _hata(self, mesaj: str):
+        self.adim_lbl.setText("Hata oluştu.")
+        self.bar.setValue(0)
+        QMessageBox.critical(self, "Tarama Hatası", mesaj)
 
     def _excel_kaydet(self):
         dosya, _ = QFileDialog.getSaveFileName(
