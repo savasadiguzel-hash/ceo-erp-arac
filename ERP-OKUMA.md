@@ -2,7 +2,7 @@
 
 **GitHub:** https://github.com/savasadiguzel-hash/ceo-erp-arac  
 **Dağıtım:** `dist/CEO-ERP-Araclar.exe` (~54 MB)  
-**Son güncelleme:** 2026-06-08 (2)
+**Son güncelleme:** 2026-06-08 (3)
 
 ---
 
@@ -17,12 +17,27 @@
 
 ---
 
+## Mamül Ağacı Sekmesi — Önemli Notlar
+
+İki alt sayfa vardır:
+
+**Tarama Sayfası** — Reçetesiz + faturalı stokları tespit eder (kesişim kümesi).
+- Sorguda `UretimReceteHatPlaniGirdi.KartId NOT IN` filtresi uygulanır; hat girdisi (bileşen/operasyon alt kodu) olarak kayıtlı stoklar kesişime dahil edilmez.
+- StokHareketDetay JOIN'i `sk.Id` üzerinden yapılır; aksi takdirde 2 milyon+ Kartezyen çarpım kaydı dönebilir.
+- Tarama tamamlandığında **Excel'e Aktar** butonu belirir → `logic/excel.py:kesisim_excel_kaydet` ile 8 sütunlu (tarih + stok bilgileri) xlsx üretilir.
+
+**Eşleştirme Sayfası** — Tespit edilen stokları mamüle bağlar.
+- Stok detay etiketleri fare ile seçilebilir (kopyalama/arama kolaylığı).
+
+---
+
 ## Maliyet Sekmesi — Önemli Notlar
 
 - **Bağlan ve Mamülleri Yükle** butonuna bas → DB bağlantısı arka thread'de kurulur, pencere donmaz
 - Yükleme sırasında mavi ilerleme çubuğu görünür; bittikten sonra buton "✅ 545 mamül yüklendi" olur
 - Arama kutusuna yazınca liste anlık daralır (kod veya ada göre)
 - **Fiyat kaynağı:** Yalnızca `IslemKodu IN (1, 5)` — alış faturası + alış irsaliyesi. Üretimden giriş, sayım, devir vb. hariç tutulur
+- **Performans:** `stok_fiyatlari_toplu()` ile N bileşen için tek SQL sorgusu; 20 bileşenli mamülde 42 DB round-trip → 4'e düştü. BOM listesi özyinelemeli hesaplamada tekrar sorgulanmaz.
 
 ---
 
