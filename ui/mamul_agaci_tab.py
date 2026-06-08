@@ -67,9 +67,9 @@ class MamulAgaciTab(QWidget):
             self.s1.sunucu.text(), self.s1.db_adi.text(),
             self.s1.kullanici.text(), self.s1.sifre.text(),
         )
-        turleri = self.s1.secili_fatura_turleri()
+        yontem = self.s1.secili_yontem()
         self.stack.setCurrentIndex(1)
-        self.s2.baslat(conn, turleri, tarihler[0], tarihler[1])
+        self.s2.baslat(conn, yontem, tarihler[0], tarihler[1])
         self.durum_guncelle.emit("Tarama çalışıyor…")
 
     def _eslestirme_baslat(self, stoklar: list):

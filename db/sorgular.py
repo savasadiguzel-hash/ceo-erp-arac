@@ -35,37 +35,33 @@ def mamul_agaci_listesi(conn) -> list[tuple[str, str]]:
         return [(r[0], r[1]) for r in cur.fetchall()]
 
 
-def recetesiz_faturali_stoklar(conn, fatura_turleri: list[str],
-                               bas_tarih: str, bit_tarih: str) -> list[dict]:
+def recetesiz_stok_hareketleri(conn, bas_tarih: str, bit_tarih: str) -> list[dict]:
     """
-    Kesişim kümesi: reçete/mamül ağacında olmayan VE belirtilen tarih aralığında
-    faturası olan stoklar. bas_tarih / bit_tarih: 'DD.MM.YYYY' formatı.
-    Her eleman: stok_kodu, stok_adi, fatura_sayisi, toplam_tutar,
-                ilk_fatura, son_fatura, tedarikci, fatura_turleri
+    Kesişim kümesindeki stokların alış faturası/irsaliyesi satırlarını döner.
+    bas_tarih / bit_tarih: 'DD.MM.YYYY' formatı.
+    Her eleman: stok_kodu, stok_adi, hareket_id, islem_turu, belge_no,
+                tarih (DD.MM.YYYY), tarih_iso (YYYY-MM-DD),
+                miktar, birim_fiyat, tutar, tedarikci
     """
+    bas_parts = bas_tarih.split('.')
+    bit_parts = bit_tarih.split('.')
+    bas_sql = f"{bas_parts[2]}-{bas_parts[1]}-{bas_parts[0]}"
+    bit_sql = f"{bit_parts[2]}-{bit_parts[1]}-{bit_parts[0]}"
+
     with cursor_ctx(conn) as cur:
-        # İki filtreli kesişim:
-        # 1) Reçete bileşeninde olmayan stoklar
-        # 2) Ürün ağacında olmayan stoklar
-        # 3) Bu stoklar arasında belirtilen tarih aralığında fatura görmüş olanlar
-
-        # Tarihi DD.MM.YYYY -> YYYY-MM-DD formatına çevir
-        bas_parts = bas_tarih.split('.')
-        bit_parts = bit_tarih.split('.')
-        bas_sql = f"{bas_parts[2]}-{bas_parts[1]}-{bas_parts[0]}"
-        bit_sql = f"{bit_parts[2]}-{bit_parts[1]}-{bit_parts[0]}"
-
-        # SQL'de BETWEEN kullanalım, CAST ile dönüştürelim
         cur.execute(f"""
             SELECT
-                sk.Kodu as stok_kodu,
-                sk.Adi as stok_adi,
-                COUNT(DISTINCT sh.Id) as fatura_sayisi,
-                SUM(ISNULL(shd.Tutar, 0)) as toplam_tutar,
-                CONVERT(VARCHAR(10), MIN(sh.BelgeTarihi), 104) as ilk_fatura,
-                CONVERT(VARCHAR(10), MAX(sh.BelgeTarihi), 104) as son_fatura,
-                ISNULL(MAX(cmk.Unvani), '') as tedarikci,
-                'Alış Faturası / Alış İrsaliyesi' as fatura_turleri
+                sk.Kodu,
+                sk.Adi,
+                sh.Id,
+                CASE sh.IslemKodu WHEN 1 THEN 'Alış Faturası' ELSE 'Alış İrsaliyesi' END,
+                ISNULL(sh.BelgeNo, ''),
+                CONVERT(VARCHAR(10), sh.BelgeTarihi, 104),
+                CONVERT(VARCHAR(10), sh.BelgeTarihi, 120),
+                ISNULL(shd.Miktar, 0),
+                ISNULL(shd.BirimFiyat, 0),
+                ISNULL(shd.Tutar, 0),
+                ISNULL(cmk.Unvani, '')
             FROM StokKarti sk
             JOIN StokHareketDetay shd ON shd.IslemKartId = sk.Id
             JOIN StokHareket sh ON sh.Id = shd.HareketId
@@ -81,25 +77,68 @@ def recetesiz_faturali_stoklar(conn, fatura_turleri: list[str],
               )
               AND sk.Aktif = 1
               AND sh.IslemKodu IN (1, 5)
+              AND shd.BirimFiyat > 0
+              AND shd.Miktar > 0
               AND CAST(sh.BelgeTarihi AS DATE) >= CAST('{bas_sql}' AS DATE)
               AND CAST(sh.BelgeTarihi AS DATE) <= CAST('{bit_sql}' AS DATE)
-            GROUP BY sk.Id, sk.Kodu, sk.Adi
-            ORDER BY sk.Kodu
+            ORDER BY sk.Kodu, sh.BelgeTarihi ASC, sh.Id ASC
         """)
+        return [
+            {
+                'stok_kodu':   row[0],
+                'stok_adi':    row[1],
+                'hareket_id':  int(row[2]),
+                'islem_turu':  row[3],
+                'belge_no':    row[4],
+                'tarih':       row[5],
+                'tarih_iso':   row[6],
+                'miktar':      float(row[7]),
+                'birim_fiyat': float(row[8]),
+                'tutar':       float(row[9]),
+                'tedarikci':   row[10],
+            }
+            for row in cur.fetchall()
+        ]
 
-        results = []
-        for row in cur.fetchall():
-            results.append({
-                'stok_kodu': row[0],
-                'stok_adi': row[1],
-                'fatura_sayisi': int(row[2]),
-                'toplam_tutar': f"{row[3]:,.2f} ₺".replace(',', '.'),
-                'ilk_fatura': row[4],
-                'son_fatura': row[5],
-                'tedarikci': row[6],
-                'fatura_turleri': row[7],
-            })
-        return results
+
+def recetesiz_faturali_ozet(hareketler: list[dict], yontem: str) -> list[dict]:
+    """
+    Ham hareket listesini stok bazında özetler.
+    yontem: 'FIFO' → ilk alış fiyatı, 'LIFO' → son alış fiyatı,
+            'WA'   → ağırlıklı ortalama (toplam tutar / toplam miktar)
+    """
+    from collections import defaultdict
+    gruplar: dict[str, list] = defaultdict(list)
+    for h in hareketler:
+        gruplar[h['stok_kodu']].append(h)
+
+    ozet = []
+    for stok_kodu in sorted(gruplar):
+        grup = gruplar[stok_kodu]
+        sirali = sorted(grup, key=lambda x: (x['tarih_iso'], x['hareket_id']))
+
+        if yontem == 'FIFO':
+            ref = sirali[0]
+            birim_fiyat = ref['birim_fiyat']
+        elif yontem == 'LIFO':
+            ref = sirali[-1]
+            birim_fiyat = ref['birim_fiyat']
+        else:  # WA
+            ref = sirali[-1]
+            total_tutar  = sum(h['tutar']  for h in grup)
+            total_miktar = sum(h['miktar'] for h in grup)
+            birim_fiyat  = total_tutar / total_miktar if total_miktar > 0 else 0.0
+
+        ozet.append({
+            'stok_kodu':   stok_kodu,
+            'stok_adi':    grup[0]['stok_adi'],
+            'fatura_sayisi': len(set(h['hareket_id'] for h in grup)),
+            'birim_fiyat': round(birim_fiyat, 4),
+            'ilk_fatura':  sirali[0]['tarih'],
+            'son_fatura':  sirali[-1]['tarih'],
+            'tedarikci':   ref['tedarikci'],
+        })
+    return ozet
 
 
 def stoku_mamule_bagla(conn, stok_kodu: str, mamul_kodu: str) -> None:

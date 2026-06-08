@@ -67,14 +67,13 @@ class EslestirmeSayfasi(QWidget):
         grid.setVerticalSpacing(10)
         grid.setHorizontalSpacing(10)
         alanlar = [
-            ("Stok Kodu:",      "stok_kodu",     "#c62828"),
-            ("Stok Adı:",       "stok_adi",      "#212121"),
-            ("Fatura Türleri:", "fatura_turleri","#212121"),
-            ("Fatura Sayısı:",  "fatura_sayisi", "#212121"),
-            ("Toplam Tutar:",   "toplam_tutar",  "#1b5e20"),
-            ("İlk Fatura:",     "ilk_fatura",    "#212121"),
-            ("Son Fatura:",     "son_fatura",    "#212121"),
-            ("Tedarikçi:",      "tedarikci",     "#212121"),
+            ("Stok Kodu:",    "stok_kodu",    "#c62828"),
+            ("Stok Adı:",     "stok_adi",     "#212121"),
+            ("Fatura Sayısı:","fatura_sayisi","#212121"),
+            ("Birim Fiyat:",  "birim_fiyat",  "#1b5e20"),
+            ("İlk Fatura:",   "ilk_fatura",   "#212121"),
+            ("Son Fatura:",   "son_fatura",   "#212121"),
+            ("Tedarikçi:",    "tedarikci",    "#212121"),
         ]
         self.deger_lbls = {}
         for i, (et, key, renk) in enumerate(alanlar):
@@ -85,8 +84,8 @@ class EslestirmeSayfasi(QWidget):
             v.setStyleSheet(f"color:{renk};")
             v.setTextInteractionFlags(Qt.TextSelectableByMouse | Qt.TextSelectableByKeyboard)
             v.setCursor(Qt.IBeamCursor)
-            if key == "stok_kodu":    v.setFont(QFont("Segoe UI", 13, QFont.Bold))
-            if key == "toplam_tutar": v.setFont(QFont("Segoe UI", 12, QFont.Bold))
+            if key == "stok_kodu":   v.setFont(QFont("Segoe UI", 13, QFont.Bold))
+            if key == "birim_fiyat": v.setFont(QFont("Segoe UI", 12, QFont.Bold))
             grid.addWidget(e, i, 0, Qt.AlignTop)
             grid.addWidget(v, i, 1)
             self.deger_lbls[key] = v

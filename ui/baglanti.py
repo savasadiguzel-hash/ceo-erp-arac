@@ -1,7 +1,7 @@
 from datetime import datetime, date as bugun_tipi
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QGroupBox, QGridLayout,
-    QLineEdit, QHBoxLayout, QCheckBox, QLabel,
+    QLineEdit, QHBoxLayout, QLabel, QRadioButton, QButtonGroup,
 )
 from PyQt5.QtCore import Qt, QEvent, pyqtSignal
 from config import DB_DEFAULTS
@@ -33,15 +33,17 @@ class BaglantiSayfasi(QWidget):
             grid.addWidget(etiket(k), i, 0)
             grid.addWidget(v, i, 1)
 
-        tur_grup = QGroupBox("Fatura Türleri (alış faturası kontrolü)")
+        tur_grup = QGroupBox("Birim Fiyat Yöntemi")
         tur_grup.setMaximumWidth(460)
         tl = QHBoxLayout(tur_grup)
-        self.cb_alis    = QCheckBox("Alış");    self.cb_alis.setChecked(True)
-        self.cb_masraf  = QCheckBox("Masraf");  self.cb_masraf.setChecked(True)
-        self.cb_hizmet  = QCheckBox("Hizmet");  self.cb_hizmet.setChecked(True)
-        self.cb_ithalat = QCheckBox("İthalat"); self.cb_ithalat.setChecked(True)
-        for cb in [self.cb_alis, self.cb_masraf, self.cb_hizmet, self.cb_ithalat]:
-            tl.addWidget(cb)
+        self._yontem_grp = QButtonGroup(self)
+        self.rb_wa   = QRadioButton("Ağırlıklı Ortalama")
+        self.rb_fifo = QRadioButton("FIFO (İlk Alış)")
+        self.rb_lifo = QRadioButton("LIFO (Son Alış)")
+        self.rb_wa.setChecked(True)
+        for rb in [self.rb_wa, self.rb_fifo, self.rb_lifo]:
+            self._yontem_grp.addButton(rb)
+            tl.addWidget(rb)
 
         tarih_grup = QGroupBox("Fatura Tarih Aralığı")
         tarih_grup.setMaximumWidth(460)
@@ -125,13 +127,12 @@ class BaglantiSayfasi(QWidget):
             self.bit_tarih.setText(bas_dt.strftime("%d.%m.%Y"))
 
     # ── Dışarıya açık metodlar ───────────────────────────────────────────────
-    def secili_fatura_turleri(self) -> list[str]:
-        turleri = []
-        if self.cb_alis.isChecked():    turleri.append("Alış")
-        if self.cb_masraf.isChecked():  turleri.append("Masraf")
-        if self.cb_hizmet.isChecked():  turleri.append("Hizmet")
-        if self.cb_ithalat.isChecked(): turleri.append("İthalat")
-        return turleri
+    def secili_yontem(self) -> str:
+        if self.rb_fifo.isChecked():
+            return 'FIFO'
+        if self.rb_lifo.isChecked():
+            return 'LIFO'
+        return 'WA'
 
     def tarih_araligi(self) -> tuple[str, str] | None:
         """(bas_str, bit_str) veya eksik/geçersizse None döner."""

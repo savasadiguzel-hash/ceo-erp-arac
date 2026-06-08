@@ -5,19 +5,20 @@ from PyQt5.QtWidgets import (
     QFileDialog, QMessageBox,
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
-from db.sorgular import tarama_istatistikleri, recetesiz_faturali_stoklar
+from db.sorgular import (tarama_istatistikleri,
+                         recetesiz_stok_hareketleri, recetesiz_faturali_ozet)
 from logic.excel import kesisim_excel_kaydet
 from ui.stil import etiket, buton
 
 
 class TaramaThread(QThread):
     adim  = pyqtSignal(str, int, int)
-    bitti = pyqtSignal(list)   # kesişim stokları
+    bitti = pyqtSignal(list, list)  # (ozet_list, detay_list)
 
-    def __init__(self, conn, fatura_turleri, bas_tarih: str, bit_tarih: str):
+    def __init__(self, conn, yontem: str, bas_tarih: str, bit_tarih: str):
         super().__init__()
         self.conn = conn
-        self.fatura_turleri = fatura_turleri
+        self.yontem = yontem
         self.bas_tarih = bas_tarih
         self.bit_tarih = bit_tarih
 
@@ -30,9 +31,9 @@ class TaramaThread(QThread):
                 time.sleep(0.016)
             self.adim.emit(mesaj, toplam, toplam)
             time.sleep(0.15)
-        stoklar = recetesiz_faturali_stoklar(self.conn, self.fatura_turleri,
-                                             self.bas_tarih, self.bit_tarih)
-        self.bitti.emit(stoklar)
+        hareketler = recetesiz_stok_hareketleri(self.conn, self.bas_tarih, self.bit_tarih)
+        ozet = recetesiz_faturali_ozet(hareketler, self.yontem)
+        self.bitti.emit(ozet, hareketler)
 
 
 class TaramaSayfasi(QWidget):
@@ -72,7 +73,9 @@ class TaramaSayfasi(QWidget):
         self.ozet_lbl.setStyleSheet("font-size:13px;color:#212121;line-height:1.8;")
         ol.addWidget(self.ozet_lbl)
 
-        self._stoklar = []
+        self._stoklar  = []
+        self._detaylar = []
+        self._yontem   = "WA"
         self._tarih_aralik = ""
 
         self.devam_btn = buton("Eşleştirmeye Geç  →", "#3f51b5", min_w=210, h=42)
@@ -102,13 +105,14 @@ class TaramaSayfasi(QWidget):
         ana.addWidget(self.buton_satiri, alignment=Qt.AlignCenter)
         ana.addStretch()
 
-    def baslat(self, conn, fatura_turleri: list[str], bas_tarih: str, bit_tarih: str):
+    def baslat(self, conn, yontem: str, bas_tarih: str, bit_tarih: str):
+        self._yontem = yontem
         self._tarih_aralik = f"{bas_tarih} – {bit_tarih}"
         self.tarih_lbl.setText(f"Tarih aralığı: {self._tarih_aralik}")
         self.ozet_grup.hide()
         self.buton_satiri.hide()
         self.bar.setValue(0)
-        self.thread = TaramaThread(conn, fatura_turleri, bas_tarih, bit_tarih)
+        self.thread = TaramaThread(conn, yontem, bas_tarih, bit_tarih)
         self.thread.adim.connect(self._guncelle)
         self.thread.bitti.connect(self._bitti)
         self.thread.start()
@@ -118,8 +122,9 @@ class TaramaSayfasi(QWidget):
         self.bar.setValue(int(mevcut / toplam * 100) if toplam else 0)
         self.sayac.setText(f"{mevcut:,} / {toplam:,}")
 
-    def _bitti(self, stoklar: list):
-        self._stoklar = stoklar
+    def _bitti(self, stoklar: list, detaylar: list):
+        self._stoklar  = stoklar
+        self._detaylar = detaylar
         self.bar.setValue(100)
         self.adim_lbl.setText("Analiz tamamlandı.")
         self.sayac.setText("")
@@ -142,7 +147,8 @@ class TaramaSayfasi(QWidget):
         if not dosya:
             return
         try:
-            kesisim_excel_kaydet(dosya, self._stoklar, self._tarih_aralik)
+            kesisim_excel_kaydet(dosya, self._stoklar, self._detaylar,
+                                  self._tarih_aralik, self._yontem)
             QMessageBox.information(self, "Başarılı", f"Dosya kaydedildi:\n{dosya}")
         except Exception as e:
             QMessageBox.critical(self, "Hata", f"Excel kaydedilemedi:\n{e}")

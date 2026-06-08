@@ -57,20 +57,19 @@ _MALIYET_SUTUNLAR = [
 
 # (alan_adı, sayısal?, number_format)
 _BAGLAMA_ALAN = [
-    ("stok_kodu",      False, None),
-    ("stok_adi",       False, None),
-    ("fatura_turleri", False, None),
-    ("fatura_sayisi",  True,  _FMT_ADET),
-    ("toplam_tutar",   True,  _FMT_PARA),
-    ("ilk_fatura",     False, None),
-    ("son_fatura",     False, None),
-    ("tedarikci",      False, None),
-    ("mamul_kodu",     False, None),
-    ("mamul_adi",      False, None),
-    ("islem",          False, None),
+    ("stok_kodu",    False, None),
+    ("stok_adi",     False, None),
+    ("fatura_sayisi", True, _FMT_ADET),
+    ("birim_fiyat",   True, _FMT_BIRIM),
+    ("ilk_fatura",   False, None),
+    ("son_fatura",   False, None),
+    ("tedarikci",    False, None),
+    ("mamul_kodu",   False, None),
+    ("mamul_adi",    False, None),
+    ("islem",        False, None),
 ]
 
-_BAGLAMA_GENISLIK = [14, 32, 20, 14, 18, 14, 14, 30, 14, 30, 13]
+_BAGLAMA_GENISLIK = [14, 32, 14, 20, 14, 14, 30, 14, 30, 13]
 
 # ── Yardımcı fonksiyonlar ─────────────────────────────────────────────────────
 
@@ -286,25 +285,49 @@ def maliyet_excel_kaydet(
 # ── Kesişim Kümesi Raporu ─────────────────────────────────────────────────────
 
 _KESISIM_SUTUNLAR = [
-    ("Stok Kodu", 16), ("Stok Adı", 36), ("Fatura Türleri", 28),
-    ("Fatura Sayısı", 14), ("Toplam Tutar ₺", 18),
+    ("Stok Kodu", 16), ("Stok Adı", 36),
+    ("Fatura Sayısı", 14), ("Birim Fiyat ₺", 20),
     ("İlk Fatura", 14), ("Son Fatura", 14), ("Tedarikçi", 34),
 ]
 
 _KESISIM_ALAN = [
-    ("stok_kodu",      False, None),
-    ("stok_adi",       False, None),
-    ("fatura_turleri", False, None),
-    ("fatura_sayisi",  True,  _FMT_ADET),
-    ("toplam_tutar",   True,  _FMT_PARA),
-    ("ilk_fatura",     False, None),
-    ("son_fatura",     False, None),
-    ("tedarikci",      False, None),
+    ("stok_kodu",    False, None),
+    ("stok_adi",     False, None),
+    ("fatura_sayisi", True, _FMT_ADET),
+    ("birim_fiyat",   True, _FMT_BIRIM),
+    ("ilk_fatura",   False, None),
+    ("son_fatura",   False, None),
+    ("tedarikci",    False, None),
 ]
 
+_DETAY_SUTUNLAR = [
+    ("Stok Kodu", 16), ("Stok Adı", 36), ("İşlem Türü", 20),
+    ("Belge No", 16), ("Tarih", 14), ("Miktar", 12),
+    ("Birim Fiyat ₺", 20), ("Tutar ₺", 18), ("Tedarikçi", 34),
+]
 
-def kesisim_excel_kaydet(dosya: str, stoklar: list[dict], tarih_aralik: str = "") -> None:
+_DETAY_ALAN = [
+    ("stok_kodu",   False, None),
+    ("stok_adi",    False, None),
+    ("islem_turu",  False, None),
+    ("belge_no",    False, None),
+    ("tarih",       False, None),
+    ("miktar",       True, _FMT_MIKTAR),
+    ("birim_fiyat",  True, _FMT_BIRIM),
+    ("tutar",        True, _FMT_PARA),
+    ("tedarikci",   False, None),
+]
+
+_YONTEM_AD = {"FIFO": "FIFO (İlk Alış)", "LIFO": "LIFO (Son Alış)",
+               "WA": "Ağırlıklı Ortalama"}
+
+
+def kesisim_excel_kaydet(dosya: str, stoklar: list[dict], detaylar: list[dict],
+                          tarih_aralik: str = "", yontem: str = "WA") -> None:
+    yontem_ad = _YONTEM_AD.get(yontem, yontem)
     wb = openpyxl.Workbook()
+
+    # ── Sayfa 1: Özet ────────────────────────────────────────────────────────
     ws = wb.active
     ws.title = "Kesişim Kümesi"
 
@@ -313,7 +336,7 @@ def kesisim_excel_kaydet(dosya: str, stoklar: list[dict], tarih_aralik: str = ""
     h = ws.cell(
         row=1, column=1,
         value=f"CEO ERP — Kesişim Kümesi  |  {tarih_aralik}  |  "
-              f"{len(stoklar)} stok  |  "
+              f"{len(stoklar)} stok  |  Yöntem: {yontem_ad}  |  "
               f"Oluşturma: {datetime.now().strftime('%d.%m.%Y %H:%M')}"
     )
     h.fill = _FILL["bilgi"]; h.font = _FONT["bilgi"]
@@ -330,7 +353,7 @@ def kesisim_excel_kaydet(dosya: str, stoklar: list[dict], tarih_aralik: str = ""
         for col, (key, sayisal, fmt) in enumerate(_KESISIM_ALAN, 1):
             ham = s.get(key)
             if sayisal:
-                val = _para(ham) if fmt == _FMT_PARA else _adet(ham)
+                val = _miktar(ham) if fmt in (_FMT_MIKTAR, _FMT_BIRIM) else _adet(ham)
                 aln = _SAG
             else:
                 val = str(ham) if ham is not None else ""
@@ -343,6 +366,45 @@ def kesisim_excel_kaydet(dosya: str, stoklar: list[dict], tarih_aralik: str = ""
 
     ws.auto_filter.ref = f"A2:{get_column_letter(n)}2"
     ws.freeze_panes = "A3"
+
+    # ── Sayfa 2: Detay (fatura satırı bazında) ───────────────────────────────
+    wd = wb.create_sheet("Fatura Detayları")
+    nd = len(_DETAY_SUTUNLAR)
+    wd.merge_cells(f"A1:{get_column_letter(nd)}1")
+    hd = wd.cell(
+        row=1, column=1,
+        value=f"CEO ERP — Fatura Detayları  |  {tarih_aralik}  |  "
+              f"{len(detaylar)} satır  |  "
+              f"Oluşturma: {datetime.now().strftime('%d.%m.%Y %H:%M')}"
+    )
+    hd.fill = _FILL["bilgi"]; hd.font = _FONT["bilgi"]
+    hd.alignment = _SOL; hd.border = _KENAR
+    wd.row_dimensions[1].height = 24
+
+    wd.row_dimensions[2].height = 28
+    for col, (baslik, gen) in enumerate(_DETAY_SUTUNLAR, 1):
+        _hucre(wd, 2, col, baslik, "baslik", "baslik")
+        wd.column_dimensions[get_column_letter(col)].width = gen
+
+    for satir, d in enumerate(detaylar, 3):
+        wd.row_dimensions[satir].height = 18
+        for col, (key, sayisal, fmt) in enumerate(_DETAY_ALAN, 1):
+            ham = d.get(key)
+            if sayisal:
+                val = _miktar(ham)
+                aln = _SAG
+            else:
+                val = str(ham) if ham is not None else ""
+                aln = _SOL
+            hc = wd.cell(row=satir, column=col, value=val)
+            hc.fill = _FILL["bileseni"]; hc.font = _FONT["veri"]
+            hc.alignment = aln; hc.border = _KENAR
+            if fmt and val is not None:
+                hc.number_format = fmt
+
+    wd.auto_filter.ref = f"A2:{get_column_letter(nd)}2"
+    wd.freeze_panes = "A3"
+
     wb.save(dosya)
 
 
@@ -363,8 +425,8 @@ def baglama_excel_kaydet(dosya: str, sonuclar: list[dict]) -> None:
 
     # Başlık etiketlerini tekrar doğru adlarla yaz
     basliklar = [
-        "Stok Kodu", "Stok Adı", "Fatura Türleri", "Fatura Sayısı",
-        "Toplam Tutar", "İlk Fatura", "Son Fatura", "Tedarikçi",
+        "Stok Kodu", "Stok Adı", "Fatura Sayısı",
+        "Birim Fiyat", "İlk Fatura", "Son Fatura", "Tedarikçi",
         "Mamül Kodu", "Mamül Adı", "İşlem",
     ]
     for col, (baslik, gen) in enumerate(zip(basliklar, _BAGLAMA_GENISLIK), 1):

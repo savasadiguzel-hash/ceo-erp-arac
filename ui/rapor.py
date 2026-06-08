@@ -28,7 +28,7 @@ class RaporSayfasi(QWidget):
         excel_grup = QGroupBox("Excel Raporu (.xlsx)")
         excel_grup.setMaximumWidth(540)
         el = QVBoxLayout(excel_grup)
-        bilgi = QLabel("Tek sayfa: stok kodu, fatura türleri, toplam tutar, tedarikçi, atanan mamül.\n"
+        bilgi = QLabel("Tek sayfa: stok kodu, fatura sayısı, birim fiyat, tedarikçi, atanan mamül.\n"
                        "Bağlananlar yeşil — atlandılar sarı renkte gösterilir.")
         bilgi.setStyleSheet("color:#555;font-size:11px;")
         self.excel_btn = QPushButton("📥  Excel Olarak Kaydet (.xlsx)")
