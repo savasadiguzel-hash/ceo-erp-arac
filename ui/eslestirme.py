@@ -83,6 +83,8 @@ class EslestirmeSayfasi(QWidget):
             v = QLabel("—")
             v.setWordWrap(True)
             v.setStyleSheet(f"color:{renk};")
+            v.setTextInteractionFlags(Qt.TextSelectableByMouse | Qt.TextSelectableByKeyboard)
+            v.setCursor(Qt.IBeamCursor)
             if key == "stok_kodu":    v.setFont(QFont("Segoe UI", 13, QFont.Bold))
             if key == "toplam_tutar": v.setFont(QFont("Segoe UI", 12, QFont.Bold))
             grid.addWidget(e, i, 0, Qt.AlignTop)

@@ -283,6 +283,69 @@ def maliyet_excel_kaydet(
     wb.save(dosya)
 
 
+# ── Kesişim Kümesi Raporu ─────────────────────────────────────────────────────
+
+_KESISIM_SUTUNLAR = [
+    ("Stok Kodu", 16), ("Stok Adı", 36), ("Fatura Türleri", 28),
+    ("Fatura Sayısı", 14), ("Toplam Tutar ₺", 18),
+    ("İlk Fatura", 14), ("Son Fatura", 14), ("Tedarikçi", 34),
+]
+
+_KESISIM_ALAN = [
+    ("stok_kodu",      False, None),
+    ("stok_adi",       False, None),
+    ("fatura_turleri", False, None),
+    ("fatura_sayisi",  True,  _FMT_ADET),
+    ("toplam_tutar",   True,  _FMT_PARA),
+    ("ilk_fatura",     False, None),
+    ("son_fatura",     False, None),
+    ("tedarikci",      False, None),
+]
+
+
+def kesisim_excel_kaydet(dosya: str, stoklar: list[dict], tarih_aralik: str = "") -> None:
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Kesişim Kümesi"
+
+    n = len(_KESISIM_SUTUNLAR)
+    ws.merge_cells(f"A1:{get_column_letter(n)}1")
+    h = ws.cell(
+        row=1, column=1,
+        value=f"CEO ERP — Kesişim Kümesi  |  {tarih_aralik}  |  "
+              f"{len(stoklar)} stok  |  "
+              f"Oluşturma: {datetime.now().strftime('%d.%m.%Y %H:%M')}"
+    )
+    h.fill = _FILL["bilgi"]; h.font = _FONT["bilgi"]
+    h.alignment = _SOL; h.border = _KENAR
+    ws.row_dimensions[1].height = 24
+
+    ws.row_dimensions[2].height = 28
+    for col, (baslik, gen) in enumerate(_KESISIM_SUTUNLAR, 1):
+        _hucre(ws, 2, col, baslik, "baslik", "baslik")
+        ws.column_dimensions[get_column_letter(col)].width = gen
+
+    for satir, s in enumerate(stoklar, 3):
+        ws.row_dimensions[satir].height = 18
+        for col, (key, sayisal, fmt) in enumerate(_KESISIM_ALAN, 1):
+            ham = s.get(key)
+            if sayisal:
+                val = _para(ham) if fmt == _FMT_PARA else _adet(ham)
+                aln = _SAG
+            else:
+                val = str(ham) if ham is not None else ""
+                aln = _SOL
+            h = ws.cell(row=satir, column=col, value=val)
+            h.fill = _FILL["bileseni"]; h.font = _FONT["veri"]
+            h.alignment = aln; h.border = _KENAR
+            if fmt and val is not None:
+                h.number_format = fmt
+
+    ws.auto_filter.ref = f"A2:{get_column_letter(n)}2"
+    ws.freeze_panes = "A3"
+    wb.save(dosya)
+
+
 # ── Bağlama Raporu ────────────────────────────────────────────────────────────
 
 def baglama_excel_kaydet(dosya: str, sonuclar: list[dict]) -> None:
