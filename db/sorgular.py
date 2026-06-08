@@ -74,6 +74,9 @@ def recetesiz_faturali_stoklar(conn, fatura_turleri: list[str],
                 SELECT DISTINCT KartId FROM UretimReceteHatPlani WHERE KartId IS NOT NULL
             )
               AND sk.Id NOT IN (
+                SELECT DISTINCT KartId FROM UretimReceteHatPlaniGirdi WHERE KartId IS NOT NULL
+              )
+              AND sk.Id NOT IN (
                 SELECT DISTINCT KartId FROM UrunAgaciDetay WHERE KartId IS NOT NULL
               )
               AND sk.Aktif = 1

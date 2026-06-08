@@ -2,7 +2,7 @@
 
 **GitHub:** https://github.com/savasadiguzel-hash/ceo-erp-arac  
 **Dağıtım:** `dist/CEO-ERP-Araclar.exe` (~54 MB)  
-**Son güncelleme:** 2026-06-08
+**Son güncelleme:** 2026-06-08 (2)
 
 ---
 
