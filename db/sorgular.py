@@ -64,26 +64,22 @@ def recetesiz_faturali_stoklar(conn, fatura_turleri: list[str],
                 SUM(ISNULL(shd.Tutar, 0)) as toplam_tutar,
                 CONVERT(VARCHAR(10), MIN(sh.BelgeTarihi), 104) as ilk_fatura,
                 CONVERT(VARCHAR(10), MAX(sh.BelgeTarihi), 104) as son_fatura,
-                ISNULL(cmk.Unvani, '') as tedarikci,
+                ISNULL(MAX(cmk.Unvani), '') as tedarikci,
                 'Alış, Masraf, Hizmet, İthalat' as fatura_turleri
             FROM StokKarti sk
-            JOIN StokHareketDetay shd ON shd.IslemKartId IS NULL OR shd.IslemKartId NOT IN (
-                SELECT DISTINCT Id FROM UretimRecete
-            )
+            JOIN StokHareketDetay shd ON shd.IslemKartId = sk.Id
             JOIN StokHareket sh ON sh.Id = shd.HareketId
             LEFT JOIN CariMusteriKarti cmk ON sh.MusteriKartId = cmk.Id
             WHERE sk.Id NOT IN (
-                -- Reçete bileşenleri hariç tut
                 SELECT DISTINCT KartId FROM UretimReceteHatPlani WHERE KartId IS NOT NULL
             )
               AND sk.Id NOT IN (
-                -- Ürün ağacı bileşenleri hariç tut (varsa)
                 SELECT DISTINCT KartId FROM UrunAgaciDetay WHERE KartId IS NOT NULL
               )
               AND sk.Aktif = 1
               AND CAST(sh.BelgeTarihi AS DATE) >= CAST('{bas_sql}' AS DATE)
               AND CAST(sh.BelgeTarihi AS DATE) <= CAST('{bit_sql}' AS DATE)
-            GROUP BY sk.Id, sk.Kodu, sk.Adi, cmk.Unvani
+            GROUP BY sk.Id, sk.Kodu, sk.Adi
             ORDER BY sk.Kodu
         """)
 
