@@ -65,7 +65,7 @@ def recetesiz_faturali_stoklar(conn, fatura_turleri: list[str],
                 CONVERT(VARCHAR(10), MIN(sh.BelgeTarihi), 104) as ilk_fatura,
                 CONVERT(VARCHAR(10), MAX(sh.BelgeTarihi), 104) as son_fatura,
                 ISNULL(MAX(cmk.Unvani), '') as tedarikci,
-                'Alış, Masraf, Hizmet, İthalat' as fatura_turleri
+                'Alış Faturası / Alış İrsaliyesi' as fatura_turleri
             FROM StokKarti sk
             JOIN StokHareketDetay shd ON shd.IslemKartId = sk.Id
             JOIN StokHareket sh ON sh.Id = shd.HareketId
@@ -80,6 +80,7 @@ def recetesiz_faturali_stoklar(conn, fatura_turleri: list[str],
                 SELECT DISTINCT KartId FROM UrunAgaciDetay WHERE KartId IS NOT NULL
               )
               AND sk.Aktif = 1
+              AND sh.IslemKodu IN (1, 5)
               AND CAST(sh.BelgeTarihi AS DATE) >= CAST('{bas_sql}' AS DATE)
               AND CAST(sh.BelgeTarihi AS DATE) <= CAST('{bit_sql}' AS DATE)
             GROUP BY sk.Id, sk.Kodu, sk.Adi
