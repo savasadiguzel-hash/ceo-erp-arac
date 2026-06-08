@@ -55,7 +55,7 @@ def recetesiz_stok_hareketleri(conn, bas_tarih: str, bit_tarih: str) -> list[dic
                 sk.Adi,
                 sh.Id,
                 CASE sh.IslemKodu WHEN 1 THEN 'Alış Faturası' ELSE 'Alış İrsaliyesi' END,
-                ISNULL(sh.BelgeNo, ''),
+                ISNULL(sh.BelgeSeriNo, '') + ISNULL(CAST(sh.BelgeSiraNo AS VARCHAR(20)), '') ,
                 CONVERT(VARCHAR(10), sh.BelgeTarihi, 104),
                 CONVERT(VARCHAR(10), sh.BelgeTarihi, 120),
                 ISNULL(shd.Miktar, 0),
