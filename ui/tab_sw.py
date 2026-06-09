@@ -39,7 +39,7 @@ except Exception:
 _BTN_MAVI   = "background:#0078d4;color:white;border-radius:6px;padding:8px 18px;font-weight:bold;"
 _BTN_YESIL  = "background:#2d7a2d;color:white;border-radius:6px;padding:8px 18px;font-weight:bold;"
 _BTN_GERI   = "background:#eceff1;color:#37474f;border-radius:6px;padding:8px 18px;"
-_LOG_STYLE  = "background:#1e1e1e;color:#d4d4d4;font-family:Consolas,monospace;font-size:11px;"
+_LOG_STYLE  = "background:#f5f5f5;color:#1e1e1e;font-family:Consolas,monospace;font-size:11px;border:1px solid #ddd;"
 
 
 # ---------------------------------------------------------------------------
