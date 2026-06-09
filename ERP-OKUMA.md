@@ -27,6 +27,7 @@
 - StokHareketDetay JOIN'i `sk.Id` üzerinden yapılır; aksi takdirde 2 milyon+ Kartezyen çarpım kaydı dönebilir.
 - `shd.Turu = 1` filtresi zorunludur: Turu=3 satırları kur farkı faturası veya masraf/sarf referansı olabilir; bu satırlarda `IslemKartId` alınan stoğu değil muhasebe referansını gösterir. Turu=1 olmadan faturası olmayan stoklar raporda sahte olarak çıkar (örn. AKAKDEV0007/OPTO PULSER-PWG vakası).
 - Tarama tamamlandığında **Excel'e Aktar** butonu belirir → `logic/excel.py:kesisim_excel_kaydet` ile 8 sütunlu (tarih + stok bilgileri) xlsx üretilir.
+- ERP veritabanındaki bazı `sk.Adi` değerleri sonda `\n\n` içerebilir. `kesisim_excel_kaydet` tüm string değerlere `.strip()` uygular; aksi takdirde `wrap_text=True` + `vertical="center"` kombinasyonu satırı görünmez kılar.
 
 **Eşleştirme Sayfası** — Tespit edilen stokları mamüle bağlar.
 - Stok detay etiketleri fare ile seçilebilir (kopyalama/arama kolaylığı).

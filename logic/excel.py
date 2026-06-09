@@ -356,7 +356,7 @@ def kesisim_excel_kaydet(dosya: str, stoklar: list[dict], detaylar: list[dict],
                 val = _miktar(ham) if fmt in (_FMT_MIKTAR, _FMT_BIRIM) else _adet(ham)
                 aln = _SAG
             else:
-                val = str(ham) if ham is not None else ""
+                val = str(ham).strip() if ham is not None else ""
                 aln = _SOL
             h = ws.cell(row=satir, column=col, value=val)
             h.fill = _FILL["bileseni"]; h.font = _FONT["veri"]
@@ -394,7 +394,7 @@ def kesisim_excel_kaydet(dosya: str, stoklar: list[dict], detaylar: list[dict],
                 val = _miktar(ham)
                 aln = _SAG
             else:
-                val = str(ham) if ham is not None else ""
+                val = str(ham).strip() if ham is not None else ""
                 aln = _SOL
             hc = wd.cell(row=satir, column=col, value=val)
             hc.fill = _FILL["bileseni"]; hc.font = _FONT["veri"]
@@ -444,7 +444,7 @@ def baglama_excel_kaydet(dosya: str, sonuclar: list[dict]) -> None:
                 val = _para(ham) if fmt == _FMT_PARA else _adet(ham)
                 aln = _SAG
             else:
-                val = str(ham) if ham is not None else ""
+                val = str(ham).strip() if ham is not None else ""
                 aln = _SOL
 
             h = ws.cell(row=satir, column=col, value=val)
