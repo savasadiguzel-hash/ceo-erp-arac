@@ -77,6 +77,7 @@ def recetesiz_stok_hareketleri(conn, bas_tarih: str, bit_tarih: str) -> list[dic
               )
               AND sk.Aktif = 1
               AND sh.IslemKodu IN (1, 5)
+              AND shd.Turu = 1
               AND shd.BirimFiyat > 0
               AND shd.Miktar > 0
               AND CAST(sh.BelgeTarihi AS DATE) >= CAST('{bas_sql}' AS DATE)
@@ -282,6 +283,7 @@ def stok_fiyat_gecmisi(conn, stok_kodu: str, bas: str, bit: str) -> list[dict]:
             JOIN StokKarti sk ON sk.Id = shd.IslemKartId
             WHERE sk.Kodu = ?
               AND sh.IslemKodu IN (1, 5)
+              AND shd.Turu = 1
               AND CAST(sh.BelgeTarihi AS DATE) >= CAST('{bas}' AS DATE)
               AND CAST(sh.BelgeTarihi AS DATE) <= CAST('{bit}' AS DATE)
               AND shd.BirimFiyat > 0
@@ -329,6 +331,7 @@ def stok_fiyatlari_toplu(
                 JOIN StokKarti sk   ON sk.Id = shd.IslemKartId
                 WHERE sk.Kodu IN ({yer})
                   AND sh.IslemKodu IN (1, 5)
+                  AND shd.Turu = 1
                   AND CAST(sh.BelgeTarihi AS DATE) >= CAST('{bas}' AS DATE)
                   AND CAST(sh.BelgeTarihi AS DATE) <= CAST('{bit}' AS DATE)
                   AND shd.BirimFiyat > 0
@@ -346,3 +349,56 @@ def stok_fiyatlari_toplu(
     return sonuc
 
 
+# ── Araç 5: Satış Faturaları ──────────────────────────────────────────────────
+
+def satis_faturalari(conn, bas_tarih: str, bit_tarih: str) -> list[dict]:
+    """
+    Belirtilen tarih aralığındaki satış fatura ve irsaliye satırlarını döner.
+    bas_tarih / bit_tarih: 'DD.MM.YYYY' formatı.
+    IslemKodu 2 = Satış Faturası, 6 = Satış İrsaliyesi.
+    """
+    bas_parts = bas_tarih.split('.')
+    bit_parts = bit_tarih.split('.')
+    bas_sql = f"{bas_parts[2]}-{bas_parts[1]}-{bas_parts[0]}"
+    bit_sql = f"{bit_parts[2]}-{bit_parts[1]}-{bit_parts[0]}"
+
+    with cursor_ctx(conn) as cur:
+        cur.execute(f"""
+            SELECT
+                ISNULL(cmk.Unvani, ''),
+                sk.Kodu,
+                sk.Adi,
+                CASE sh.IslemKodu WHEN 2 THEN 'Satış Faturası' ELSE 'Satış İrsaliyesi' END,
+                ISNULL(sh.BelgeSeriNo, '') + ISNULL(CAST(sh.BelgeSiraNo AS VARCHAR(20)), ''),
+                CONVERT(VARCHAR(10), sh.BelgeTarihi, 104),
+                CONVERT(VARCHAR(10), sh.BelgeTarihi, 120),
+                ISNULL(shd.Miktar, 0),
+                ISNULL(shd.BirimFiyat, 0),
+                ISNULL(shd.Tutar, 0)
+            FROM StokHareket sh
+            JOIN StokHareketDetay shd ON shd.HareketId = sh.Id
+            JOIN StokKarti sk ON sk.Id = shd.IslemKartId
+            LEFT JOIN CariMusteriKarti cmk ON sh.MusteriKartId = cmk.Id
+            WHERE sh.IslemKodu IN (2, 6)
+              AND shd.Turu = 1
+              AND shd.BirimFiyat > 0
+              AND shd.Miktar > 0
+              AND CAST(sh.BelgeTarihi AS DATE) >= CAST('{bas_sql}' AS DATE)
+              AND CAST(sh.BelgeTarihi AS DATE) <= CAST('{bit_sql}' AS DATE)
+            ORDER BY sh.BelgeTarihi ASC, cmk.Unvani ASC, sk.Kodu ASC
+        """)
+        return [
+            {
+                'musteri':     row[0],
+                'stok_kodu':   row[1],
+                'stok_adi':    row[2],
+                'islem_turu':  row[3],
+                'belge_no':    row[4],
+                'tarih':       row[5],
+                'tarih_iso':   row[6],
+                'miktar':      float(row[7]),
+                'birim_fiyat': float(row[8]),
+                'tutar':       float(row[9]),
+            }
+            for row in cur.fetchall()
+        ]

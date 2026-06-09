@@ -4,11 +4,12 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QFont
 
-from ui.stil              import STIL
-from ui.mamul_agaci_tab   import MamulAgaciTab
-from ui.maliyet           import MaliyetSayfasi
-from ui.tab_sw            import TabSW
-from ui.tab_erp_aktar     import TabErpAktar
+from ui.stil                    import STIL
+from ui.mamul_agaci_tab         import MamulAgaciTab
+from ui.maliyet                 import MaliyetSayfasi
+from ui.tab_sw                  import TabSW
+from ui.tab_erp_aktar           import TabErpAktar
+from ui.tab_satis_faturalari    import SatisFaturalariTab
 
 
 class AnaPencere(QMainWindow):
@@ -31,20 +32,23 @@ class AnaPencere(QMainWindow):
         self.tabs.setTabPosition(QTabWidget.North)
         self.tabs.setDocumentMode(True)
 
-        self.mamul_tab  = MamulAgaciTab()
+        self.mamul_tab   = MamulAgaciTab()
         self.maliyet_tab = MaliyetSayfasi()
-        self.sw_tab     = TabSW()
-        self.erp_tab    = TabErpAktar()
+        self.sw_tab      = TabSW()
+        self.erp_tab     = TabErpAktar()
+        self.satis_tab   = SatisFaturalariTab()
 
         self.tabs.addTab(self.mamul_tab,   "🔗  Mamül Ağacı")
         self.tabs.addTab(self.maliyet_tab, "💰  Maliyet")
         self.tabs.addTab(self.sw_tab,      "⚙  SW Kodlama")
         self.tabs.addTab(self.erp_tab,     "📦  Stok Kartı Aktar")
+        self.tabs.addTab(self.satis_tab,   "🧾  Satış Faturaları")
 
         # ── sinyal bağlantıları ──────────────────────────────────────────────
         self.mamul_tab.durum_guncelle.connect(self._durum)
         self.sw_tab.durum_guncelle.connect(self._durum)
         self.erp_tab.durum_guncelle.connect(self._durum)
+        self.satis_tab.durum_guncelle.connect(self._durum)
 
         # SW çalışması bitince Stok Kartı sekmesini güncelle
         self.sw_tab.kodlama_bitti.connect(self._sw_bitti)

@@ -2,7 +2,7 @@
 
 **GitHub:** https://github.com/savasadiguzel-hash/ceo-erp-arac  
 **Dağıtım:** `dist/CEO-ERP-Araclar.exe` (~54 MB)  
-**Son güncelleme:** 2026-06-08 (3)
+**Son güncelleme:** 2026-06-09
 
 ---
 
@@ -14,6 +14,7 @@
 | 💰 Maliyet | LIFO / FIFO / Ağırlıklı Ortalama — Excel maliyet raporu |
 | ⚙ SW Kodlama | SolidWorks montaj → AI sınıflandırma → GEM/YMB kodu |
 | 📦 Stok Kartı Aktar | SW sonrası CEO ERP'ye otomatik stok kartı açar |
+| 🧾 Satış Faturaları | Tarih aralığına göre satış fatura/irsaliye listesi + Excel çıktısı |
 
 ---
 
@@ -24,6 +25,7 @@
 **Tarama Sayfası** — Reçetesiz + faturalı stokları tespit eder (kesişim kümesi).
 - Sorguda `UretimReceteHatPlaniGirdi.KartId NOT IN` filtresi uygulanır; hat girdisi (bileşen/operasyon alt kodu) olarak kayıtlı stoklar kesişime dahil edilmez.
 - StokHareketDetay JOIN'i `sk.Id` üzerinden yapılır; aksi takdirde 2 milyon+ Kartezyen çarpım kaydı dönebilir.
+- `shd.Turu = 1` filtresi zorunludur: Turu=3 satırları kur farkı faturası veya masraf/sarf referansı olabilir; bu satırlarda `IslemKartId` alınan stoğu değil muhasebe referansını gösterir. Turu=1 olmadan faturası olmayan stoklar raporda sahte olarak çıkar (örn. AKAKDEV0007/OPTO PULSER-PWG vakası).
 - Tarama tamamlandığında **Excel'e Aktar** butonu belirir → `logic/excel.py:kesisim_excel_kaydet` ile 8 sütunlu (tarih + stok bilgileri) xlsx üretilir.
 
 **Eşleştirme Sayfası** — Tespit edilen stokları mamüle bağlar.
@@ -38,6 +40,18 @@
 - Arama kutusuna yazınca liste anlık daralır (kod veya ada göre)
 - **Fiyat kaynağı:** Yalnızca `IslemKodu IN (1, 5)` — alış faturası + alış irsaliyesi. Üretimden giriş, sayım, devir vb. hariç tutulur
 - **Performans:** `stok_fiyatlari_toplu()` ile N bileşen için tek SQL sorgusu; 20 bileşenli mamülde 42 DB round-trip → 4'e düştü. BOM listesi özyinelemeli hesaplamada tekrar sorgulanmaz.
+
+---
+
+## Satış Faturaları Sekmesi — Önemli Notlar
+
+- **Bağlan** butonuyla DB bağlantısı arka thread'de kurulur
+- Tarih girildikten sonra **Faturaları Getir** → `satis_faturalari()` sorgusu çalışır
+- `IslemKodu IN (2, 6)` — satış faturası + satış irsaliyesi; `shd.Turu = 1` ürün satırlarını filtreler
+- 9 kolonlu tablo: Tarih / Belge Türü / Belge No / Müşteri / Stok Kodu / Stok Adı / Miktar / Birim Fiyat / Tutar
+- Arama kutusuna yazınca satırlar anlık filtrelenir (müşteri, stok kodu, belge no)
+- **Excel'e Aktar** → openpyxl ile biçimlendirilmiş xlsx, son satırda toplam tutar
+- `shd.Turu = 1` filtresinden kayıt dönmüyorsa bu değer ERP versiyonuna göre farklı olabilir; `sorgular.py:satis_faturalari()` içinde ayarlanabilir
 
 ---
 
