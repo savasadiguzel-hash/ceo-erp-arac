@@ -71,10 +71,13 @@ Tespit edilen stokları mamüle bağlar. Stok detay etiketleri fare ile seçileb
 - Kullanıcı emir seçip **Analiz Et** tıklar; sağ panelde eksik malzemeler **BOM patlatmalı ağaç görünümünde** listelenir
 - **Hat filtresi:** `HatTipi = 1` (ana üretim hattı) — HatTipi=2 (ek süreçler) dahil edilmez
 - **Bakiye formülü — üretim emri tarihi bazlı:**
-  - `GirenMiktar`: `IslemKodu IN (1, 16, 20, 22)` — Alış Faturası, Üretimden Giriş, Sayım Fazlası, Devir Girişi
-  - `CikanMiktar`: `IslemKodu IN (2, 6, 17, 18, 19, 21)` — Satış, Satış İrsaliyesi, Üretime Çıkış, Depo Çıkış, Sayım Eksiği, Fire
+  - `GirenMiktar`: `IslemKodu IN (1, 16, 20, 22, 23)` — Alış Faturası, Üretimden Giriş, Sayım Fazlası, Devir Girişi, Depolar Arası Giriş
+  - `CikanMiktar`: `IslemKodu IN (2, 3, 6, 17, 18, 19, 21)` — Satış, Alış İade Faturası, Satış İrsaliyesi, Üretime Çıkış, Depolar Arası Çıkış, Sayım Eksiği, Fire
   - Tarih filtresi: `BelgeTarihi <= UretimEmriTarihi`
+  - **Not:** `IslemKodu=5` (Alış İrsaliyesi) dahil edilmez — her zaman IslemKodu=1 (Alış Faturası) veya IslemKodu=23 (Depolar Arası Giriş) ile eşli gelir, sayılırsa çift sayım olur
 - **IslemKodu=16 eklenmesi kritik:** Üretilmiş yarı mamüller bu formül olmadan yanlış negatif çıkar
+- **IslemKodu=23 (Depolar Arası Giriş):** Hedef depoya gelen transferi temsil eder; kaynak depo çıkışı (IslemKodu=18) zaten CIK'ta. İkisi birlikte toplam şirket bakiyesini doğru verir
+- **IslemKodu=3 (Alış İade Faturası):** Tedarikçiye iade edilen malı temsil eder; CIK'a eklenmesi HMGMDDAL004 gibi geçmişte iade yapılmış kalemlerin tarihsel bakiyesini CEO ile eşleştirir
 - **Depo bazlı bakiye (2026-06-10 düzeltmesi):** CEO ERP, her malzeme için `StokDepoId` (hat planındaki hedef depo) bazında bakiye hesaplar. Depo bakiyesi negatifse (`sh.DepoKartId = StokDepoId`), o değer esas alınır; depo bakiyesi ≥ 0 ise toplam bakiye kullanılır. Bu düzeltme sayesinde CEO ERP ile eşleşme 11 `Yetersiz miktar!` öğesinden 8'inde sağlanmaktadır. Kalan 3 sapma ATP (tüm açık emirlerin kümülatif talep) ve CEO'nun iç rezervasyon mantığını gerektirdiğinden uygulanmadı.
 
 ### BOM Patlatma (Alt Montaj Açma)
@@ -120,8 +123,9 @@ yöntemi denendi:
 
 | Yöntem | Tanım | CEO ile eşleşme |
 |---|---|---|
-| **Depo-bazlı hibrit (mevcut)** | depo bakiyesi<0 ise depo, değilse total | **23/27** ✅ |
-| Ekstre kodları ekli | +Alış İrsaliyesi(5) +Depo Transfer(23) | 19-20/27 ⬇ |
+| **Depo-bazlı hibrit + IslemKodu 3+23** | GIR+=23, CIK+=3, depo hibrit | **≥23/27** ✅ |
+| Eski: depo-bazlı hibrit (önceki) | depo bakiyesi<0 ise depo, değilse total | 23/27 |
+| Eski: +Alış İrsaliyesi(5) +Depo Transfer(23) | 5 çift sayım yaptığı için daha kötü | 19-20/27 ⬇ |
 | ATP (kümülatif talep) | depo bakiyesi − tüm açık emir talebi | 15-16/27 ⬇ |
 
 **Çıkan kesin sonuçlar:**
@@ -141,9 +145,8 @@ yöntemi denendi:
    tutarsız: SARF0000001 (469 stok, 3564 toplam talep) yine de "Yeterli". Bu
    nedenle basit hiçbir kural CEO'yu birebir veremiyor.
 
-**Karar:** Mevcut depo-bazlı hibrit formül korunuyor (23/27, ulaşılabilir en iyi).
-Üretimi gerçekten durduran boş/eksi bakiyeli kalemler eksiksiz yakalanıyor; kaçan
-2-3 kalem CEO'nun görünmeyen iç rezervasyon motorundan kaynaklanan sınır durumlar.
+**Karar:** IslemKodu=23 GIR'a, IslemKodu=3 CIK'a eklendi (IslemKodu=5 hariç — çift sayım).
+HMGMDDAL004: 05.01.2026 bakiyesi eski formülde **200** (hatalı) → yeni formülde **0** ✓, güncel **591** ✓.
 İlgili `IslemKodu` evreni (bu DB'de tanım tablosu yok): 1,2,3,5,16,17,18,19,20,21,22,23.
 
 ---

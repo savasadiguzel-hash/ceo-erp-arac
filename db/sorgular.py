@@ -381,11 +381,13 @@ def uretim_emir_eksik_stok(conn, emir_id: int) -> list[dict]:
     ÜRETİM EMRİ TARİHİNDEKİ bakiyeyi hesaplayıp yetersiz olanları döner.
 
     Bakiye formülü (CEO ERP ile eşleşen):
-      GirenMiktar : IslemKodu IN (1, 16, 20, 22) AND Aktif=1
-        1=Alış Faturası, 16=Üretimden Giriş, 20=Sayım Fazlası, 22=Devir Girişi
-      CikanMiktar : IslemKodu IN (2, 6, 17, 18, 19, 21) AND Aktif=1
-        2=Satış Faturası, 6=Satış İrsaliyesi, 17=Üretime Çıkış,
-        18=Depolar Arası Çıkış, 19=Sayım Eksiği, 21=Fire
+      GirenMiktar : IslemKodu IN (1, 16, 20, 22, 23) AND Aktif=1
+        1=Alış Faturası, 16=Üretimden Giriş, 20=Sayım Fazlası,
+        22=Devir Girişi, 23=Depolar Arası Giriş
+      CikanMiktar : IslemKodu IN (2, 3, 6, 17, 18, 19, 21) AND Aktif=1
+        2=Satış Faturası, 3=Alış İade Faturası, 6=Satış İrsaliyesi,
+        17=Üretime Çıkış, 18=Depolar Arası Çıkış, 19=Sayım Eksiği, 21=Fire
+      Not: 5=Alış İrsaliyesi sayılmaz (her zaman 1 veya 23 ile eşli → çift sayım)
       Tarih filtresi: BelgeTarihi <= UretimEmriTarihi
       Hat filtresi  : HatTipi = 1 (ana üretim hattı)
 
@@ -412,8 +414,8 @@ def uretim_emir_eksik_stok(conn, emir_id: int) -> list[dict]:
                 SELECT
                     shd.IslemKartId,
                     SUM(CASE
-                        WHEN sh.IslemKodu IN (1, 16, 20, 22)        THEN  shd.Miktar
-                        WHEN sh.IslemKodu IN (2, 6, 17, 18, 19, 21) THEN -shd.Miktar
+                        WHEN sh.IslemKodu IN (1, 16, 20, 22, 23)        THEN  shd.Miktar
+                        WHEN sh.IslemKodu IN (2, 3, 6, 17, 18, 19, 21)  THEN -shd.Miktar
                         ELSE 0
                     END) AS Bakiye
                 FROM StokHareketDetay shd
@@ -563,8 +565,8 @@ def uretim_emir_bom_patlat(conn, emir_id: int) -> list[dict]:
             cur.execute(f"""
                 SELECT shd.IslemKartId,
                        SUM(CASE
-                           WHEN sh.IslemKodu IN (1, 16, 20, 22)        THEN  shd.Miktar
-                           WHEN sh.IslemKodu IN (2, 6, 17, 18, 19, 21) THEN -shd.Miktar
+                           WHEN sh.IslemKodu IN (1, 16, 20, 22, 23)        THEN  shd.Miktar
+                           WHEN sh.IslemKodu IN (2, 3, 6, 17, 18, 19, 21)  THEN -shd.Miktar
                            ELSE 0
                        END) AS Bakiye
                 FROM StokHareketDetay shd
@@ -595,8 +597,8 @@ def uretim_emir_bom_patlat(conn, emir_id: int) -> list[dict]:
                 cur.execute(f"""
                     SELECT shd.IslemKartId,
                            SUM(CASE
-                               WHEN sh.IslemKodu IN (1, 16, 20, 22)        THEN  shd.Miktar
-                               WHEN sh.IslemKodu IN (2, 6, 17, 18, 19, 21) THEN -shd.Miktar
+                               WHEN sh.IslemKodu IN (1, 16, 20, 22, 23)        THEN  shd.Miktar
+                               WHEN sh.IslemKodu IN (2, 3, 6, 17, 18, 19, 21)  THEN -shd.Miktar
                                ELSE 0
                            END)
                     FROM StokHareketDetay shd
@@ -732,8 +734,8 @@ def muhasebe_eksik_raporu_olustur(conn) -> list[dict]:
     """
     from collections import defaultdict
 
-    _GIR = (1, 16, 20, 22)
-    _CIK = (2, 6, 17, 18, 19, 21)
+    _GIR = (1, 16, 20, 22, 23)
+    _CIK = (2, 3, 6, 17, 18, 19, 21)
     _YIG = 500
     gir_s = ','.join(str(x) for x in _GIR)
     cik_s = ','.join(str(x) for x in _CIK)
