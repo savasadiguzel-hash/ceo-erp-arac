@@ -378,50 +378,65 @@ def uretim_emirleri_listesi(conn) -> list[dict]:
 def uretim_emir_eksik_stok(conn, emir_id: int) -> list[dict]:
     """
     Belirli bir üretim emrinin hat planındaki malzemeleri için
-    canlı bakiye hesaplayıp eksik olanları döner.
-    Her eleman: malzeme_kodu, malzeme_adi, ihtiyac, bakiye, eksik
+    ÜRETİM EMRİ TARİHİNDEKİ bakiyeyi hesaplayıp yetersiz olanları döner.
+
+    Bakiye formülü (CEO ERP ile eşleşen):
+      GirenMiktar : IslemKodu IN (1, 20) AND Aktif=1
+      CikanMiktar : IslemKodu IN (2, 6, 17, 18, 19, 21) AND Aktif=1
+      Tarih filtresi: BelgeTarihi <= UretimEmriTarihi
+
+    Her eleman: malzeme_kodu, malzeme_adi, ihtiyac, bakiye_emir_tarihi, eksik
     """
     with cursor_ctx(conn) as cur:
         cur.execute("""
-            WITH IlgiliStoklar AS (
-                SELECT DISTINCT uehpg.KartId
+            WITH EmirBilgi AS (
+                SELECT CAST(UretimEmriTarihi AS DATE) AS EmirTarihi
+                FROM UretimEmri WHERE Id = ?
+            ),
+            ToplamTalep AS (
+                -- Aynı malzeme birden fazla hat planı satırında olabilir; toplam alınır
+                SELECT uehpg.KartId, SUM(uehpg.TalepMiktar) AS ToplamTalep
                 FROM UretimEmriHatPlani      uehp
                 JOIN UretimEmriHatPlaniGirdi uehpg ON uehpg.UretimEmriHatPlaniId = uehp.Id
                 WHERE uehp.UretimEmriId = ?
                   AND uehpg.KartId IS NOT NULL
                   AND uehpg.TalepMiktar > 0
+                GROUP BY uehpg.KartId
             ),
-            StokBakiye AS (
+            BakiyeEmirTarih AS (
                 SELECT
                     shd.IslemKartId,
-                    SUM(CASE WHEN shd.Turu = 1 THEN shd.Miktar ELSE -shd.Miktar END) AS Bakiye
+                    SUM(CASE
+                        WHEN sh.IslemKodu IN (1, 20)             THEN  shd.Miktar
+                        WHEN sh.IslemKodu IN (2, 6, 17, 18, 19, 21) THEN -shd.Miktar
+                        ELSE 0
+                    END) AS Bakiye
                 FROM StokHareketDetay shd
-                WHERE shd.IslemKartId IN (SELECT KartId FROM IlgiliStoklar)
+                JOIN StokHareket sh ON sh.Id = shd.HareketId
+                WHERE shd.IslemKartId IN (SELECT KartId FROM ToplamTalep)
+                  AND sh.Aktif = 1
+                  AND CAST(sh.BelgeTarihi AS DATE) <= (SELECT EmirTarihi FROM EmirBilgi)
                 GROUP BY shd.IslemKartId
             )
             SELECT
-                sk.Kodu                          AS MalzemeKodu,
-                sk.Adi                           AS MalzemeAdi,
-                uehpg.TalepMiktar                AS Ihtiyac,
-                ISNULL(sb.Bakiye, 0)             AS Bakiye,
-                ISNULL(sb.Bakiye, 0) - uehpg.TalepMiktar AS Eksik
-            FROM UretimEmriHatPlani      uehp
-            JOIN UretimEmriHatPlaniGirdi uehpg ON uehpg.UretimEmriHatPlaniId = uehp.Id
-            JOIN StokKarti sk                  ON sk.Id                      = uehpg.KartId
-            LEFT JOIN StokBakiye sb            ON sb.IslemKartId             = sk.Id
-            WHERE uehp.UretimEmriId = ?
-              AND uehpg.KartId IS NOT NULL
-              AND uehpg.TalepMiktar > 0
-              AND ISNULL(sb.Bakiye, 0) < uehpg.TalepMiktar
+                sk.Kodu                                           AS MalzemeKodu,
+                sk.Adi                                            AS MalzemeAdi,
+                tt.ToplamTalep                                    AS Ihtiyac,
+                ISNULL(b.Bakiye, 0)                               AS BakiyeEmirTarihi,
+                ISNULL(b.Bakiye, 0) - tt.ToplamTalep              AS Eksik
+            FROM ToplamTalep tt
+            JOIN StokKarti sk              ON sk.Id             = tt.KartId
+            LEFT JOIN BakiyeEmirTarih b   ON b.IslemKartId     = tt.KartId
+            WHERE ISNULL(b.Bakiye, 0) < tt.ToplamTalep
             ORDER BY sk.Kodu
         """, emir_id, emir_id)
         return [
             {
-                'malzeme_kodu': row[0],
-                'malzeme_adi':  row[1],
-                'ihtiyac':      float(row[2]),
-                'bakiye':       float(row[3]),
-                'eksik':        float(row[4]),
+                'malzeme_kodu':        row[0],
+                'malzeme_adi':         row[1],
+                'ihtiyac':             float(row[2]),
+                'bakiye_emir_tarihi':  float(row[3]),
+                'eksik':               float(row[4]),
             }
             for row in cur.fetchall()
         ]

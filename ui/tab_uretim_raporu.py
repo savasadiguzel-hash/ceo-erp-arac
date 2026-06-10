@@ -32,7 +32,7 @@ _TABLO_KOLONLAR = [
     "Malzeme Kodu",
     "Malzeme Adı",
     "İhtiyaç Miktarı",
-    "Mevcut Bakiye",
+    "Emri Tarihindeki Bakiye",
     "Eksik Miktar",
 ]
 
@@ -378,7 +378,7 @@ class UretimRaporuTab(QWidget):
 
         self.tablo.setRowCount(len(veri))
         for r, m in enumerate(veri):
-            sifir_bakiye = m['bakiye'] <= 0
+            sifir_bakiye = m['bakiye_emir_tarihi'] <= 0
 
             def hucre(txt, align=Qt.AlignLeft):
                 item = QTableWidgetItem(str(txt))
@@ -394,7 +394,7 @@ class UretimRaporuTab(QWidget):
             ih = hucre(f"{m['ihtiyac']:.2f}", Qt.AlignRight)
             self.tablo.setItem(r, 2, ih)
 
-            bk = hucre(f"{m['bakiye']:.2f}", Qt.AlignRight)
+            bk = hucre(f"{m['bakiye_emir_tarihi']:.2f}", Qt.AlignRight)
             if sifir_bakiye:
                 bk.setForeground(QBrush(_RENK_EKSIK))
             self.tablo.setItem(r, 3, bk)
@@ -447,7 +447,7 @@ class UretimRaporuTab(QWidget):
 
             # Başlıklar
             ws.append(["Malzeme Kodu", "Malzeme Adı",
-                        "İhtiyaç Miktarı", "Mevcut Bakiye", "Eksik Miktar"])
+                        "İhtiyaç Miktarı", "Emri Tarihindeki Bakiye", "Eksik Miktar"])
             header_row = ws.max_row
             header_fill = PatternFill("solid", fgColor="3F51B5")
             header_font = Font(name="Segoe UI", bold=True, color="FFFFFF", size=11)
@@ -464,11 +464,11 @@ class UretimRaporuTab(QWidget):
                     m['malzeme_kodu'],
                     m['malzeme_adi'],
                     round(m['ihtiyac'], 2),
-                    round(m['bakiye'],  2),
-                    round(m['eksik'],   2),
+                    round(m['bakiye_emir_tarihi'], 2),
+                    round(m['eksik'],             2),
                 ])
                 r = ws.max_row
-                sifir = m['bakiye'] <= 0
+                sifir = m['bakiye_emir_tarihi'] <= 0
                 for c in [3, 4, 5]:
                     ws.cell(row=r, column=c).alignment = Alignment(horizontal="right")
                 ws.cell(row=r, column=4).font = eksik_font if sifir else Font(name="Segoe UI", size=11)
