@@ -349,6 +349,71 @@ def stok_fiyatlari_toplu(
     return sonuc
 
 
+# ── Araç 6: Üretim Eksik Stok Raporu ─────────────────────────────────────────
+
+def uretim_eksik_stok(conn) -> list[dict]:
+    """
+    'Devam Ediyor' (DurumId=3) üretim emirleri için hat planındaki
+    malzemelerin stok bakiyesini canlı hesaplayıp yetersiz olanları döner.
+    Her eleman: emir_id, emir_kodu, emir_aciklama, emir_tarihi,
+                malzeme_kodu, malzeme_adi, ihtiyac, bakiye, eksik
+    """
+    with cursor_ctx(conn) as cur:
+        cur.execute("""
+            WITH IlgiliStoklar AS (
+                SELECT DISTINCT uehpg.KartId
+                FROM UretimEmri ue
+                JOIN UretimEmriHatPlani      uehp  ON uehp.UretimEmriId          = ue.Id
+                JOIN UretimEmriHatPlaniGirdi uehpg ON uehpg.UretimEmriHatPlaniId = uehp.Id
+                WHERE ue.DurumId = 3
+                  AND uehpg.KartId IS NOT NULL
+                  AND uehpg.TalepMiktar > 0
+            ),
+            StokBakiye AS (
+                SELECT
+                    shd.IslemKartId,
+                    SUM(CASE WHEN shd.Turu = 1 THEN shd.Miktar ELSE -shd.Miktar END) AS Bakiye
+                FROM StokHareketDetay shd
+                WHERE shd.IslemKartId IN (SELECT KartId FROM IlgiliStoklar)
+                GROUP BY shd.IslemKartId
+            )
+            SELECT
+                ue.Id                                                        AS EmirId,
+                ue.Kodu                                                      AS EmirKodu,
+                ISNULL(ue.Aciklama, '')                                      AS EmirAciklama,
+                CONVERT(VARCHAR(10), ue.UretimEmriTarihi, 104)               AS EmirTarihi,
+                sk.Kodu                                                      AS MalzemeKodu,
+                sk.Adi                                                       AS MalzemeAdi,
+                uehpg.TalepMiktar                                            AS Ihtiyac,
+                ISNULL(sb.Bakiye, 0)                                         AS Bakiye,
+                ISNULL(sb.Bakiye, 0) - uehpg.TalepMiktar                    AS Eksik
+            FROM UretimEmri ue
+            JOIN UretimEmriHatPlani      uehp  ON uehp.UretimEmriId          = ue.Id
+            JOIN UretimEmriHatPlaniGirdi uehpg ON uehpg.UretimEmriHatPlaniId = uehp.Id
+            JOIN StokKarti sk                  ON sk.Id                      = uehpg.KartId
+            LEFT JOIN StokBakiye sb            ON sb.IslemKartId             = sk.Id
+            WHERE ue.DurumId = 3
+              AND uehpg.KartId IS NOT NULL
+              AND uehpg.TalepMiktar > 0
+              AND ISNULL(sb.Bakiye, 0) < uehpg.TalepMiktar
+            ORDER BY ue.UretimEmriTarihi DESC, ue.Kodu, sk.Kodu
+        """)
+        return [
+            {
+                'emir_id':       int(row[0]),
+                'emir_kodu':     row[1],
+                'emir_aciklama': row[2],
+                'emir_tarihi':   row[3],
+                'malzeme_kodu':  row[4],
+                'malzeme_adi':   row[5],
+                'ihtiyac':       float(row[6]),
+                'bakiye':        float(row[7]),
+                'eksik':         float(row[8]),
+            }
+            for row in cur.fetchall()
+        ]
+
+
 # ── Araç 5: Satış Faturaları ──────────────────────────────────────────────────
 
 def satis_faturalari(conn, bas_tarih: str, bit_tarih: str) -> list[dict]:

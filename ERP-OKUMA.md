@@ -2,7 +2,7 @@
 
 **GitHub:** https://github.com/savasadiguzel-hash/ceo-erp-arac  
 **Dağıtım:** `dist/CEO-ERP-Araclar.exe` (~54 MB)  
-**Son güncelleme:** 2026-06-09
+**Son güncelleme:** 2026-06-10
 
 ---
 
@@ -15,6 +15,7 @@
 | ⚙ SW Kodlama | SolidWorks montaj → AI sınıflandırma → GEM/YMB kodu |
 | 📦 Stok Kartı Aktar | SW sonrası CEO ERP'ye otomatik stok kartı açar |
 | 🧾 Satış Faturaları | Tarih aralığına göre satış fatura/irsaliye listesi + Excel çıktısı |
+| 🏭 Üretim Eksik Stok | "Devam Ediyor" üretim emirlerinde hat planı malzemeleri için eksik stok raporu |
 
 ---
 
@@ -64,6 +65,21 @@ Tespit edilen stokları mamüle bağlar. Stok detay etiketleri fare ile seçileb
 
 ---
 
+## Üretim Eksik Stok Sekmesi
+
+- Uygulama açıldığında DB'ye otomatik bağlanır ve sorguyu çalıştırır
+- **Filtre:** `DurumId=3` (Devam Ediyor) üretim emirleri — 25 adet kayıt
+- **Bakiye hesabı:** `StokHareket` + `StokHareketDetay`'dan canlı (Turu=1 giriş, Turu≠1 çıkış)
+- **Sorgu:** CTE ile önce ilgili stokların bakiyesi hesaplanır, sonra `TalepMiktar < Bakiye` filtrelenir
+- **Ağaç görünümü:** Üst satır = Üretim Emri (mavi, bold), alt satırlar = eksik malzemeler
+- Mevcut bakiyesi 0 olan malzemelerin bakiye sütunu kırmızı görünür
+- **Yenile** butonu ile anlık sorgulama yapılır; **Excel'e Aktar** emre göre gruplu xlsx üretir
+- İlgili DB tabloları: `UretimEmri`, `UretimEmriHatPlani`, `UretimEmriHatPlaniGirdi`, `StokKarti`, `StokHareket`, `StokHareketDetay`
+- Sorgu fonksiyonu: `db/sorgular.py:uretim_eksik_stok(conn)`
+- UI: `ui/tab_uretim_raporu.py:UretimRaporuTab`
+
+---
+
 ## Veritabanı
 
 | Parametre | Değer |
@@ -101,7 +117,7 @@ main.py / config.py / config.json / build.bat
 db/      → baglanti.py, sorgular.py
 logic/   → maliyet.py, excel.py
 ui/      → ana_pencere.py, maliyet.py, mamul_agaci_tab.py, tarama.py, eslestirme.py, rapor.py
-          tab_satis_faturalari.py, tab_erp_aktar.py, tab_sw.py, baglanti.py, stil.py
+          tab_satis_faturalari.py, tab_erp_aktar.py, tab_sw.py, tab_uretim_raporu.py, baglanti.py, stil.py
 sw/      → SW Kodlama modülleri (classifier, pipeline, renamer, erp_handler, vision_handler)
 dist/    → CEO-ERP-Araclar.exe, config.json
 ```
