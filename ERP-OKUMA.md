@@ -137,6 +137,5 @@ dist/    → CEO-ERP-Araclar.exe, config.json
 
 ## Sıradaki Geliştirmeler
 
-1. **BOM otomasyonu** — SW çalışması sonrası `UrunAgaci + UrunAgaciDetay` otomatik oluşturma
-2. **PDF gömme** — teknik resim PDF'lerini `StokKarti.DokumanPath`'e bağlama
-3. **Canlı SW testi** — SW Kodlama sekmesini iş makinesinde SolidWorks 2019 ile doğrulama
+1. **PDF gömme** — teknik resim PDF'lerini `StokKarti.DokumanPath`'e bağlama
+2. **Canlı SW testi** — SW Kodlama sekmesini iş makinesinde SolidWorks 2019 ile doğrulama

@@ -19,4 +19,4 @@
 - **GitHub:** https://github.com/savasadiguzel-hash/ceo-erp-arac
 - **DB:** SQL Server `WIN-3FATBI9RQAA\CEO1`, Firma 504
 - **Kural:** CEO ERP'de SADECE OKUMA (`talimat.txt`). Yazma yalnızca stok kartı akışında.
-- **Yapı:** 5 sekme — Mamül Ağacı / Maliyet / SW Kodlama / Stok Kartı Aktar / Satış Faturaları
+- **Yapı:** 6 sekme — Mamül Ağacı / Maliyet / SW Kodlama / Stok Kartı Aktar / Satış Faturaları / Üretim Eksik Stok
