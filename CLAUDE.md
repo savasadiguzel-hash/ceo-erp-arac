@@ -17,6 +17,13 @@
 ## Proje
 
 - **GitHub:** https://github.com/savasadiguzel-hash/ceo-erp-arac
-- **DB:** SQL Server `WIN-3FATBI9RQAA\CEO1`, Firma 504
-- **Kural:** CEO ERP'de SADECE OKUMA (`talimat.txt`). Yazma yalnızca stok kartı akışında.
+- **DB:** SQL Server `WIN-3FATBI9RQAA\CEO1`, `DATABASE=504`, kullanıcı `sa`
+- **Kural:** CEO ERP'de SADECE OKUMA. Yazma yalnızca stok kartı akışında.
 - **Yapı:** 6 sekme — Mamül Ağacı / Maliyet / SW Kodlama / Stok Kartı Aktar / Satış Faturaları / Üretim Eksik Stok
+
+## İzin Gerektiren İşlemler
+
+Kullanıcı komutu olmadan yapılmaz:
+- `git push`
+- `build.bat` (exe derleme)
+- `python main.py` (uygulama testi)
