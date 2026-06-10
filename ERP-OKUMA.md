@@ -67,15 +67,16 @@ Tespit edilen stokları mamüle bağlar. Stok detay etiketleri fare ile seçileb
 
 ## Üretim Eksik Stok Sekmesi
 
-- Uygulama açıldığında DB'ye otomatik bağlanır ve sorguyu çalıştırır
-- **Filtre:** `DurumId=3` (Devam Ediyor) üretim emirleri — 25 adet kayıt
-- **Bakiye hesabı:** `StokHareket` + `StokHareketDetay`'dan canlı (Turu=1 giriş, Turu≠1 çıkış)
-- **Sorgu:** CTE ile önce ilgili stokların bakiyesi hesaplanır, sonra `TalepMiktar < Bakiye` filtrelenir
-- **Ağaç görünümü:** Üst satır = Üretim Emri (mavi, bold), alt satırlar = eksik malzemeler
-- Mevcut bakiyesi 0 olan malzemelerin bakiye sütunu kırmızı görünür
-- **Yenile** butonu ile anlık sorgulama yapılır; **Excel'e Aktar** emre göre gruplu xlsx üretir
-- İlgili DB tabloları: `UretimEmri`, `UretimEmriHatPlani`, `UretimEmriHatPlaniGirdi`, `StokKarti`, `StokHareket`, `StokHareketDetay`
-- Sorgu fonksiyonu: `db/sorgular.py:uretim_eksik_stok(conn)`
+- Uygulama açıldığında DB'ye otomatik bağlanır; "Devam Ediyor" emirler sol panelde listelenir
+- Kullanıcı emir seçip **Analiz Et** tıklar; sağ panelde eksik malzemeler tabloya yüklenir
+- **Hat filtresi:** `HatTipi = 1` (ana üretim hattı) — HatTipi=2 (ek süreçler) dahil edilmez
+- **Bakiye formülü — üretim emri tarihi bazlı:**
+  - `GirenMiktar`: `IslemKodu IN (1, 16, 20, 22)` — Alış Faturası, Üretimden Giriş, Sayım Fazlası, Devir Girişi
+  - `CikanMiktar`: `IslemKodu IN (2, 6, 17, 18, 19, 21)` — Satış, Satış İrsaliyesi, Üretime Çıkış, Depo Çıkış, Sayım Eksiği, Fire
+  - Tarih filtresi: `BelgeTarihi <= UretimEmriTarihi`
+- **IslemKodu=16 eklenmesi kritik:** Üretilmiş yarı mamüller (YMGMKRT0004 gibi) bu formül olmadan yanlış negatif çıkar
+- **Excel'e Aktar** butonu eksik malzemeleri xlsx olarak kaydeder
+- Sorgu fonksiyonu: `db/sorgular.py:uretim_emir_eksik_stok(conn, emir_id)`
 - UI: `ui/tab_uretim_raporu.py:UretimRaporuTab`
 
 ---
