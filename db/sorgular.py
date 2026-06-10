@@ -480,7 +480,8 @@ def uretim_emir_bom_patlat(conn, emir_id: int) -> list[dict]:
     hat_talep: dict[int, dict] = {}
     with cursor_ctx(conn) as cur:
         cur.execute("""
-            SELECT uehpg.KartId, sk.Kodu, sk.Adi, SUM(uehpg.TalepMiktar)
+            SELECT uehpg.KartId, sk.Kodu, sk.Adi, SUM(uehpg.TalepMiktar),
+                   MIN(uehpg.StokDepoId) AS StokDepoId
             FROM UretimEmriHatPlani      uehp
             JOIN UretimEmriHatPlaniGirdi uehpg ON uehpg.UretimEmriHatPlaniId = uehp.Id
             JOIN StokKarti               sk     ON sk.Id = uehpg.KartId
@@ -493,9 +494,10 @@ def uretim_emir_bom_patlat(conn, emir_id: int) -> list[dict]:
         """, emir_id)
         for row in cur.fetchall():
             hat_talep[int(row[0])] = {
-                'kodu':  row[1],
-                'adi':   str(row[2] or '').strip(),
-                'talep': float(row[3]),
+                'kodu':     row[1],
+                'adi':      str(row[2] or '').strip(),
+                'talep':    float(row[3]),
+                'depo_id':  int(row[4]) if row[4] is not None else None,
             }
 
     if not hat_talep:
@@ -575,6 +577,39 @@ def uretim_emir_bom_patlat(conn, emir_id: int) -> list[dict]:
             for row in cur.fetchall():
                 bakiyeler[int(row[0])] = float(row[1])
 
+    # ── 5b. Hat planı malzemeleri için depo bazlı bakiye ───────────────────
+    # CEO ERP, StokDepoId'ye göre depo bakiyesine bakar; depo bakiyesi
+    # negatifse toplam bakiyeden öncelikli kullanılır.
+    from collections import defaultdict
+    hat_bakiyeler_depo: dict[int, float] = {}
+    depo_to_kids: dict = defaultdict(list)
+    for kid, bilgi in hat_talep.items():
+        d = bilgi.get('depo_id')
+        if d:
+            depo_to_kids[d].append(kid)
+    for depo_id, kids in depo_to_kids.items():
+        for i in range(0, len(kids), _YIGIN):
+            parca = kids[i: i + _YIGIN]
+            yer   = ','.join(['?'] * len(parca))
+            with cursor_ctx(conn) as cur:
+                cur.execute(f"""
+                    SELECT shd.IslemKartId,
+                           SUM(CASE
+                               WHEN sh.IslemKodu IN (1, 16, 20, 22)        THEN  shd.Miktar
+                               WHEN sh.IslemKodu IN (2, 6, 17, 18, 19, 21) THEN -shd.Miktar
+                               ELSE 0
+                           END)
+                    FROM StokHareketDetay shd
+                    JOIN StokHareket sh ON sh.Id = shd.HareketId
+                    WHERE shd.IslemKartId IN ({yer})
+                      AND sh.Aktif = 1
+                      AND sh.DepoKartId = ?
+                      AND CAST(sh.BelgeTarihi AS DATE) <= CAST(? AS DATE)
+                    GROUP BY shd.IslemKartId
+                """, *tuple(parca), depo_id, emir_tarihi)
+                for row in cur.fetchall():
+                    hat_bakiyeler_depo[int(row[0])] = float(row[1])
+
     # ── 6. Talep birikimi + ağaç inşası ────────────────────────────────────
     toplam_talep: dict[int, float] = {
         kid: bilgi['talep'] for kid, bilgi in hat_talep.items()
@@ -617,11 +652,18 @@ def uretim_emir_bom_patlat(conn, emir_id: int) -> list[dict]:
             hat_bilesenler[kid] = _patlat(kid, bilgi['talep'])
 
     # ── 7. Kök düğümleri oluştur — yalnızca eksik olanlar ──────────────────
+    # Depo bakiyesi negatifse CEO ERP bunu yetersiz kabul eder; toplam
+    # bakiyeden önce depo bakiyesi kontrol edilir.
     sonuc: list[dict] = []
     for kid, bilgi in hat_talep.items():
-        agr_talep = toplam_talep.get(kid, bilgi['talep'])
-        bakiye    = bakiyeler.get(kid, 0.0)
-        eksik     = bakiye - agr_talep
+        agr_talep    = toplam_talep.get(kid, bilgi['talep'])
+        bakiye_total = bakiyeler.get(kid, 0.0)
+        if kid in hat_bakiyeler_depo:
+            bakiye_depo = hat_bakiyeler_depo[kid]
+            efektif_bakiye = bakiye_depo if bakiye_depo < 0 else bakiye_total
+        else:
+            efektif_bakiye = bakiye_total
+        eksik = efektif_bakiye - agr_talep
         if eksik >= 0:
             continue
         sonuc.append({
@@ -629,7 +671,7 @@ def uretim_emir_bom_patlat(conn, emir_id: int) -> list[dict]:
             'kodu':         bilgi['kodu'],
             'adi':          bilgi['adi'],
             'ihtiyac':      agr_talep,
-            'bakiye':       bakiye,
+            'bakiye':       efektif_bakiye,
             'eksik':        eksik,
             'is_alt_montaj': kid in receteler,
             'bilesenler':   hat_bilesenler.get(kid, []),
@@ -637,6 +679,303 @@ def uretim_emir_bom_patlat(conn, emir_id: int) -> list[dict]:
 
     sonuc.sort(key=lambda x: x['kodu'])
     return sonuc
+
+
+def tum_emirler_eksik_stok(conn) -> list[dict]:
+    """Tüm açık emirler için BOM patlatmalı eksik stok listesi.
+
+    Her emir kendi tarihi esas alınarak hesaplanır.
+    Döner: [{'id', 'kodu', 'aciklama', 'tarih', 'eksikler': [...]}, ...]
+    Sadece en az bir eksik malzeme olan emirler dahildir.
+    """
+    with cursor_ctx(conn) as cur:
+        cur.execute("""
+            SELECT ue.Id, ue.Kodu, ISNULL(ue.Aciklama, ''),
+                   CONVERT(VARCHAR(10), ue.UretimEmriTarihi, 104)
+            FROM UretimEmri ue
+            WHERE ue.DurumId = 3
+            ORDER BY ue.UretimEmriTarihi DESC, ue.Kodu
+        """)
+        emirler = [
+            {'id': int(r[0]), 'kodu': r[1], 'aciklama': str(r[2] or '').strip(), 'tarih': r[3]}
+            for r in cur.fetchall()
+        ]
+
+    sonuc = []
+    for e in emirler:
+        eksikler = uretim_emir_bom_patlat(conn, e['id'])
+        if eksikler:
+            sonuc.append({**e, 'eksikler': eksikler})
+    return sonuc
+
+
+# ── Araç 4b: Muhasebe Eksik Raporu (ATP destekli, kronolojik) ─────────────────
+
+def muhasebe_eksik_raporu_olustur(conn) -> list[dict]:
+    """
+    Tüm "Devam Ediyor" emirlerin kronolojik sırayla ATP destekli muhasebe eksik raporu.
+
+    Algoritma:
+      1. Emirler UretimEmriTarihi ASC sıralanır.
+      2. Her emir için Hat Planı (HatTipi=1) alınır; yarı mamüller dahil recursive
+         BOM patlatması yapılır (brüt talep, bakiyeden bağımsız).
+      3. Bakiye: emir tarihinde toplam + depo bazlı hibrit (hat planı itemleri için).
+      4. ATP rezervasyon: daha eski emirlerin kümülatif talebi net bakiyeden düşülür.
+
+    Döner: sadece net_eksik > 0 olan satırlar; her dict:
+        emir_tarihi, emir_kodu, emir_aciklama,
+        stok_kodu, stok_adi,
+        ihtiyac           – brüt talep (bu emir)
+        erp_bakiye        – emir tarihindeki hibrit bakiye
+        onceki_rezervasyon – eski emirlerin kümülatif talebi
+        net_eksik         – pozitif sayı; stoka girilmesi gereken miktar
+    """
+    from collections import defaultdict
+
+    _GIR = (1, 16, 20, 22)
+    _CIK = (2, 6, 17, 18, 19, 21)
+    _YIG = 500
+    gir_s = ','.join(str(x) for x in _GIR)
+    cik_s = ','.join(str(x) for x in _CIK)
+
+    # ── 1. Emirler ASC ────────────────────────────────────────────────────────
+    with cursor_ctx(conn) as cur:
+        cur.execute("""
+            SELECT ue.Id,
+                   ue.Kodu,
+                   ISNULL(ue.Aciklama, ''),
+                   CAST(ue.UretimEmriTarihi AS DATE),
+                   CONVERT(VARCHAR(10), ue.UretimEmriTarihi, 104)
+            FROM UretimEmri ue
+            WHERE ue.DurumId = 3
+            ORDER BY ue.UretimEmriTarihi ASC, ue.Kodu
+        """)
+        emirler = [
+            {
+                'id':        int(r[0]),
+                'kodu':      r[1],
+                'aciklama':  str(r[2] or '').strip(),
+                'tarih':     str(r[3]),    # YYYY-MM-DD  — SQL filtresi
+                'tarih_fmt': str(r[4]),    # DD.MM.YYYY  — Excel
+            }
+            for r in cur.fetchall()
+        ]
+    if not emirler:
+        return []
+
+    emir_ids = [e['id'] for e in emirler]
+
+    # ── 2. Hat planları (tüm emirler, tek toplu sorgu) ─────────────────────────
+    hat_all: dict[int, dict[int, dict]] = defaultdict(dict)
+    for i in range(0, len(emir_ids), _YIG):
+        batch = emir_ids[i: i + _YIG]
+        yer   = ','.join(['?'] * len(batch))
+        with cursor_ctx(conn) as cur:
+            cur.execute(f"""
+                SELECT uehp.UretimEmriId,
+                       uehpg.KartId,
+                       sk.Kodu,
+                       sk.Adi,
+                       SUM(uehpg.TalepMiktar),
+                       MIN(uehpg.StokDepoId)
+                FROM UretimEmriHatPlani      uehp
+                JOIN UretimEmriHatPlaniGirdi uehpg
+                    ON uehpg.UretimEmriHatPlaniId = uehp.Id
+                JOIN StokKarti sk ON sk.Id = uehpg.KartId
+                WHERE uehp.UretimEmriId IN ({yer})
+                  AND uehp.HatTipi       = 1
+                  AND uehpg.KartId       IS NOT NULL
+                  AND uehpg.TalepMiktar  > 0
+                GROUP BY uehp.UretimEmriId, uehpg.KartId, sk.Kodu, sk.Adi
+            """, *tuple(batch))
+            for row in cur.fetchall():
+                eid = int(row[0])
+                kid = int(row[1])
+                hat_all[eid][kid] = {
+                    'kodu':    row[2],
+                    'adi':     str(row[3] or '').strip(),
+                    'talep':   float(row[4]),
+                    'depo_id': int(row[5]) if row[5] is not None else None,
+                }
+
+    # ── 3. Tüm aktif reçeteler ────────────────────────────────────────────────
+    receteler: dict[int, list[dict]] = {}
+    with cursor_ctx(conn) as cur:
+        cur.execute("""
+            SELECT sk_u.Id,
+                   urhpg.KartId,
+                   sk_b.Kodu,
+                   sk_b.Adi,
+                   SUM(urhpg.Miktar)
+            FROM UretimRecete ur
+            JOIN StokKarti sk_u
+                ON sk_u.Kodu = ur.Kodu
+            JOIN UretimReceteHatPlani urhp
+                ON urhp.UretimReceteId = ur.Id
+            JOIN UretimReceteHatPlaniGirdi urhpg
+                ON urhpg.UretimReceteHatPlaniId = urhp.Id
+            JOIN StokKarti sk_b
+                ON sk_b.Id = urhpg.KartId
+            WHERE (ur.KullanimDisi IS NULL OR ur.KullanimDisi = 0)
+              AND urhpg.KartId IS NOT NULL
+              AND urhpg.Miktar > 0
+            GROUP BY sk_u.Id, urhpg.KartId, sk_b.Kodu, sk_b.Adi
+        """)
+        for row in cur.fetchall():
+            uid = int(row[0])
+            receteler.setdefault(uid, []).append({
+                'kart_id': int(row[1]),
+                'kodu':    row[2],
+                'adi':     str(row[3] or '').strip(),
+                'miktar':  float(row[4]),
+            })
+
+    # ── 4. Her emir için düz BOM (yarı mamüller dahil, brüt talep) ────────────
+    def _flat_bom(hat_talep: dict) -> dict[int, dict]:
+        """
+        Hat planı itemleri + tüm recursive bileşenler tek listede.
+        Yarı mamüllerin kendi stok kodları da yer alır (hat planında olsun ya da olmasın).
+        Aynı kart_id birden fazla yoldan geliyorsa ihtiyac toplanır.
+        depo_id sadece hat planında doğrudan yer alan itemlar için tutulur
+        (depo bazlı hibrit bakiye hesabında kullanılır).
+        """
+        sonuc: dict[int, dict] = {}
+
+        def _ekle(kid: int, kodu: str, adi: str,
+                  ihtiyac: float, depo_id, depth: int) -> None:
+            if kid in sonuc:
+                sonuc[kid]['ihtiyac'] += ihtiyac
+            else:
+                sonuc[kid] = {
+                    'kodu':    kodu,
+                    'adi':     adi,
+                    'ihtiyac': ihtiyac,
+                    'depo_id': depo_id,
+                }
+            if depth < 8 and kid in receteler:
+                for bil in receteler[kid]:
+                    _ekle(bil['kart_id'], bil['kodu'], bil['adi'],
+                          bil['miktar'] * ihtiyac, None, depth + 1)
+
+        for kid, info in hat_talep.items():
+            _ekle(kid, info['kodu'], info['adi'],
+                  info['talep'], info.get('depo_id'), 0)
+        return sonuc
+
+    flat_boms: dict[int, dict] = {
+        e['id']: _flat_bom(hat_all.get(e['id'], {}))
+        for e in emirler
+    }
+
+    # ── 5. Tarih bazında gerekli kart_id'leri topla ───────────────────────────
+    tarih_to_kids:     dict[str, set[int]]       = defaultdict(set)
+    tarih_to_depo_map: dict[str, dict[int, int]] = defaultdict(dict)
+
+    for e in emirler:
+        t = e['tarih']
+        for kid, info in flat_boms[e['id']].items():
+            tarih_to_kids[t].add(kid)
+            if info.get('depo_id'):
+                tarih_to_depo_map[t].setdefault(kid, info['depo_id'])
+
+    # ── 6. Toplu bakiye sorguları (tarih başına) ──────────────────────────────
+    # Toplam bakiye + depo bazlı bakiye (hat planı itemleri için).
+    # Depo bakiyesi < 0 ise efektif bakiye olarak depo kullanılır;
+    # böylece "başka depoda stok var ama hedef depo boş" durumu yakalanır.
+    bak:      dict[tuple, float] = {}   # (kid, tarih)          -> toplam bakiye
+    bak_depo: dict[tuple, float] = {}   # (kid, tarih, depo_id) -> depo bakiyesi
+
+    for tarih, kids in tarih_to_kids.items():
+        kids_list = list(kids)
+
+        # — Toplam bakiye —
+        for i in range(0, len(kids_list), _YIG):
+            parca = kids_list[i: i + _YIG]
+            yer   = ','.join(['?'] * len(parca))
+            with cursor_ctx(conn) as cur:
+                cur.execute(f"""
+                    SELECT shd.IslemKartId,
+                           SUM(CASE
+                               WHEN sh.IslemKodu IN ({gir_s}) THEN  shd.Miktar
+                               WHEN sh.IslemKodu IN ({cik_s}) THEN -shd.Miktar
+                               ELSE 0
+                           END)
+                    FROM StokHareketDetay shd
+                    JOIN StokHareket sh ON sh.Id = shd.HareketId
+                    WHERE shd.IslemKartId IN ({yer})
+                      AND sh.Aktif = 1
+                      AND CAST(sh.BelgeTarihi AS DATE) <= CAST(? AS DATE)
+                    GROUP BY shd.IslemKartId
+                """, *tuple(parca), tarih)
+                for row in cur.fetchall():
+                    bak[(int(row[0]), tarih)] = float(row[1])
+
+        # — Depo bazlı bakiye —
+        depo_to_kids_map: dict[int, list] = defaultdict(list)
+        for kid, did in tarih_to_depo_map.get(tarih, {}).items():
+            depo_to_kids_map[did].append(kid)
+
+        for did, dkids in depo_to_kids_map.items():
+            for i in range(0, len(dkids), _YIG):
+                parca = dkids[i: i + _YIG]
+                yer   = ','.join(['?'] * len(parca))
+                with cursor_ctx(conn) as cur:
+                    cur.execute(f"""
+                        SELECT shd.IslemKartId,
+                               SUM(CASE
+                                   WHEN sh.IslemKodu IN ({gir_s}) THEN  shd.Miktar
+                                   WHEN sh.IslemKodu IN ({cik_s}) THEN -shd.Miktar
+                                   ELSE 0
+                               END)
+                        FROM StokHareketDetay shd
+                        JOIN StokHareket sh ON sh.Id = shd.HareketId
+                        WHERE shd.IslemKartId IN ({yer})
+                          AND sh.Aktif = 1
+                          AND sh.DepoKartId = ?
+                          AND CAST(sh.BelgeTarihi AS DATE) <= CAST(? AS DATE)
+                        GROUP BY shd.IslemKartId
+                    """, *tuple(parca), did, tarih)
+                    for row in cur.fetchall():
+                        bak_depo[(int(row[0]), tarih, did)] = float(row[1])
+
+    # ── 7. Kronolojik ATP analizi ─────────────────────────────────────────────
+    rezervasyon: dict[int, float] = {}
+    satirlar: list[dict] = []
+
+    for e in emirler:
+        tarih = e['tarih']
+        flat  = flat_boms[e['id']]
+
+        for kid, info in sorted(flat.items(), key=lambda x: x[1]['kodu']):
+            bak_total = bak.get((kid, tarih), 0.0)
+            did = info.get('depo_id')
+            if did:
+                bak_d   = bak_depo.get((kid, tarih, did))
+                efektif = bak_d if (bak_d is not None and bak_d < 0) else bak_total
+            else:
+                efektif = bak_total
+            onceki_rez = rezervasyon.get(kid, 0.0)
+            ihtiyac    = info['ihtiyac']
+            bos        = efektif - ihtiyac - onceki_rez
+            net_eksik  = round(-bos, 4) if bos < -0.0001 else 0.0
+
+            if net_eksik > 0:
+                satirlar.append({
+                    'emir_tarihi':        e['tarih_fmt'],
+                    'emir_kodu':          e['kodu'],
+                    'emir_aciklama':      e['aciklama'],
+                    'stok_kodu':          info['kodu'],
+                    'stok_adi':           info['adi'],
+                    'ihtiyac':            round(ihtiyac, 4),
+                    'erp_bakiye':         round(efektif, 4),
+                    'onceki_rezervasyon': round(onceki_rez, 4),
+                    'net_eksik':          net_eksik,
+                })
+
+            # Rezervasyonu her durumda güncelle (eksik olsun ya da olmasın)
+            rezervasyon[kid] = onceki_rez + ihtiyac
+
+    return satirlar
 
 
 # ── Araç 5: Satış Faturaları ──────────────────────────────────────────────────

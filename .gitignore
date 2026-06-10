@@ -30,8 +30,8 @@ env/
 Thumbs.db
 .DS_Store
 
-# Excel çıktıları (geçici)
-ceo_erp_*.xlsx
+# Excel çıktıları (geçici — uygulama dışa aktarımları)
+*.xlsx
 
 # Log dosyaları
 *.log

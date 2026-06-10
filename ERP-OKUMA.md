@@ -2,7 +2,7 @@
 
 **GitHub:** https://github.com/savasadiguzel-hash/ceo-erp-arac  
 **Dağıtım:** `dist/CEO-ERP-Araclar.exe` (~54 MB)  
-**Son güncelleme:** 2026-06-10 (BOM patlatma eklendi)
+**Son güncelleme:** 2026-06-10 (tüm emirler toplu Excel export)
 
 ---
 
@@ -75,6 +75,7 @@ Tespit edilen stokları mamüle bağlar. Stok detay etiketleri fare ile seçileb
   - `CikanMiktar`: `IslemKodu IN (2, 6, 17, 18, 19, 21)` — Satış, Satış İrsaliyesi, Üretime Çıkış, Depo Çıkış, Sayım Eksiği, Fire
   - Tarih filtresi: `BelgeTarihi <= UretimEmriTarihi`
 - **IslemKodu=16 eklenmesi kritik:** Üretilmiş yarı mamüller bu formül olmadan yanlış negatif çıkar
+- **Depo bazlı bakiye (2026-06-10 düzeltmesi):** CEO ERP, her malzeme için `StokDepoId` (hat planındaki hedef depo) bazında bakiye hesaplar. Depo bakiyesi negatifse (`sh.DepoKartId = StokDepoId`), o değer esas alınır; depo bakiyesi ≥ 0 ise toplam bakiye kullanılır. Bu düzeltme sayesinde CEO ERP ile eşleşme 11 `Yetersiz miktar!` öğesinden 8'inde sağlanmaktadır. Kalan 3 sapma ATP (tüm açık emirlerin kümülatif talep) ve CEO'nun iç rezervasyon mantığını gerektirdiğinden uygulanmadı.
 
 ### BOM Patlatma (Alt Montaj Açma)
 
@@ -86,8 +87,64 @@ Tespit edilen stokları mamüle bağlar. Stok detay etiketleri fare ile seçileb
 - Negatif eksik sütunu: kırmızı ve kalın
 - Sıfır/negatif bakiye: kırmızı renk
 - **Excel'e Aktar** butonu ağacı hiyerarşik olarak xlsx olarak kaydeder (bileşenler `└─` ön ekiyle)
+- **Tüm Emirleri Excel'e Aktar** butonu (turuncu, üst sağ): tüm açık emirleri tek Excel'e döker
+  - Her emir kendi tarihi esas alınarak hesaplanır; tek sayfada hiyerarşik satırlar
+  - Sütunlar: Emir Kodu | Emir Tarihi | Açıklama | Malzeme Kodu | Malzeme Adı | İhtiyaç | Bakiye | Eksik
+  - Emir header satırı yeşil; alt montaj satırları indigo; eksik değerler kırmızı/kalın
+  - İşlem süresince progress bar her emir için güncellenir
 - BOM sorgu fonksiyonu: `db/sorgular.py:uretim_emir_bom_patlat(conn, emir_id)`
+- Toplu sorgu fonksiyonu: `db/sorgular.py:tum_emirler_eksik_stok(conn)`
 - UI: `ui/tab_uretim_raporu.py:UretimRaporuTab`
+
+### Muhasebe Eksik Raporu (ATP destekli)
+
+- **Muhasebe Eksik Raporu (Excel)** butonu (mor, üst sağ): kronolojik ATP analizi
+- Fonksiyon: `db/sorgular.py:muhasebe_eksik_raporu_olustur(conn)`
+- **Farkları (Tüm Emirleri Excel'e Aktar'dan):**
+  - Emirler `UretimEmriTarihi ASC` sıralanır (eski → yeni)
+  - BOM düz (flat) liste: yarı mamüller + tüm recursive bileşenler ayrı satırlar
+  - **Brüt talep**: bileşen ihtiyacı, üst montajın bakiye eksiğine göre ölçeklenmez; tüm talep listelenir
+  - **Depo bazlı hibrit bakiye** kullanılır: hedef depo bakiyesi < 0 ise depo bakiyesi esas alınır; aksi halde toplam şirket bakiyesi kullanılır. Bu, "başka depoda stok var ama hedef depo boş" durumunu doğru yakalar.
+  - **ATP kümülatif rezervasyon**: eski emirlerin talebi yeni emirlerin net bakiyesinden düşülür
+  - Net Eksik = ERP Bakiyesi − İhtiyaç − Önceki Emirlerin Rezervasyonu (pozitif = eksiklik)
+  - Sadece Net Eksik > 0 olan satırlar Excel'e yazılır
+- **Excel sütunları (9 adet):** İş Emri Tarihi | İş Emri No | Açıklama | Stok Kodu | Stok Adı | İhtiyaç Miktarı | O Tarihteki ERP Bakiyesi | Önceki Emirlerin Rezervasyonu | Net Eksik Miktar
+- Emir grupları mor ayırıcı header satırıyla ayrılır; Net Eksik ve negatif bakiye kırmızı/kalın
+- `auto_filter` tüm sütunlara uygulanır (muhasebeci filtreleyebilir)
+
+### CEO ile Karşılaştırma Analizi (2026-06-10) — Neden %100 tutmuyor?
+
+ŞİRKET.962026-10 (05.01.2026) iş emrinin 11 `Yetersiz miktar!` kalemi, CEO ERP
+"Stok Kartı Ekstresi" raporuyla satır satır karşılaştırıldı. Üç farklı bakiye
+yöntemi denendi:
+
+| Yöntem | Tanım | CEO ile eşleşme |
+|---|---|---|
+| **Depo-bazlı hibrit (mevcut)** | depo bakiyesi<0 ise depo, değilse total | **23/27** ✅ |
+| Ekstre kodları ekli | +Alış İrsaliyesi(5) +Depo Transfer(23) | 19-20/27 ⬇ |
+| ATP (kümülatif talep) | depo bakiyesi − tüm açık emir talebi | 15-16/27 ⬇ |
+
+**Çıkan kesin sonuçlar:**
+
+1. **Tarih karışıklığı (en sık yanılgı):** CEO ekstresinin *son* `Kalan Miktar`
+   rakamı raporun alındığı *bugünkü* tarihe aittir, iş emri tarihine değil.
+   Örn. HMGMDDAL004: ekstre sonu 591 (Haziran), ama iş emri günü (05.01.2026)
+   Depo-2 bakiyesi ~0/−50 idi — ilk alış 06.01.2026'da, emirden bir gün sonra
+   geldi. Script doğru tarihe bakıyor; ekstrenin son satırı 5 ay sonrasını gösterir.
+
+2. **Alış İrsaliyesi (IslemKodu=5) bilerek sayılmıyor:** Faturası kesilmemiş,
+   resmî stoğa girmemiş malı saymak gerçek eksikleri gizler. Eklendiğinde eşleşme
+   düştü. CEO ekstresi geçmiş dökümünde gösterir ama eksik analizinde saymak yanlış.
+
+3. **ATP/rezervasyon genellenemiyor:** CEO bazı kalemleri (HMGMKBL0002: 150 stok,
+   318 toplam talep → Yetersiz) çapraz-emir talebine göre işaretliyor, ama
+   tutarsız: SARF0000001 (469 stok, 3564 toplam talep) yine de "Yeterli". Bu
+   nedenle basit hiçbir kural CEO'yu birebir veremiyor.
+
+**Karar:** Mevcut depo-bazlı hibrit formül korunuyor (23/27, ulaşılabilir en iyi).
+Üretimi gerçekten durduran boş/eksi bakiyeli kalemler eksiksiz yakalanıyor; kaçan
+2-3 kalem CEO'nun görünmeyen iç rezervasyon motorundan kaynaklanan sınır durumlar.
+İlgili `IslemKodu` evreni (bu DB'de tanım tablosu yok): 1,2,3,5,16,17,18,19,20,21,22,23.
 
 ---
 

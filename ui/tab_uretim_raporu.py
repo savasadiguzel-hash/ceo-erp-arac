@@ -13,7 +13,10 @@ from PyQt5.QtGui import QFont, QColor, QBrush
 
 from config import DB_DEFAULTS
 from db.baglanti import get_connection
-from db.sorgular import uretim_emirleri_listesi, uretim_emir_bom_patlat
+from db.sorgular import (
+    uretim_emirleri_listesi, uretim_emir_bom_patlat,
+    tum_emirler_eksik_stok, muhasebe_eksik_raporu_olustur,
+)
 
 _BTN_MAVI = (
     "background:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #1565c0,stop:1 #1976d2);"
@@ -26,6 +29,14 @@ _BTN_YESIL = (
 _BTN_PASIF = (
     "background:#bdbdbd;color:#757575;"
     "border-radius:6px;padding:8px 18px;font-weight:bold;font-size:12px;border:none;"
+)
+_BTN_TURUNCU = (
+    "background:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #e65100,stop:1 #f57c00);"
+    "color:white;border-radius:6px;padding:8px 18px;font-weight:bold;font-size:12px;border:none;"
+)
+_BTN_MOR = (
+    "background:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #4a148c,stop:1 #7b1fa2);"
+    "color:white;border-radius:6px;padding:8px 18px;font-weight:bold;font-size:12px;border:none;"
 )
 
 _AGAC_KOLONLAR = [
@@ -75,6 +86,47 @@ class AnalizThread(QThread):
             self.hata.emit(str(e))
 
 
+class MuhasebeRaporuThread(QThread):
+    bitti = pyqtSignal(list)
+    hata  = pyqtSignal(str)
+
+    def __init__(self, conn):
+        super().__init__()
+        self.conn = conn
+
+    def run(self):
+        try:
+            self.bitti.emit(muhasebe_eksik_raporu_olustur(self.conn))
+        except Exception as e:
+            logging.error("MuhasebeRaporuThread: %s", e)
+            self.hata.emit(str(e))
+
+
+class TumEmirlerThread(QThread):
+    ilerleme = pyqtSignal(int, int, str)   # (tamamlanan, toplam, emir_kodu)
+    bitti    = pyqtSignal(list)
+    hata     = pyqtSignal(str)
+
+    def __init__(self, conn, emirler: list):
+        super().__init__()
+        self.conn    = conn
+        self.emirler = emirler
+
+    def run(self):
+        try:
+            sonuc = []
+            toplam = len(self.emirler)
+            for i, e in enumerate(self.emirler):
+                self.ilerleme.emit(i + 1, toplam, e['kodu'])
+                eksikler = uretim_emir_bom_patlat(self.conn, e['id'])
+                if eksikler:
+                    sonuc.append({**e, 'eksikler': eksikler})
+            self.bitti.emit(sonuc)
+        except Exception as ex:
+            logging.error("TumEmirlerThread: %s", ex)
+            self.hata.emit(str(ex))
+
+
 # ── Ana Sekme ─────────────────────────────────────────────────────────────────
 
 class UretimRaporuTab(QWidget):
@@ -86,8 +138,10 @@ class UretimRaporuTab(QWidget):
         self._emirler: list[dict] = []
         self._secili_emir: dict | None = None
         self._analiz_veri: list[dict] = []
-        self._emirler_thread = None
-        self._analiz_thread  = None
+        self._emirler_thread     = None
+        self._analiz_thread      = None
+        self._tum_emirler_thread = None
+        self._muhasebe_thread    = None
         self._kur()
         self._baglan_otomatik()
 
@@ -111,6 +165,18 @@ class UretimRaporuTab(QWidget):
         self.yenile_btn.setEnabled(False)
         self.yenile_btn.clicked.connect(self._emirleri_yukle)
         ust.addWidget(self.yenile_btn)
+
+        self.tum_excel_btn = QPushButton("📊  Tüm Emirleri Excel'e Aktar")
+        self.tum_excel_btn.setStyleSheet(_BTN_PASIF)
+        self.tum_excel_btn.setEnabled(False)
+        self.tum_excel_btn.clicked.connect(self._tum_excel_baslat)
+        ust.addWidget(self.tum_excel_btn)
+
+        self.muhasebe_btn = QPushButton("🧾  Muhasebe Eksik Raporu (Excel)")
+        self.muhasebe_btn.setStyleSheet(_BTN_PASIF)
+        self.muhasebe_btn.setEnabled(False)
+        self.muhasebe_btn.clicked.connect(self._muhasebe_raporu_baslat)
+        ust.addWidget(self.muhasebe_btn)
         ana.addLayout(ust)
 
         # İlerleme çubuğu
@@ -319,6 +385,11 @@ class UretimRaporuTab(QWidget):
         self.durum_lbl.setText(f"Yüklendi: {datetime.now().strftime('%H:%M:%S')}")
         self.durum_lbl.setStyleSheet("color:#2e7d32;font-size:11px;")
         self.durum_guncelle.emit(f"{len(emirler)} devam eden iş emri yüklendi.")
+        if emirler:
+            self.tum_excel_btn.setEnabled(True)
+            self.tum_excel_btn.setStyleSheet(_BTN_TURUNCU)
+            self.muhasebe_btn.setEnabled(True)
+            self.muhasebe_btn.setStyleSheet(_BTN_MOR)
 
     # ── Emir Seçimi ───────────────────────────────────────────────────────────
 
@@ -500,12 +571,315 @@ class UretimRaporuTab(QWidget):
             logging.error("UretimRaporuTab excel: %s", e)
             QMessageBox.critical(self, "Excel Hatası", str(e))
 
+    # ── Tüm Emirler Excel ─────────────────────────────────────────────────────
+
+    def _tum_excel_baslat(self):
+        if not self._emirler or not self.conn:
+            return
+        dosya, _ = QFileDialog.getSaveFileName(
+            self, "Excel Olarak Kaydet", "tum_emirler_eksik_stok.xlsx",
+            "Excel Dosyaları (*.xlsx)"
+        )
+        if not dosya:
+            return
+
+        self.tum_excel_btn.setEnabled(False)
+        self.tum_excel_btn.setStyleSheet(_BTN_PASIF)
+        self.muhasebe_btn.setEnabled(False)
+        self.muhasebe_btn.setStyleSheet(_BTN_PASIF)
+        self.yenile_btn.setEnabled(False)
+        self.analiz_btn.setEnabled(False)
+        self.progress.setRange(0, len(self._emirler))
+        self.progress.setValue(0)
+        self.progress.setVisible(True)
+        self.durum_lbl.setText("Tüm emirler analiz ediliyor…")
+        self.durum_lbl.setStyleSheet("color:#e65100;font-size:11px;")
+
+        self._tum_excel_dosya = dosya
+        self._tum_emirler_thread = TumEmirlerThread(self.conn, self._emirler)
+        self._tum_emirler_thread.ilerleme.connect(self._tum_ilerleme)
+        self._tum_emirler_thread.bitti.connect(self._tum_excel_kaydet)
+        self._tum_emirler_thread.hata.connect(self._hata)
+        self._tum_emirler_thread.start()
+
+    def _tum_ilerleme(self, tamamlanan: int, toplam: int, emir_kodu: str):
+        self.progress.setValue(tamamlanan)
+        self.durum_lbl.setText(f"İşleniyor {tamamlanan}/{toplam}: {emir_kodu}")
+
+    def _tum_excel_kaydet(self, veri: list[dict]):
+        self.progress.setVisible(False)
+        self.progress.setRange(0, 0)
+        self.yenile_btn.setEnabled(True)
+        self.tum_excel_btn.setEnabled(True)
+        self.tum_excel_btn.setStyleSheet(_BTN_TURUNCU)
+        self.muhasebe_btn.setEnabled(True)
+        self.muhasebe_btn.setStyleSheet(_BTN_MOR)
+        if self._secili_emir:
+            self.analiz_btn.setEnabled(True)
+
+        if not veri:
+            QMessageBox.information(self, "Sonuç", "Tüm açık emirlerde eksik malzeme bulunamadı.")
+            self.durum_lbl.setText("Tüm emirler: eksik yok.")
+            self.durum_lbl.setStyleSheet("color:#2e7d32;font-size:11px;")
+            return
+
+        try:
+            import openpyxl
+            from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+
+            wb = openpyxl.Workbook()
+            ws = wb.active
+            ws.title = "Eksik Stok"
+
+            # Başlık satırı
+            basliklar = [
+                "Emir Kodu", "Emir Tarihi", "Açıklama",
+                "Malzeme Kodu", "Malzeme Adı",
+                "İhtiyaç Miktarı", "Emri Tarihindeki Bakiye", "Eksik Miktar",
+            ]
+            ws.append(basliklar)
+            hrow = ws.max_row
+            for cell in ws[hrow]:
+                cell.fill      = PatternFill("solid", fgColor="1A237E")
+                cell.font      = Font(name="Segoe UI", bold=True, color="FFFFFF", size=11)
+                cell.alignment = Alignment(horizontal="center", vertical="center")
+            ws.row_dimensions[hrow].height = 22
+
+            # Stiller
+            emir_fill   = PatternFill("solid", fgColor="E8F5E9")   # yeşilimsi — emir header
+            alt_fill    = PatternFill("solid", fgColor="E8EAF6")   # indigo — alt montaj
+            eksik_font  = Font(name="Segoe UI", size=11, color="C62828", bold=True)
+            normal_font = Font(name="Segoe UI", size=11)
+            emir_font   = Font(name="Segoe UI", size=11, bold=True, color="1B5E20")
+            ince_kenarl = Border(
+                bottom=Side(style="thin", color="E0E0E0")
+            )
+
+            def _yaz_malzeme(m: dict, emir_kodu: str, emir_tarih: str,
+                             emir_aciklama: str, derinlik: int):
+                girinti = "    " * derinlik + ("└─ " if derinlik > 0 else "")
+                ws.append([
+                    "" if derinlik > 0 else emir_kodu,
+                    "" if derinlik > 0 else emir_tarih,
+                    "" if derinlik > 0 else emir_aciklama,
+                    girinti + m['kodu'],
+                    m['adi'],
+                    round(m['ihtiyac'], 2),
+                    round(m['bakiye'],  2),
+                    round(m['eksik'],   2),
+                ])
+                r = ws.max_row
+                for c in range(6, 9):
+                    ws.cell(row=r, column=c).alignment = Alignment(horizontal="right")
+                ws.cell(row=r, column=7).font = eksik_font if m['bakiye'] <= 0 else normal_font
+                ws.cell(row=r, column=8).font = eksik_font if m['eksik']  < 0 else normal_font
+                if derinlik == 0 and m.get('is_alt_montaj'):
+                    for c in range(1, 9):
+                        ws.cell(row=r, column=c).fill = alt_fill
+                for bil in m.get('bilesenler', []):
+                    _yaz_malzeme(bil, emir_kodu, emir_tarih, emir_aciklama, derinlik + 1)
+
+            for e in veri:
+                # Emir header boş ayırıcı satır
+                ws.append([
+                    e['kodu'], e['tarih'],
+                    e['aciklama'][:80] if e['aciklama'] else "",
+                    "", "", "", "", "",
+                ])
+                r = ws.max_row
+                for c in range(1, 9):
+                    ws.cell(row=r, column=c).fill = emir_fill
+                    ws.cell(row=r, column=c).font = emir_font
+                ws.row_dimensions[r].height = 18
+
+                for m in e['eksikler']:
+                    _yaz_malzeme(m, e['kodu'], e['tarih'], e['aciklama'], 0)
+
+            # Sütun genişlikleri
+            for col, w in zip("ABCDEFGH", [22, 12, 45, 30, 50, 16, 20, 14]):
+                ws.column_dimensions[col].width = w
+            ws.freeze_panes = f"A{hrow + 1}"
+
+            wb.save(self._tum_excel_dosya)
+
+            toplam_eksik = sum(len(e['eksikler']) for e in veri)
+            QMessageBox.information(
+                self, "Başarılı",
+                f"{len(veri)} emirde toplam {toplam_eksik} eksik kalem.\n"
+                f"Excel kaydedildi:\n{self._tum_excel_dosya}"
+            )
+            self.durum_lbl.setText(
+                f"Tüm emirler: {len(veri)} emirde {toplam_eksik} eksik kalem — Excel kaydedildi."
+            )
+            self.durum_lbl.setStyleSheet("color:#2e7d32;font-size:11px;")
+            self.durum_guncelle.emit(
+                f"Tüm emirler Excel'e aktarıldı: {len(veri)} emir, {toplam_eksik} eksik kalem."
+            )
+
+        except Exception as ex:
+            logging.error("TumEmirler excel: %s", ex)
+            QMessageBox.critical(self, "Excel Hatası", str(ex))
+
+    # ── Muhasebe Raporu ───────────────────────────────────────────────────────
+
+    def _muhasebe_raporu_baslat(self):
+        if not self._emirler or not self.conn:
+            return
+        dosya, _ = QFileDialog.getSaveFileName(
+            self, "Muhasebe Eksik Raporu — Kaydet",
+            "muhasebe_eksik_raporu.xlsx",
+            "Excel Dosyaları (*.xlsx)",
+        )
+        if not dosya:
+            return
+
+        self.muhasebe_btn.setEnabled(False)
+        self.muhasebe_btn.setStyleSheet(_BTN_PASIF)
+        self.tum_excel_btn.setEnabled(False)
+        self.tum_excel_btn.setStyleSheet(_BTN_PASIF)
+        self.yenile_btn.setEnabled(False)
+        self.analiz_btn.setEnabled(False)
+        self.progress.setRange(0, 0)
+        self.progress.setVisible(True)
+        self.durum_lbl.setText("Muhasebe raporu hesaplanıyor…")
+        self.durum_lbl.setStyleSheet("color:#4a148c;font-size:11px;")
+
+        self._muhasebe_dosya = dosya
+        self._muhasebe_thread = MuhasebeRaporuThread(self.conn)
+        self._muhasebe_thread.bitti.connect(self._muhasebe_excel_kaydet)
+        self._muhasebe_thread.hata.connect(self._hata)
+        self._muhasebe_thread.start()
+
+    def _muhasebe_excel_kaydet(self, satirlar: list):
+        self.progress.setVisible(False)
+        self.progress.setRange(0, 0)
+        self.yenile_btn.setEnabled(True)
+        self.muhasebe_btn.setEnabled(True)
+        self.muhasebe_btn.setStyleSheet(_BTN_MOR)
+        self.tum_excel_btn.setEnabled(True)
+        self.tum_excel_btn.setStyleSheet(_BTN_TURUNCU)
+        if self._secili_emir:
+            self.analiz_btn.setEnabled(True)
+
+        if not satirlar:
+            QMessageBox.information(
+                self, "Muhasebe Raporu",
+                "Tüm açık emirlerde (ATP dahil) eksik malzeme bulunamadı.",
+            )
+            self.durum_lbl.setText("Muhasebe raporu: eksik yok.")
+            self.durum_lbl.setStyleSheet("color:#2e7d32;font-size:11px;")
+            return
+
+        try:
+            import openpyxl
+            from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+
+            wb = openpyxl.Workbook()
+            ws = wb.active
+            ws.title = "Muhasebe Eksik Raporu"
+
+            # Başlık satırı
+            BASLIKLAR = [
+                "İş Emri Tarihi", "İş Emri No", "Açıklama",
+                "Stok Kodu", "Stok Adı",
+                "İhtiyaç Miktarı",
+                "O Tarihteki ERP Bakiyesi",
+                "Önceki Emirlerin Rezervasyonu",
+                "Net Eksik Miktar",
+            ]
+            ws.append(BASLIKLAR)
+            hrow = ws.max_row
+            for cell in ws[hrow]:
+                cell.fill      = PatternFill("solid", fgColor="4A148C")
+                cell.font      = Font(name="Segoe UI", bold=True, color="FFFFFF", size=11)
+                cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+            ws.row_dimensions[hrow].height = 28
+
+            # Stiller
+            eksik_font  = Font(name="Segoe UI", size=11, color="C62828", bold=True)
+            normal_font = Font(name="Segoe UI", size=11)
+            emir_fill   = PatternFill("solid", fgColor="EDE7F6")
+            ince_alt    = Border(bottom=Side(style="thin", color="D1C4E9"))
+
+            secili_emir = None
+            for s in satirlar:
+                # Emir değiştiğinde ayırıcı satır
+                if s['emir_kodu'] != secili_emir:
+                    secili_emir = s['emir_kodu']
+                    ws.append([
+                        s['emir_tarihi'],
+                        s['emir_kodu'],
+                        s['emir_aciklama'][:80] if s['emir_aciklama'] else "",
+                        "", "", "", "", "", "",
+                    ])
+                    r = ws.max_row
+                    for c in range(1, 10):
+                        ws.cell(row=r, column=c).fill = emir_fill
+                        ws.cell(row=r, column=c).font = Font(
+                            name="Segoe UI", bold=True, color="4A148C", size=11
+                        )
+                    ws.row_dimensions[r].height = 18
+
+                ws.append([
+                    s['emir_tarihi'],
+                    s['emir_kodu'],
+                    "",
+                    s['stok_kodu'],
+                    s['stok_adi'],
+                    s['ihtiyac'],
+                    s['erp_bakiye'],
+                    s['onceki_rezervasyon'],
+                    s['net_eksik'],
+                ])
+                r = ws.max_row
+                for c in range(6, 10):
+                    ws.cell(row=r, column=c).alignment = Alignment(horizontal="right")
+                    ws.cell(row=r, column=c).font = normal_font
+                # Net Eksik: kırmızı kalın
+                ws.cell(row=r, column=9).font = eksik_font
+                # ERP Bakiye negatifse: kırmızı
+                if s['erp_bakiye'] < 0:
+                    ws.cell(row=r, column=7).font = eksik_font
+                for c in range(1, 10):
+                    ws.cell(row=r, column=c).border = ince_alt
+
+            for col, w in zip("ABCDEFGHI", [14, 22, 40, 22, 45, 16, 22, 24, 18]):
+                ws.column_dimensions[col].width = w
+            ws.freeze_panes = f"A{hrow + 1}"
+            ws.auto_filter.ref = f"A{hrow}:I{ws.max_row}"
+
+            wb.save(self._muhasebe_dosya)
+
+            toplam_emir = len({s['emir_kodu'] for s in satirlar})
+            QMessageBox.information(
+                self, "Muhasebe Raporu Oluşturuldu",
+                f"{toplam_emir} emirde toplam {len(satirlar)} eksik kalem.\n"
+                f"Excel kaydedildi:\n{self._muhasebe_dosya}",
+            )
+            self.durum_lbl.setText(
+                f"Muhasebe raporu: {toplam_emir} emir, {len(satirlar)} satır — kaydedildi."
+            )
+            self.durum_lbl.setStyleSheet("color:#2e7d32;font-size:11px;")
+            self.durum_guncelle.emit(
+                f"Muhasebe eksik raporu oluşturuldu: {toplam_emir} emir, {len(satirlar)} satır."
+            )
+
+        except Exception as ex:
+            logging.error("MuhasebeRaporu excel: %s", ex)
+            QMessageBox.critical(self, "Excel Hatası", str(ex))
+
     # ── Hata ─────────────────────────────────────────────────────────────────
 
     def _hata(self, mesaj: str):
         self.progress.setVisible(False)
+        self.progress.setRange(0, 0)
         self.yenile_btn.setEnabled(True)
         self.analiz_btn.setEnabled(bool(self._secili_emir))
+        if self._emirler:
+            self.tum_excel_btn.setEnabled(True)
+            self.tum_excel_btn.setStyleSheet(_BTN_TURUNCU)
+            self.muhasebe_btn.setEnabled(True)
+            self.muhasebe_btn.setStyleSheet(_BTN_MOR)
         self.durum_lbl.setText(f"Hata: {mesaj}")
         self.durum_lbl.setStyleSheet("color:#c62828;font-size:11px;")
         QMessageBox.critical(self, "Hata", mesaj)
