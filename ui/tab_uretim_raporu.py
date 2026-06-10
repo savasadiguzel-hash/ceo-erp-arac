@@ -1,19 +1,19 @@
-"""tab_uretim_raporu.py — Üretim Eksik Stok Raporu sekmesi."""
+"""tab_uretim_raporu.py — Üretim Eksik Stok Raporu sekmesi (BOM patlatmalı)."""
 import logging
 from datetime import datetime
 
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QListWidget, QListWidgetItem, QTableWidget, QTableWidgetItem,
+    QListWidget, QListWidgetItem, QTreeWidget, QTreeWidgetItem,
     QHeaderView, QMessageBox, QFileDialog, QProgressBar, QGroupBox,
-    QSplitter, QFrame,
+    QSplitter,
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QSize
 from PyQt5.QtGui import QFont, QColor, QBrush
 
 from config import DB_DEFAULTS
 from db.baglanti import get_connection
-from db.sorgular import uretim_emirleri_listesi, uretim_emir_eksik_stok
+from db.sorgular import uretim_emirleri_listesi, uretim_emir_bom_patlat
 
 _BTN_MAVI = (
     "background:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #1565c0,stop:1 #1976d2);"
@@ -28,7 +28,7 @@ _BTN_PASIF = (
     "border-radius:6px;padding:8px 18px;font-weight:bold;font-size:12px;border:none;"
 )
 
-_TABLO_KOLONLAR = [
+_AGAC_KOLONLAR = [
     "Malzeme Kodu",
     "Malzeme Adı",
     "İhtiyaç Miktarı",
@@ -36,8 +36,8 @@ _TABLO_KOLONLAR = [
     "Eksik Miktar",
 ]
 
-_RENK_EKSIK  = QColor("#c62828")
-_RENK_SIFIR  = QColor("#fff3f3")
+_RENK_EKSIK      = QColor("#c62828")
+_RENK_ALT_MONTAJ = QColor("#e8eaf6")   # alt montaj kök satırları — açık indigo
 
 
 # ── Thread'ler ────────────────────────────────────────────────────────────────
@@ -69,7 +69,7 @@ class AnalizThread(QThread):
 
     def run(self):
         try:
-            self.bitti.emit(uretim_emir_eksik_stok(self.conn, self.emir_id))
+            self.bitti.emit(uretim_emir_bom_patlat(self.conn, self.emir_id))
         except Exception as e:
             logging.error("AnalizThread emir_id=%s: %s", self.emir_id, e)
             self.hata.emit(str(e))
@@ -185,8 +185,8 @@ class UretimRaporuTab(QWidget):
         )
         kart_lay = QHBoxLayout(self.emir_kart)
         kart_lay.setSpacing(24)
-        self.kart_kodu    = self._bilgi_widget("Emir Kodu", "—")
-        self.kart_tarih   = self._bilgi_widget("Emri Tarihi", "—")
+        self.kart_kodu     = self._bilgi_widget("Emir Kodu", "—")
+        self.kart_tarih    = self._bilgi_widget("Emri Tarihi", "—")
         self.kart_aciklama = self._bilgi_widget("Açıklama", "—")
         kart_lay.addWidget(self.kart_kodu)
         kart_lay.addWidget(self.kart_tarih)
@@ -208,38 +208,37 @@ class UretimRaporuTab(QWidget):
         kart_lay.addWidget(self.excel_btn)
         sag_lay.addWidget(self.emir_kart)
 
-        # Eksik malzeme tablosu
-        self.tablo = QTableWidget()
-        self.tablo.setColumnCount(len(_TABLO_KOLONLAR))
-        self.tablo.setHorizontalHeaderLabels(_TABLO_KOLONLAR)
-        self.tablo.setEditTriggers(QTableWidget.NoEditTriggers)
-        self.tablo.setSelectionBehavior(QTableWidget.SelectRows)
-        self.tablo.setAlternatingRowColors(True)
-        self.tablo.verticalHeader().setVisible(False)
-        self.tablo.setStyleSheet("""
-            QTableWidget {
+        # Eksik malzeme ağacı (BOM patlatmalı)
+        self.agac = QTreeWidget()
+        self.agac.setColumnCount(len(_AGAC_KOLONLAR))
+        self.agac.setHeaderLabels(_AGAC_KOLONLAR)
+        self.agac.setEditTriggers(QTreeWidget.NoEditTriggers)
+        self.agac.setSelectionBehavior(QTreeWidget.SelectRows)
+        self.agac.setAlternatingRowColors(False)
+        self.agac.setRootIsDecorated(True)
+        self.agac.setStyleSheet("""
+            QTreeWidget {
                 border: 1px solid #c5cae9;
                 border-radius: 6px;
                 background: white;
-                alternate-background-color: #f8f9ff;
-                gridline-color: #e8eaf6;
                 font-size: 12px;
             }
-            QTableWidget::item { padding: 5px 8px; }
-            QTableWidget::item:selected { background: #e8eaf6; color: #1a237e; }
+            QTreeWidget::item { padding: 4px 8px; }
+            QTreeWidget::item:selected { background: #e8eaf6; color: #1a237e; }
+            QTreeWidget::item:hover:!selected { background: #f5f5ff; }
             QHeaderView::section {
                 background: #3f51b5; color: white;
                 padding: 7px 8px; font-weight: bold; font-size: 12px;
                 border: none; border-right: 1px solid #5c6bc0;
             }
         """)
-        h = self.tablo.horizontalHeader()
+        h = self.agac.header()
         h.setSectionResizeMode(0, QHeaderView.ResizeToContents)
         h.setSectionResizeMode(1, QHeaderView.Stretch)
         h.setSectionResizeMode(2, QHeaderView.ResizeToContents)
         h.setSectionResizeMode(3, QHeaderView.ResizeToContents)
         h.setSectionResizeMode(4, QHeaderView.ResizeToContents)
-        sag_lay.addWidget(self.tablo)
+        sag_lay.addWidget(self.agac)
 
         # Alt özet
         self.tablo_ozet = QLabel("Sol listeden bir iş emri seçip 'Analiz Et' düğmesine basın.")
@@ -308,12 +307,8 @@ class UretimRaporuTab(QWidget):
         self._emirler = emirler
         self.emir_listesi.clear()
 
-        font_kodu = QFont("Segoe UI", 11, QFont.Bold)
-        font_alt  = QFont("Segoe UI", 10)
-
         for e in emirler:
             item = QListWidgetItem()
-            # İki satırlı metin: kod ve açıklama
             aciklama = e['aciklama'][:55] + "…" if len(e['aciklama']) > 55 else e['aciklama']
             item.setText(f"{e['kodu']}\n{e['tarih']}  •  {aciklama}")
             item.setData(Qt.UserRole, e)
@@ -333,13 +328,13 @@ class UretimRaporuTab(QWidget):
         e = current.data(Qt.UserRole)
         self._secili_emir = e
         aciklama = e['aciklama'][:70] + "…" if len(e['aciklama']) > 70 else e['aciklama']
-        self._bilgi_guncelle(self.kart_kodu,    e['kodu'])
-        self._bilgi_guncelle(self.kart_tarih,   e['tarih'])
+        self._bilgi_guncelle(self.kart_kodu,     e['kodu'])
+        self._bilgi_guncelle(self.kart_tarih,    e['tarih'])
         self._bilgi_guncelle(self.kart_aciklama, aciklama)
         self.analiz_btn.setEnabled(True)
         self.excel_btn.setEnabled(False)
         self.excel_btn.setStyleSheet(_BTN_PASIF)
-        self.tablo.setRowCount(0)
+        self.agac.clear()
         self.tablo_ozet.setText("'Analiz Et' düğmesine basarak eksik malzemeleri görün.")
         self._analiz_veri = []
 
@@ -351,7 +346,7 @@ class UretimRaporuTab(QWidget):
         self.analiz_btn.setEnabled(False)
         self.excel_btn.setEnabled(False)
         self.excel_btn.setStyleSheet(_BTN_PASIF)
-        self.tablo.setRowCount(0)
+        self.agac.clear()
         self._analiz_veri = []
         self.progress.setVisible(True)
         self.tablo_ozet.setText("Analiz ediliyor…")
@@ -362,12 +357,52 @@ class UretimRaporuTab(QWidget):
         self._analiz_thread.hata.connect(self._hata)
         self._analiz_thread.start()
 
+    def _dugum_olustur(self, m: dict, is_child: bool = False) -> QTreeWidgetItem:
+        """Tek bir malzeme kaydı için QTreeWidgetItem oluşturur."""
+        item = QTreeWidgetItem([
+            m['kodu'],
+            m['adi'],
+            f"{m['ihtiyac']:.2f}",
+            f"{m['bakiye']:.2f}",
+            f"{m['eksik']:.2f}",
+        ])
+        for col in range(5):
+            item.setTextAlignment(
+                col,
+                Qt.AlignVCenter | (Qt.AlignRight if col >= 2 else Qt.AlignLeft)
+            )
+        # Alt montaj kök satırı: açık indigo arka plan
+        if not is_child and m.get('is_alt_montaj'):
+            for col in range(5):
+                item.setBackground(col, QBrush(_RENK_ALT_MONTAJ))
+        # Bakiye sıfır veya negatif: kırmızı
+        if m['bakiye'] <= 0:
+            item.setForeground(3, QBrush(_RENK_EKSIK))
+        # Eksik negatif: kırmızı ve kalın
+        if m['eksik'] < 0:
+            item.setForeground(4, QBrush(_RENK_EKSIK))
+            f = QFont()
+            f.setBold(True)
+            item.setFont(4, f)
+        return item
+
+    def _ekle_dugum(self, parent, m: dict, is_child: bool = False):
+        """Düğümü ve alt bileşenlerini recursive olarak ekler."""
+        item = self._dugum_olustur(m, is_child=is_child)
+        if parent is None:
+            self.agac.addTopLevelItem(item)
+        else:
+            parent.addChild(item)
+        for bil in m.get('bilesenler', []):
+            self._ekle_dugum(item, bil, is_child=True)
+        return item
+
     def _analiz_geldi(self, veri: list[dict]):
         self.progress.setVisible(False)
         self.analiz_btn.setEnabled(True)
         self._analiz_veri = veri
 
-        self.tablo.setRowCount(0)
+        self.agac.clear()
         if not veri:
             self.tablo_ozet.setText(
                 f"✅  '{self._secili_emir['kodu']}' için tüm malzemeler stokta mevcut — eksik yok."
@@ -376,44 +411,21 @@ class UretimRaporuTab(QWidget):
             self.durum_guncelle.emit(f"{self._secili_emir['kodu']}: eksik malzeme yok.")
             return
 
-        self.tablo.setRowCount(len(veri))
-        for r, m in enumerate(veri):
-            sifir_bakiye = m['bakiye_emir_tarihi'] <= 0
+        for m in veri:
+            self._ekle_dugum(None, m, is_child=False)
 
-            def hucre(txt, align=Qt.AlignLeft):
-                item = QTableWidgetItem(str(txt))
-                item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled)
-                item.setTextAlignment(align | Qt.AlignVCenter)
-                if sifir_bakiye:
-                    item.setBackground(QBrush(_RENK_SIFIR))
-                return item
+        self.agac.expandAll()
 
-            self.tablo.setItem(r, 0, hucre(m['malzeme_kodu']))
-            self.tablo.setItem(r, 1, hucre(m['malzeme_adi']))
-
-            ih = hucre(f"{m['ihtiyac']:.2f}", Qt.AlignRight)
-            self.tablo.setItem(r, 2, ih)
-
-            bk = hucre(f"{m['bakiye_emir_tarihi']:.2f}", Qt.AlignRight)
-            if sifir_bakiye:
-                bk.setForeground(QBrush(_RENK_EKSIK))
-            self.tablo.setItem(r, 3, bk)
-
-            ek = QTableWidgetItem(f"{m['eksik']:.2f}")
-            ek.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled)
-            ek.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-            ek.setForeground(QBrush(_RENK_EKSIK))
-            if sifir_bakiye:
-                ek.setBackground(QBrush(_RENK_SIFIR))
-            self.tablo.setItem(r, 4, ek)
-
+        n_kok = len(veri)
+        n_alt = sum(1 for m in veri if m.get('bilesenler'))
+        ozet  = f"{n_kok} eksik kalem"
+        if n_alt:
+            ozet += f" ({n_alt} alt montaj açıldı)"
         self.tablo_ozet.setText(
-            f"{self._secili_emir['kodu']} için {len(veri)} eksik malzeme kalemi bulundu."
+            f"{self._secili_emir['kodu']} için {ozet} bulundu."
         )
         self.tablo_ozet.setStyleSheet("color:#c62828;font-size:12px;font-weight:bold;padding:3px;")
-        self.durum_guncelle.emit(
-            f"{self._secili_emir['kodu']}: {len(veri)} eksik malzeme kalemi."
-        )
+        self.durum_guncelle.emit(f"{self._secili_emir['kodu']}: {ozet}.")
         self.excel_btn.setEnabled(True)
         self.excel_btn.setStyleSheet(_BTN_YESIL)
 
@@ -424,7 +436,7 @@ class UretimRaporuTab(QWidget):
             return
         try:
             import openpyxl
-            from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+            from openpyxl.styles import Font, PatternFill, Alignment
 
             emir = self._secili_emir
             oneri = f"eksik_{emir['kodu'].replace('.', '_').replace('/', '_')}.xlsx"
@@ -439,46 +451,45 @@ class UretimRaporuTab(QWidget):
             ws = wb.active
             ws.title = "Eksik Stok"
 
-            # Emir bilgi satırları
             ws.append(["Emir Kodu",  emir['kodu']])
             ws.append(["Emir Tarihi", emir['tarih']])
             ws.append(["Açıklama",   emir['aciklama']])
             ws.append([])
-
-            # Başlıklar
-            ws.append(["Malzeme Kodu", "Malzeme Adı",
-                        "İhtiyaç Miktarı", "Emri Tarihindeki Bakiye", "Eksik Miktar"])
+            ws.append(_AGAC_KOLONLAR)
             header_row = ws.max_row
-            header_fill = PatternFill("solid", fgColor="3F51B5")
-            header_font = Font(name="Segoe UI", bold=True, color="FFFFFF", size=11)
             for cell in ws[header_row]:
-                cell.fill  = header_fill
-                cell.font  = header_font
+                cell.fill      = PatternFill("solid", fgColor="3F51B5")
+                cell.font      = Font(name="Segoe UI", bold=True, color="FFFFFF", size=11)
                 cell.alignment = Alignment(horizontal="center", vertical="center")
 
-            # Veri
-            eksik_font = Font(name="Segoe UI", size=11, color="C62828")
-            sifir_fill = PatternFill("solid", fgColor="FFF3F3")
-            for m in self._analiz_veri:
+            eksik_font  = Font(name="Segoe UI", size=11, color="C62828", bold=True)
+            normal_font = Font(name="Segoe UI", size=11)
+            alt_fill    = PatternFill("solid", fgColor="E8EAF6")
+
+            def _yaz(m: dict, derinlik: int = 0):
+                girinti = "  " * derinlik + ("└─ " if derinlik > 0 else "")
                 ws.append([
-                    m['malzeme_kodu'],
-                    m['malzeme_adi'],
+                    girinti + m['kodu'],
+                    m['adi'],
                     round(m['ihtiyac'], 2),
-                    round(m['bakiye_emir_tarihi'], 2),
-                    round(m['eksik'],             2),
+                    round(m['bakiye'],  2),
+                    round(m['eksik'],   2),
                 ])
                 r = ws.max_row
-                sifir = m['bakiye_emir_tarihi'] <= 0
-                for c in [3, 4, 5]:
+                for c in range(3, 6):
                     ws.cell(row=r, column=c).alignment = Alignment(horizontal="right")
-                ws.cell(row=r, column=4).font = eksik_font if sifir else Font(name="Segoe UI", size=11)
-                ws.cell(row=r, column=5).font = eksik_font
-                if sifir:
+                ws.cell(row=r, column=4).font = eksik_font if m['bakiye'] <= 0 else normal_font
+                ws.cell(row=r, column=5).font = eksik_font if m['eksik'] < 0 else normal_font
+                if derinlik == 0 and m.get('is_alt_montaj'):
                     for c in range(1, 6):
-                        ws.cell(row=r, column=c).fill = sifir_fill
+                        ws.cell(row=r, column=c).fill = alt_fill
+                for bil in m.get('bilesenler', []):
+                    _yaz(bil, derinlik + 1)
 
-            # Sütun genişlikleri
-            for col, w in zip("ABCDE", [22, 50, 16, 16, 14]):
+            for m in self._analiz_veri:
+                _yaz(m)
+
+            for col, w in zip("ABCDE", [28, 50, 16, 16, 14]):
                 ws.column_dimensions[col].width = w
             ws.freeze_panes = f"A{header_row + 1}"
 

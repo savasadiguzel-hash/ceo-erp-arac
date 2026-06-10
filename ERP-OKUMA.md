@@ -2,7 +2,7 @@
 
 **GitHub:** https://github.com/savasadiguzel-hash/ceo-erp-arac  
 **Dağıtım:** `dist/CEO-ERP-Araclar.exe` (~54 MB)  
-**Son güncelleme:** 2026-06-10
+**Son güncelleme:** 2026-06-10 (BOM patlatma eklendi)
 
 ---
 
@@ -68,15 +68,25 @@ Tespit edilen stokları mamüle bağlar. Stok detay etiketleri fare ile seçileb
 ## Üretim Eksik Stok Sekmesi
 
 - Uygulama açıldığında DB'ye otomatik bağlanır; "Devam Ediyor" emirler sol panelde listelenir
-- Kullanıcı emir seçip **Analiz Et** tıklar; sağ panelde eksik malzemeler tabloya yüklenir
+- Kullanıcı emir seçip **Analiz Et** tıklar; sağ panelde eksik malzemeler **BOM patlatmalı ağaç görünümünde** listelenir
 - **Hat filtresi:** `HatTipi = 1` (ana üretim hattı) — HatTipi=2 (ek süreçler) dahil edilmez
 - **Bakiye formülü — üretim emri tarihi bazlı:**
   - `GirenMiktar`: `IslemKodu IN (1, 16, 20, 22)` — Alış Faturası, Üretimden Giriş, Sayım Fazlası, Devir Girişi
   - `CikanMiktar`: `IslemKodu IN (2, 6, 17, 18, 19, 21)` — Satış, Satış İrsaliyesi, Üretime Çıkış, Depo Çıkış, Sayım Eksiği, Fire
   - Tarih filtresi: `BelgeTarihi <= UretimEmriTarihi`
-- **IslemKodu=16 eklenmesi kritik:** Üretilmiş yarı mamüller (YMGMKRT0004 gibi) bu formül olmadan yanlış negatif çıkar
-- **Excel'e Aktar** butonu eksik malzemeleri xlsx olarak kaydeder
-- Sorgu fonksiyonu: `db/sorgular.py:uretim_emir_eksik_stok(conn, emir_id)`
+- **IslemKodu=16 eklenmesi kritik:** Üretilmiş yarı mamüller bu formül olmadan yanlış negatif çıkar
+
+### BOM Patlatma (Alt Montaj Açma)
+
+- Hat planında alt montaj varsa (UretimRecete'de reçetesi bulunan) ve stok yetersizse, bileşenleri ağaç görünümünde gösterilir
+- **Recursive:** Alt montajın bileşeni de alt montajsa, o da açılır (max 8 seviye)
+- **Aggregasyon:** Bir malzeme hem ana hatta hem alt montajda bileşen olarak geçiyorsa, **toplam talep** kök satırda gösterilir (örn. HMGMSGR0008 = ana hat 80 + alt montaj 40 = toplam 120)
+- **Net gereksinim:** Alt montaj için `üretilecek = max(0, talep - emri_tarihi_bakiyesi)`, bileşen talebi bu üretim miktarı üzerinden hesaplanır
+- Kök satırda alt montaj: açık indigo arka plan; bileşenler altında girintili gösterilir
+- Negatif eksik sütunu: kırmızı ve kalın
+- Sıfır/negatif bakiye: kırmızı renk
+- **Excel'e Aktar** butonu ağacı hiyerarşik olarak xlsx olarak kaydeder (bileşenler `└─` ön ekiyle)
+- BOM sorgu fonksiyonu: `db/sorgular.py:uretim_emir_bom_patlat(conn, emir_id)`
 - UI: `ui/tab_uretim_raporu.py:UretimRaporuTab`
 
 ---

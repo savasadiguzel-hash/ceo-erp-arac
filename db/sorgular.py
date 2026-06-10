@@ -447,6 +447,198 @@ def uretim_emir_eksik_stok(conn, emir_id: int) -> list[dict]:
         ]
 
 
+def uretim_emir_bom_patlat(conn, emir_id: int) -> list[dict]:
+    """
+    HatTipi=1 hat planındaki malzemelerin BOM-patlatmalı eksik stok analizi.
+
+    Alt montaj tespit edilirse standart UretimRecete üzerinden recursive patlatılır;
+    her seviyede emri tarihindeki bakiye mahsup edilerek üretilmesi gereken miktar
+    bulunur.  Ortak bileşenler için (hem ana hatta hem alt montajda olanlar) toplam
+    talep ve toplam eksik gösterilir.
+
+    Dönüş: yalnızca eksik kalemler (eksik < 0), kök seviyede hat planı sırası.
+    Her dict:
+        kart_id, kodu, adi,
+        ihtiyac  – toplam (ağırlıklı) talep,
+        bakiye   – emri tarihi bakiyesi,
+        eksik    – bakiye - ihtiyac,
+        is_alt_montaj,
+        bilesenler – [aynı yapı; ihtiyac bu ebeveynden gelen katkıdır]
+    """
+    # ── 1. Emir tarihi ──────────────────────────────────────────────────────
+    with cursor_ctx(conn) as cur:
+        cur.execute(
+            "SELECT CAST(UretimEmriTarihi AS DATE) FROM UretimEmri WHERE Id=?",
+            emir_id
+        )
+        row = cur.fetchone()
+        if not row:
+            return []
+        emir_tarihi = str(row[0])   # 'YYYY-MM-DD'
+
+    # ── 2. HatTipi=1 hat planı ─────────────────────────────────────────────
+    hat_talep: dict[int, dict] = {}
+    with cursor_ctx(conn) as cur:
+        cur.execute("""
+            SELECT uehpg.KartId, sk.Kodu, sk.Adi, SUM(uehpg.TalepMiktar)
+            FROM UretimEmriHatPlani      uehp
+            JOIN UretimEmriHatPlaniGirdi uehpg ON uehpg.UretimEmriHatPlaniId = uehp.Id
+            JOIN StokKarti               sk     ON sk.Id = uehpg.KartId
+            WHERE uehp.UretimEmriId   = ?
+              AND uehp.HatTipi        = 1
+              AND uehpg.KartId        IS NOT NULL
+              AND uehpg.TalepMiktar   > 0
+            GROUP BY uehpg.KartId, sk.Kodu, sk.Adi
+            ORDER BY sk.Kodu
+        """, emir_id)
+        for row in cur.fetchall():
+            hat_talep[int(row[0])] = {
+                'kodu':  row[1],
+                'adi':   str(row[2] or '').strip(),
+                'talep': float(row[3]),
+            }
+
+    if not hat_talep:
+        return []
+
+    # ── 3. Tüm aktif standart reçeteler (tek sorguda) ──────────────────────
+    # receteler: {urun_kart_id: [{kart_id, kodu, adi, miktar}]}
+    receteler: dict[int, list[dict]] = {}
+    with cursor_ctx(conn) as cur:
+        cur.execute("""
+            SELECT
+                sk_u.Id              AS UrunKartId,
+                urhpg.KartId         AS BilesenKartId,
+                sk_b.Kodu            AS BilesenKodu,
+                sk_b.Adi             AS BilesenAdi,
+                SUM(urhpg.Miktar)    AS ToplamMiktar
+            FROM UretimRecete ur
+            JOIN StokKarti sk_u
+                ON sk_u.Kodu = ur.Kodu
+            JOIN UretimReceteHatPlani urhp
+                ON urhp.UretimReceteId = ur.Id
+            JOIN UretimReceteHatPlaniGirdi urhpg
+                ON urhpg.UretimReceteHatPlaniId = urhp.Id
+            JOIN StokKarti sk_b
+                ON sk_b.Id = urhpg.KartId
+            WHERE (ur.KullanimDisi IS NULL OR ur.KullanimDisi = 0)
+              AND urhpg.KartId IS NOT NULL
+              AND urhpg.Miktar > 0
+            GROUP BY sk_u.Id, urhpg.KartId, sk_b.Kodu, sk_b.Adi
+        """)
+        for row in cur.fetchall():
+            uid = int(row[0])
+            if uid not in receteler:
+                receteler[uid] = []
+            receteler[uid].append({
+                'kart_id': int(row[1]),
+                'kodu':    row[2],
+                'adi':     str(row[3] or '').strip(),
+                'miktar':  float(row[4]),
+            })
+
+    # ── 4. BFS: tüm ilgili kart ID'lerini bul ──────────────────────────────
+    all_ids: set[int] = set(hat_talep.keys())
+    queue   = list(hat_talep.keys())
+    seen:   set[int] = set(hat_talep.keys())
+    while queue:
+        kid = queue.pop()
+        if kid in receteler:
+            for bil in receteler[kid]:
+                if bil['kart_id'] not in seen:
+                    seen.add(bil['kart_id'])
+                    all_ids.add(bil['kart_id'])
+                    queue.append(bil['kart_id'])
+
+    # ── 5. Bakiyeler (toplu, 500'lük yığınlar) ─────────────────────────────
+    bakiyeler: dict[int, float] = {}
+    ids_list = list(all_ids)
+    _YIGIN = 500
+    for i in range(0, len(ids_list), _YIGIN):
+        parca = ids_list[i: i + _YIGIN]
+        yer   = ','.join(['?'] * len(parca))
+        with cursor_ctx(conn) as cur:
+            cur.execute(f"""
+                SELECT shd.IslemKartId,
+                       SUM(CASE
+                           WHEN sh.IslemKodu IN (1, 16, 20, 22)        THEN  shd.Miktar
+                           WHEN sh.IslemKodu IN (2, 6, 17, 18, 19, 21) THEN -shd.Miktar
+                           ELSE 0
+                       END) AS Bakiye
+                FROM StokHareketDetay shd
+                JOIN StokHareket sh ON sh.Id = shd.HareketId
+                WHERE shd.IslemKartId IN ({yer})
+                  AND sh.Aktif = 1
+                  AND CAST(sh.BelgeTarihi AS DATE) <= CAST(? AS DATE)
+                GROUP BY shd.IslemKartId
+            """, *tuple(parca), emir_tarihi)
+            for row in cur.fetchall():
+                bakiyeler[int(row[0])] = float(row[1])
+
+    # ── 6. Talep birikimi + ağaç inşası ────────────────────────────────────
+    toplam_talep: dict[int, float] = {
+        kid: bilgi['talep'] for kid, bilgi in hat_talep.items()
+    }
+
+    def _patlat(kart_id: int, ihtiyac: float, depth: int = 0) -> list[dict]:
+        """
+        Alt montajı reçetesine göre açar; toplam_talep'e katkı ekler.
+        Döner: çocuk düğüm listesi (bu ebeveynden gelen bireysel katkıyla).
+        """
+        if depth >= 8 or kart_id not in receteler:
+            return []
+        bakiye         = bakiyeler.get(kart_id, 0.0)
+        uretim_gerekli = max(0.0, ihtiyac - bakiye)
+        if uretim_gerekli <= 0:
+            return []
+        children = []
+        for bil in receteler[kart_id]:
+            bid         = bil['kart_id']
+            bil_ihtiyac = bil['miktar'] * uretim_gerekli
+            toplam_talep[bid] = toplam_talep.get(bid, 0.0) + bil_ihtiyac
+            sub_ch = _patlat(bid, bil_ihtiyac, depth + 1)
+            bbakiye = bakiyeler.get(bid, 0.0)
+            children.append({
+                'kart_id':      bid,
+                'kodu':         bil['kodu'],
+                'adi':          bil['adi'],
+                'ihtiyac':      bil_ihtiyac,
+                'bakiye':       bbakiye,
+                'eksik':        bbakiye - bil_ihtiyac,
+                'is_alt_montaj': bid in receteler,
+                'bilesenler':   sub_ch,
+            })
+        return children
+
+    # Hat planındaki alt montajları patlatıyoruz
+    hat_bilesenler: dict[int, list[dict]] = {}
+    for kid, bilgi in hat_talep.items():
+        if kid in receteler:
+            hat_bilesenler[kid] = _patlat(kid, bilgi['talep'])
+
+    # ── 7. Kök düğümleri oluştur — yalnızca eksik olanlar ──────────────────
+    sonuc: list[dict] = []
+    for kid, bilgi in hat_talep.items():
+        agr_talep = toplam_talep.get(kid, bilgi['talep'])
+        bakiye    = bakiyeler.get(kid, 0.0)
+        eksik     = bakiye - agr_talep
+        if eksik >= 0:
+            continue
+        sonuc.append({
+            'kart_id':      kid,
+            'kodu':         bilgi['kodu'],
+            'adi':          bilgi['adi'],
+            'ihtiyac':      agr_talep,
+            'bakiye':       bakiye,
+            'eksik':        eksik,
+            'is_alt_montaj': kid in receteler,
+            'bilesenler':   hat_bilesenler.get(kid, []),
+        })
+
+    sonuc.sort(key=lambda x: x['kodu'])
+    return sonuc
+
+
 # ── Araç 5: Satış Faturaları ──────────────────────────────────────────────────
 
 def satis_faturalari(conn, bas_tarih: str, bit_tarih: str) -> list[dict]:
