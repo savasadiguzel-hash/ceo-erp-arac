@@ -6,6 +6,33 @@ import logging
 from db.baglanti import cursor_ctx
 
 
+def _kod23_paired_ids_str(conn) -> str:
+    """
+    IslemKodu=23 kayıtları arasında, aynı IslemKartId + BelgeSiraNo için
+    IslemKodu=5 (Alış İrsaliyesi) eşi olan StokHareket.Id listesini döner.
+    Bu kayıtlar depoya irsaliye kökenli girişi temsil eder ve GirenMiktar olarak sayılır.
+    Eşi olmayan IslemKodu=23 (saf depo transferi) sayılmaz — karşı IslemKodu=18 ile netleşir.
+    Sonuç: SQL IN operatörüne hazır string (örn. '743389,741897').
+    Eş yok ise '-1' döner (boş IN listesi yerine geçer).
+    """
+    with cursor_ctx(conn) as cur:
+        cur.execute("""
+            SELECT DISTINCT sh23.Id
+            FROM StokHareket sh23
+            JOIN StokHareketDetay shd23 ON shd23.HareketId = sh23.Id
+            WHERE sh23.IslemKodu = 23 AND sh23.Aktif = 1
+              AND EXISTS (
+                  SELECT 1 FROM StokHareket sh5
+                  JOIN StokHareketDetay shd5 ON shd5.HareketId = sh5.Id
+                  WHERE sh5.IslemKodu = 5 AND sh5.Aktif = 1
+                    AND sh5.BelgeSiraNo  = sh23.BelgeSiraNo
+                    AND shd5.IslemKartId = shd23.IslemKartId
+              )
+        """)
+        ids = [str(int(r[0])) for r in cur.fetchall()]
+    return ','.join(ids) if ids else '-1'
+
+
 # ── Araç 1: Mamül Ağacı Bağlantı ──────────────────────────────────────────────
 
 def tarama_istatistikleri(conn) -> list[tuple[str, int]]:
@@ -381,20 +408,22 @@ def uretim_emir_eksik_stok(conn, emir_id: int) -> list[dict]:
     ÜRETİM EMRİ TARİHİNDEKİ bakiyeyi hesaplayıp yetersiz olanları döner.
 
     Bakiye formülü (CEO ERP ile eşleşen):
-      GirenMiktar : IslemKodu IN (1, 16, 20, 22, 23) AND Aktif=1
-        1=Alış Faturası, 16=Üretimden Giriş, 20=Sayım Fazlası,
-        22=Devir Girişi, 23=Depolar Arası Giriş
+      GirenMiktar : IslemKodu IN (1, 16, 20, 22) AND Aktif=1 VEYA
+                    IslemKodu=23 AND eşli Alış İrsaliyesi (aynı BelgeSiraNo+IslemKartId) varsa
+        1=Alış Faturası, 16=Üretimden Giriş, 20=Sayım Fazlası, 22=Devir Girişi
+        23=Depolar Arası Giriş (sadece irsaliye kökenli; saf transferler netleşir)
       CikanMiktar : IslemKodu IN (2, 3, 6, 17, 18, 19, 21) AND Aktif=1
         2=Satış Faturası, 3=Alış İade Faturası, 6=Satış İrsaliyesi,
         17=Üretime Çıkış, 18=Depolar Arası Çıkış, 19=Sayım Eksiği, 21=Fire
-      Not: 5=Alış İrsaliyesi sayılmaz (her zaman 1 veya 23 ile eşli → çift sayım)
+      Not: 5=Alış İrsaliyesi sayılmaz (her zaman 1 fatura veya eşli 23 ile gelir)
       Tarih filtresi: BelgeTarihi <= UretimEmriTarihi
       Hat filtresi  : HatTipi = 1 (ana üretim hattı)
 
     Her eleman: malzeme_kodu, malzeme_adi, ihtiyac, bakiye_emir_tarihi, eksik
     """
+    k23 = _kod23_paired_ids_str(conn)
     with cursor_ctx(conn) as cur:
-        cur.execute("""
+        cur.execute(f"""
             WITH EmirBilgi AS (
                 SELECT CAST(UretimEmriTarihi AS DATE) AS EmirTarihi
                 FROM UretimEmri WHERE Id = ?
@@ -414,8 +443,9 @@ def uretim_emir_eksik_stok(conn, emir_id: int) -> list[dict]:
                 SELECT
                     shd.IslemKartId,
                     SUM(CASE
-                        WHEN sh.IslemKodu IN (1, 16, 20, 22, 23)        THEN  shd.Miktar
-                        WHEN sh.IslemKodu IN (2, 3, 6, 17, 18, 19, 21)  THEN -shd.Miktar
+                        WHEN sh.IslemKodu IN (1, 16, 20, 22)             THEN  shd.Miktar
+                        WHEN sh.IslemKodu = 23 AND sh.Id IN ({k23})      THEN  shd.Miktar
+                        WHEN sh.IslemKodu IN (2, 3, 6, 17, 18, 19, 21)   THEN -shd.Miktar
                         ELSE 0
                     END) AS Bakiye
                 FROM StokHareketDetay shd
@@ -555,6 +585,7 @@ def uretim_emir_bom_patlat(conn, emir_id: int) -> list[dict]:
                     queue.append(bil['kart_id'])
 
     # ── 5. Bakiyeler (toplu, 500'lük yığınlar) ─────────────────────────────
+    k23 = _kod23_paired_ids_str(conn)
     bakiyeler: dict[int, float] = {}
     ids_list = list(all_ids)
     _YIGIN = 500
@@ -565,8 +596,9 @@ def uretim_emir_bom_patlat(conn, emir_id: int) -> list[dict]:
             cur.execute(f"""
                 SELECT shd.IslemKartId,
                        SUM(CASE
-                           WHEN sh.IslemKodu IN (1, 16, 20, 22, 23)        THEN  shd.Miktar
-                           WHEN sh.IslemKodu IN (2, 3, 6, 17, 18, 19, 21)  THEN -shd.Miktar
+                           WHEN sh.IslemKodu IN (1, 16, 20, 22)             THEN  shd.Miktar
+                           WHEN sh.IslemKodu = 23 AND sh.Id IN ({k23})      THEN  shd.Miktar
+                           WHEN sh.IslemKodu IN (2, 3, 6, 17, 18, 19, 21)   THEN -shd.Miktar
                            ELSE 0
                        END) AS Bakiye
                 FROM StokHareketDetay shd
@@ -597,8 +629,9 @@ def uretim_emir_bom_patlat(conn, emir_id: int) -> list[dict]:
                 cur.execute(f"""
                     SELECT shd.IslemKartId,
                            SUM(CASE
-                               WHEN sh.IslemKodu IN (1, 16, 20, 22, 23)        THEN  shd.Miktar
-                               WHEN sh.IslemKodu IN (2, 3, 6, 17, 18, 19, 21)  THEN -shd.Miktar
+                               WHEN sh.IslemKodu IN (1, 16, 20, 22)             THEN  shd.Miktar
+                               WHEN sh.IslemKodu = 23 AND sh.Id IN ({k23})      THEN  shd.Miktar
+                               WHEN sh.IslemKodu IN (2, 3, 6, 17, 18, 19, 21)   THEN -shd.Miktar
                                ELSE 0
                            END)
                     FROM StokHareketDetay shd
@@ -734,9 +767,10 @@ def muhasebe_eksik_raporu_olustur(conn) -> list[dict]:
     """
     from collections import defaultdict
 
-    _GIR = (1, 16, 20, 22, 23)
+    _GIR = (1, 16, 20, 22)
     _CIK = (2, 3, 6, 17, 18, 19, 21)
     _YIG = 500
+    k23   = _kod23_paired_ids_str(conn)
     gir_s = ','.join(str(x) for x in _GIR)
     cik_s = ','.join(str(x) for x in _CIK)
 
@@ -898,8 +932,9 @@ def muhasebe_eksik_raporu_olustur(conn) -> list[dict]:
                 cur.execute(f"""
                     SELECT shd.IslemKartId,
                            SUM(CASE
-                               WHEN sh.IslemKodu IN ({gir_s}) THEN  shd.Miktar
-                               WHEN sh.IslemKodu IN ({cik_s}) THEN -shd.Miktar
+                               WHEN sh.IslemKodu IN ({gir_s})              THEN  shd.Miktar
+                               WHEN sh.IslemKodu = 23 AND sh.Id IN ({k23}) THEN  shd.Miktar
+                               WHEN sh.IslemKodu IN ({cik_s})              THEN -shd.Miktar
                                ELSE 0
                            END)
                     FROM StokHareketDetay shd
@@ -925,8 +960,9 @@ def muhasebe_eksik_raporu_olustur(conn) -> list[dict]:
                     cur.execute(f"""
                         SELECT shd.IslemKartId,
                                SUM(CASE
-                                   WHEN sh.IslemKodu IN ({gir_s}) THEN  shd.Miktar
-                                   WHEN sh.IslemKodu IN ({cik_s}) THEN -shd.Miktar
+                                   WHEN sh.IslemKodu IN ({gir_s})              THEN  shd.Miktar
+                                   WHEN sh.IslemKodu = 23 AND sh.Id IN ({k23}) THEN  shd.Miktar
+                                   WHEN sh.IslemKodu IN ({cik_s})              THEN -shd.Miktar
                                    ELSE 0
                                END)
                         FROM StokHareketDetay shd

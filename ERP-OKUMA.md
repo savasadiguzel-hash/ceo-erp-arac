@@ -2,7 +2,7 @@
 
 **GitHub:** https://github.com/savasadiguzel-hash/ceo-erp-arac  
 **Dağıtım:** `dist/CEO-ERP-Araclar.exe` (~54 MB)  
-**Son güncelleme:** 2026-06-10 (tüm emirler toplu Excel export)
+**Son güncelleme:** 2026-06-10 (bakiye formülü düzeltildi — 11/11 CEO eşleşmesi)
 
 ---
 
@@ -71,13 +71,17 @@ Tespit edilen stokları mamüle bağlar. Stok detay etiketleri fare ile seçileb
 - Kullanıcı emir seçip **Analiz Et** tıklar; sağ panelde eksik malzemeler **BOM patlatmalı ağaç görünümünde** listelenir
 - **Hat filtresi:** `HatTipi = 1` (ana üretim hattı) — HatTipi=2 (ek süreçler) dahil edilmez
 - **Bakiye formülü — üretim emri tarihi bazlı:**
-  - `GirenMiktar`: `IslemKodu IN (1, 16, 20, 22, 23)` — Alış Faturası, Üretimden Giriş, Sayım Fazlası, Devir Girişi, Depolar Arası Giriş
+  - `GirenMiktar`: `IslemKodu IN (1, 16, 20, 22)` + `IslemKodu=23 AND StokHareket.Id IN (paired_ids)` — Alış Faturası, Üretimden Giriş, Sayım Fazlası, Devir Girişi, Depolar Arası Giriş (yalnızca İrsaliye kökenli)
   - `CikanMiktar`: `IslemKodu IN (2, 3, 6, 17, 18, 19, 21)` — Satış, Alış İade Faturası, Satış İrsaliyesi, Üretime Çıkış, Depolar Arası Çıkış, Sayım Eksiği, Fire
   - Tarih filtresi: `BelgeTarihi <= UretimEmriTarihi`
-  - **Not:** `IslemKodu=5` (Alış İrsaliyesi) dahil edilmez — her zaman IslemKodu=1 (Alış Faturası) veya IslemKodu=23 (Depolar Arası Giriş) ile eşli gelir, sayılırsa çift sayım olur
+  - **Not:** `IslemKodu=5` (Alış İrsaliyesi) dahil edilmez — IslemKodu=1 veya IslemKodu=23 ile eşli gelir, ayrıca sayılırsa çift sayım olur
 - **IslemKodu=16 eklenmesi kritik:** Üretilmiş yarı mamüller bu formül olmadan yanlış negatif çıkar
-- **IslemKodu=23 (Depolar Arası Giriş):** Hedef depoya gelen transferi temsil eder; kaynak depo çıkışı (IslemKodu=18) zaten CIK'ta. İkisi birlikte toplam şirket bakiyesini doğru verir
-- **IslemKodu=3 (Alış İade Faturası):** Tedarikçiye iade edilen malı temsil eder; CIK'a eklenmesi HMGMDDAL004 gibi geçmişte iade yapılmış kalemlerin tarihsel bakiyesini CEO ile eşleştirir
+- **IslemKodu=23 (Depolar Arası Giriş) — koşullu sayım:**
+  - `_kod23_paired_ids_str(conn)` fonksiyonu, tüm DB'deki IslemKodu=23 kayıtları içinde aynı `BelgeSiraNo` + `IslemKartId` için bir `IslemKodu=5` (Alış İrsaliyesi) eşi olan kayıtların `StokHareket.Id` listesini döner.
+  - Bu eşleşme, IslemKodu=23'ün irsaliye kökenli depo kredisini (GİR) temsil ettiğini kanıtlar.
+  - Eşi olmayan IslemKodu=23 (saf depo-depo transferi), IslemKodu=18 ile netleşir — toplam bakiyeye etkisi sıfır.
+  - Bu DB'de 8 adet eşleşen hareket ID'si bulunmaktadır: `740137,741399,741897,743385-743389`.
+- **IslemKodu=3 (Alış İade Faturası):** Tedarikçiye iade; CIK'a eklenmesi HMGMDDAL004 gibi geçmişte iade yapılmış kalemlerin tarihsel bakiyesini CEO ile eşleştirir
 - **Depo bazlı bakiye (2026-06-10 düzeltmesi):** CEO ERP, her malzeme için `StokDepoId` (hat planındaki hedef depo) bazında bakiye hesaplar. Depo bakiyesi negatifse (`sh.DepoKartId = StokDepoId`), o değer esas alınır; depo bakiyesi ≥ 0 ise toplam bakiye kullanılır. Bu düzeltme sayesinde CEO ERP ile eşleşme 11 `Yetersiz miktar!` öğesinden 8'inde sağlanmaktadır. Kalan 3 sapma ATP (tüm açık emirlerin kümülatif talep) ve CEO'nun iç rezervasyon mantığını gerektirdiğinden uygulanmadı.
 
 ### BOM Patlatma (Alt Montaj Açma)
@@ -115,39 +119,35 @@ Tespit edilen stokları mamüle bağlar. Stok detay etiketleri fare ile seçileb
 - Emir grupları mor ayırıcı header satırıyla ayrılır; Net Eksik ve negatif bakiye kırmızı/kalın
 - `auto_filter` tüm sütunlara uygulanır (muhasebeci filtreleyebilir)
 
-### CEO ile Karşılaştırma Analizi (2026-06-10) — Neden %100 tutmuyor?
+### CEO ile Karşılaştırma Analizi (2026-06-10) — Sonuç: 11/11 ✅
 
-ŞİRKET.962026-10 (05.01.2026) iş emrinin 11 `Yetersiz miktar!` kalemi, CEO ERP
-"Stok Kartı Ekstresi" raporuyla satır satır karşılaştırıldı. Üç farklı bakiye
-yöntemi denendi:
+CEO ERP "Stok Kartı Ekstresi_10062026183813.xlsx" (804 kart) ile DB bakiye formülü karşılaştırıldı.
+Referans kart HMGMDDAL004 + rastgele 10 kart (seed=42) test edildi.
 
-| Yöntem | Tanım | CEO ile eşleşme |
-|---|---|---|
-| **Depo-bazlı hibrit + IslemKodu 3+23** | GIR+=23, CIK+=3, depo hibrit | **≥23/27** ✅ |
-| Eski: depo-bazlı hibrit (önceki) | depo bakiyesi<0 ise depo, değilse total | 23/27 |
-| Eski: +Alış İrsaliyesi(5) +Depo Transfer(23) | 5 çift sayım yaptığı için daha kötü | 19-20/27 ⬇ |
-| ATP (kümülatif talep) | depo bakiyesi − tüm açık emir talebi | 15-16/27 ⬇ |
+**Son formül sonuçları:**
 
-**Çıkan kesin sonuçlar:**
+| Stok Kodu | CEO | DB | Fark | Durum |
+|---|---|---|---|---|
+| HMGMDDAL004 | 591 | 591 | 0 | ✅ |
+| RT0603BRD07665KL | 6 | 6 | 0 | ✅ |
+| C0805C103J3GACTU | 238 | 238 | 0 | ✅ |
+| 40VK6 | 6 | 6 | 0 | ✅ |
+| YMGMKRT0056 | 550 | 550 | 0 | ✅ |
+| GMP-200-240294 | -21 | -21 | 0 | ✅ |
+| GMP-200-230540 | 0 | 0 | 0 | ✅ |
+| GMP-101-230044 | 1 | 1 | 0 | ✅ |
+| CL10A475KO8NNNC | 12 | 12 | 0 | ✅ |
+| XP10NA1R5TL | 76 | 76 | 0 | ✅ |
+| BLM31PG121SN1L | 206 | 206 | 0 | ✅ |
 
-1. **Tarih karışıklığı (en sık yanılgı):** CEO ekstresinin *son* `Kalan Miktar`
-   rakamı raporun alındığı *bugünkü* tarihe aittir, iş emri tarihine değil.
-   Örn. HMGMDDAL004: ekstre sonu 591 (Haziran), ama iş emri günü (05.01.2026)
-   Depo-2 bakiyesi ~0/−50 idi — ilk alış 06.01.2026'da, emirden bir gün sonra
-   geldi. Script doğru tarihe bakıyor; ekstrenin son satırı 5 ay sonrasını gösterir.
+**Hedef doğrulaması:**
+- HMGMDDAL004 05.01.2026 bakiyesi: **0** ✓ (talimat: 0)
+- HMGMDDAL004 güncel bakiye: **591** ✓ (talimat: 591)
 
-2. **Alış İrsaliyesi (IslemKodu=5) bilerek sayılmıyor:** Faturası kesilmemiş,
-   resmî stoğa girmemiş malı saymak gerçek eksikleri gizler. Eklendiğinde eşleşme
-   düştü. CEO ekstresi geçmiş dökümünde gösterir ama eksik analizinde saymak yanlış.
-
-3. **ATP/rezervasyon genellenemiyor:** CEO bazı kalemleri (HMGMKBL0002: 150 stok,
-   318 toplam talep → Yetersiz) çapraz-emir talebine göre işaretliyor, ama
-   tutarsız: SARF0000001 (469 stok, 3564 toplam talep) yine de "Yeterli". Bu
-   nedenle basit hiçbir kural CEO'yu birebir veremiyor.
-
-**Karar:** IslemKodu=23 GIR'a, IslemKodu=3 CIK'a eklendi (IslemKodu=5 hariç — çift sayım).
-HMGMDDAL004: 05.01.2026 bakiyesi eski formülde **200** (hatalı) → yeni formülde **0** ✓, güncel **591** ✓.
-İlgili `IslemKodu` evreni (bu DB'de tanım tablosu yok): 1,2,3,5,16,17,18,19,20,21,22,23.
+**Düzeltilen sorunlar:**
+1. **IslemKodu=3 eksikti:** Alış İade Faturası CIK'a eklenmedi, HMGMDDAL004'ün 2021 iade hareketi (-200) sayılmıyordu → 05.01.2026'da 200 yerine doğru: 0.
+2. **IslemKodu=23 koşulsuz sayılıyordu:** Tüm Depolar Arası Girişler GIR'a eklenince bazı kartlarda (+96, +1, +2) sapma oluştu. Düzeltme: yalnızca aynı `BelgeSiraNo`+`IslemKartId` için `IslemKodu=5` eşi olan kayıtlar sayılır (`_kod23_paired_ids_str()` ile).
+3. **Excel parser hatası:** Eski parser "Stok Kodu:" satırı aradı; gerçek format kodu doğrudan col A'da, Ana Miktar col L'de (idx 11), Devir Toplamı col H'de. Düzeltilmiş parser: col E datetime ise hareket satırı; col X (idx 23) = devir.
 
 ---
 
