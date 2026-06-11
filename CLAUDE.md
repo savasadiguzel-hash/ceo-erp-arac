@@ -14,8 +14,9 @@
 ## Dağıtım
 
 - Exe adı: `dist/CEO-ERP-Araclar.exe`
-- Her exe derlemesinden sonra `config.json` → `dist/config.json` kopyalanmalı
-- Her push'ta `dist/CEO-ERP-Araclar.exe` ve `dist/config.json` birlikte gönderilmeli
+- **`dist/config.json` ASLA commit edilmez** (şifre içerir — .gitignore ile korunuyor)
+- Sadece `dist/config.sablon.json` commit edilir (boş kimlik bilgili örnek)
+- Her push'ta yalnızca `dist/CEO-ERP-Araclar.exe` gönderilir; `config.json` yerel kalır
 
 ## Proje
 

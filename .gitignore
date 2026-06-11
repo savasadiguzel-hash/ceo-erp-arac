@@ -11,10 +11,10 @@ build/
 # PyInstaller çıktıları
 /build/
 
-# dist klasörü: exe ve config.json dahil, geri kalanı hariç
+# dist klasörü: exe ve şablon dahil; config.json ASLA commit edilmez
 dist/*
 !dist/CEO-ERP-Araclar.exe
-!dist/config.json
+!dist/config.sablon.json
 
 # Virtual environment
 venv/
