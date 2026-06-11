@@ -38,7 +38,6 @@ _BTN_MOR = (
     "background:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #4a148c,stop:1 #7b1fa2);"
     "color:white;border-radius:6px;padding:8px 18px;font-weight:bold;font-size:12px;border:none;"
 )
-
 _AGAC_KOLONLAR = [
     "Malzeme Kodu",
     "Malzeme Adı",
