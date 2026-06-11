@@ -60,12 +60,13 @@
 
 - Aç → DB'ye otomatik bağlanır; "Devam Ediyor" emirler sol panelde listelenir
 - Emir seç → **Analiz Et** → sağ panelde eksik malzemeler BOM patlatmalı ağaç görünümünde
-- **Hat filtresi:** `HatTipi = 1` (ana üretim hattı; HatTipi=2 dahil edilmez)
+- **Hat filtresi:** `HatTipi IN (1, 2)` (ana üretim hattı + aksesuar grubu)
 
 ### Bakiye Formülü
 
 **GirenMiktar:**
-- `IslemKodu IN (1, 16, 20, 22)` — Alış Faturası, Üretimden Giriş, Sayım Fazlası, Devir Girişi
+- `IslemKodu IN (1, 16, 22)` — Alış Faturası, Üretimden Giriş, Devir Girişi
+  - ⚠️ `IslemKodu=20` (Sayım Fazlası) **sayılmaz** — CEO ERP saymıyor; sayılırsa bakiye şişer → false negative
 - `IslemKodu = 23 AND StokHareket.Id IN (paired_ids)` — Depolar Arası Giriş, **yalnızca irsaliye kökenli**
 
 **CikanMiktar:** `IslemKodu IN (2, 3, 6, 17, 18, 19, 21)` — Satış, Alış İade Faturası, Satış İrsaliyesi, Üretime Çıkış, Depolar Arası Çıkış, Sayım Eksiği, Fire

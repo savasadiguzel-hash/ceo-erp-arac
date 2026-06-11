@@ -8,6 +8,9 @@
 4. `ERP-OKUMA.md` güncelle
 5. `git add -A && git commit && git push`
 
+> **Bakiye/depo mantığına dokunan her değişiklikten sonra**
+> `python tools\mutabakat.py` çalıştır; eşleşme oranı düşerse commit etme.
+
 ## Dağıtım
 
 - Exe adı: `dist/CEO-ERP-Araclar.exe`
