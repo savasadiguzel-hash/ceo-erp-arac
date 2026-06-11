@@ -408,16 +408,16 @@ def uretim_emir_eksik_stok(conn, emir_id: int) -> list[dict]:
     ÜRETİM EMRİ TARİHİNDEKİ bakiyeyi hesaplayıp yetersiz olanları döner.
 
     Bakiye formülü (CEO ERP ile eşleşen):
-      GirenMiktar : IslemKodu IN (1, 16, 20, 22) AND Aktif=1 VEYA
+      GirenMiktar : IslemKodu IN (1, 16, 22) AND Aktif=1 VEYA
                     IslemKodu=23 AND eşli Alış İrsaliyesi (aynı BelgeSiraNo+IslemKartId) varsa
-        1=Alış Faturası, 16=Üretimden Giriş, 20=Sayım Fazlası, 22=Devir Girişi
+        1=Alış Faturası, 16=Üretimden Giriş, 22=Devir Girişi (20=Sayım Fazlası sayılmaz)
         23=Depolar Arası Giriş (sadece irsaliye kökenli; saf transferler netleşir)
       CikanMiktar : IslemKodu IN (2, 3, 6, 17, 18, 19, 21) AND Aktif=1
         2=Satış Faturası, 3=Alış İade Faturası, 6=Satış İrsaliyesi,
         17=Üretime Çıkış, 18=Depolar Arası Çıkış, 19=Sayım Eksiği, 21=Fire
       Not: 5=Alış İrsaliyesi sayılmaz (her zaman 1 fatura veya eşli 23 ile gelir)
       Tarih filtresi: BelgeTarihi <= UretimEmriTarihi
-      Hat filtresi  : HatTipi = 1 (ana üretim hattı)
+      Hat filtresi  : HatTipi IN (1, 2) (ana hat + aksesuar grubu)
 
     Her eleman: malzeme_kodu, malzeme_adi, ihtiyac, bakiye_emir_tarihi, eksik
     """
@@ -434,7 +434,7 @@ def uretim_emir_eksik_stok(conn, emir_id: int) -> list[dict]:
                 FROM UretimEmriHatPlani      uehp
                 JOIN UretimEmriHatPlaniGirdi uehpg ON uehpg.UretimEmriHatPlaniId = uehp.Id
                 WHERE uehp.UretimEmriId = ?
-                  AND uehp.HatTipi = 1
+                  AND uehp.HatTipi IN (1, 2)
                   AND uehpg.KartId IS NOT NULL
                   AND uehpg.TalepMiktar > 0
                 GROUP BY uehpg.KartId
@@ -443,7 +443,7 @@ def uretim_emir_eksik_stok(conn, emir_id: int) -> list[dict]:
                 SELECT
                     shd.IslemKartId,
                     SUM(CASE
-                        WHEN sh.IslemKodu IN (1, 16, 20, 22)             THEN  shd.Miktar
+                        WHEN sh.IslemKodu IN (1, 16, 22)                 THEN  shd.Miktar
                         WHEN sh.IslemKodu = 23 AND sh.Id IN ({k23})      THEN  shd.Miktar
                         WHEN sh.IslemKodu IN (2, 3, 6, 17, 18, 19, 21)   THEN -shd.Miktar
                         ELSE 0
@@ -518,7 +518,7 @@ def uretim_emir_bom_patlat(conn, emir_id: int) -> list[dict]:
             JOIN UretimEmriHatPlaniGirdi uehpg ON uehpg.UretimEmriHatPlaniId = uehp.Id
             JOIN StokKarti               sk     ON sk.Id = uehpg.KartId
             WHERE uehp.UretimEmriId   = ?
-              AND uehp.HatTipi        = 1
+              AND uehp.HatTipi IN (1, 2)
               AND uehpg.KartId        IS NOT NULL
               AND uehpg.TalepMiktar   > 0
             GROUP BY uehpg.KartId, sk.Kodu, sk.Adi
@@ -596,7 +596,7 @@ def uretim_emir_bom_patlat(conn, emir_id: int) -> list[dict]:
             cur.execute(f"""
                 SELECT shd.IslemKartId,
                        SUM(CASE
-                           WHEN sh.IslemKodu IN (1, 16, 20, 22)             THEN  shd.Miktar
+                           WHEN sh.IslemKodu IN (1, 16, 22)                 THEN  shd.Miktar
                            WHEN sh.IslemKodu = 23 AND sh.Id IN ({k23})      THEN  shd.Miktar
                            WHEN sh.IslemKodu IN (2, 3, 6, 17, 18, 19, 21)   THEN -shd.Miktar
                            ELSE 0
@@ -629,7 +629,7 @@ def uretim_emir_bom_patlat(conn, emir_id: int) -> list[dict]:
                 cur.execute(f"""
                     SELECT shd.IslemKartId,
                            SUM(CASE
-                               WHEN sh.IslemKodu IN (1, 16, 20, 22)             THEN  shd.Miktar
+                               WHEN sh.IslemKodu IN (1, 16, 22)                 THEN  shd.Miktar
                                WHEN sh.IslemKodu = 23 AND sh.Id IN ({k23})      THEN  shd.Miktar
                                WHEN sh.IslemKodu IN (2, 3, 6, 17, 18, 19, 21)   THEN -shd.Miktar
                                ELSE 0
@@ -767,7 +767,7 @@ def muhasebe_eksik_raporu_olustur(conn) -> list[dict]:
     """
     from collections import defaultdict
 
-    _GIR = (1, 16, 20, 22)
+    _GIR = (1, 16, 22)
     _CIK = (2, 3, 6, 17, 18, 19, 21)
     _YIG = 500
     k23   = _kod23_paired_ids_str(conn)
@@ -819,7 +819,7 @@ def muhasebe_eksik_raporu_olustur(conn) -> list[dict]:
                     ON uehpg.UretimEmriHatPlaniId = uehp.Id
                 JOIN StokKarti sk ON sk.Id = uehpg.KartId
                 WHERE uehp.UretimEmriId IN ({yer})
-                  AND uehp.HatTipi       = 1
+                  AND uehp.HatTipi IN (1, 2)
                   AND uehpg.KartId       IS NOT NULL
                   AND uehpg.TalepMiktar  > 0
                 GROUP BY uehp.UretimEmriId, uehpg.KartId, sk.Kodu, sk.Adi
@@ -1014,7 +1014,6 @@ def muhasebe_eksik_raporu_olustur(conn) -> list[dict]:
             rezervasyon[kid] = onceki_rez + ihtiyac
 
     return satirlar
-
 
 # ── Araç 5: Satış Faturaları ──────────────────────────────────────────────────
 
