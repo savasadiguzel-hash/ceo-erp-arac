@@ -443,7 +443,7 @@ def uretim_emir_eksik_stok(conn, emir_id: int) -> list[dict]:
                     SUM(CASE
                         WHEN sh.IslemKodu IN (1,4,5,8,15,16,20,22,26,29)
                             THEN (shd.Miktar - ISNULL(shd_f.Miktar, 0))
-                        WHEN sh.IslemKodu IN (2,3,6,7,17,18,19,21,23,24,28)
+                        WHEN sh.IslemKodu IN (2,3,6,7,17,18,19,21,24,28)
                             THEN -(shd.Miktar - ISNULL(shd_f.Miktar, 0))
                         ELSE 0
                     END) AS Bakiye
@@ -451,7 +451,10 @@ def uretim_emir_eksik_stok(conn, emir_id: int) -> list[dict]:
                 JOIN StokHareket sh ON sh.Id = shd.HareketId
                 LEFT JOIN StokHareketDetay shd_f ON shd_f.Id = shd.FaturaDetayId
                 WHERE shd.IslemKartId IN (SELECT KartId FROM ToplamTalep)
+                  AND shd.Turu = 1 AND shd.Aktif = 1
                   AND sh.Aktif = 1
+                  AND sh.FaturaId IS NULL
+                  AND sh.IslemKodu NOT IN (9,10,11,12,13,14,25,27,23)
                   AND CAST(sh.BelgeTarihi AS DATE) <= (SELECT EmirTarihi FROM EmirBilgi)
                 GROUP BY shd.IslemKartId
             )
@@ -597,7 +600,7 @@ def uretim_emir_bom_patlat(conn, emir_id: int) -> list[dict]:
                        SUM(CASE
                            WHEN sh.IslemKodu IN (1,4,5,8,15,16,20,22,26,29)
                                THEN (shd.Miktar - ISNULL(shd_f.Miktar, 0))
-                           WHEN sh.IslemKodu IN (2,3,6,7,17,18,19,21,23,24,28)
+                           WHEN sh.IslemKodu IN (2,3,6,7,17,18,19,21,24,28)
                                THEN -(shd.Miktar - ISNULL(shd_f.Miktar, 0))
                            ELSE 0
                        END) AS Bakiye
@@ -605,7 +608,10 @@ def uretim_emir_bom_patlat(conn, emir_id: int) -> list[dict]:
                 JOIN StokHareket sh ON sh.Id = shd.HareketId
                 LEFT JOIN StokHareketDetay shd_f ON shd_f.Id = shd.FaturaDetayId
                 WHERE shd.IslemKartId IN ({yer})
+                  AND shd.Turu = 1 AND shd.Aktif = 1
                   AND sh.Aktif = 1
+                  AND sh.FaturaId IS NULL
+                  AND sh.IslemKodu NOT IN (9,10,11,12,13,14,25,27,23)
                   AND CAST(sh.BelgeTarihi AS DATE) <= CAST(? AS DATE)
                 GROUP BY shd.IslemKartId
             """, *tuple(parca), emir_tarihi)
@@ -632,7 +638,7 @@ def uretim_emir_bom_patlat(conn, emir_id: int) -> list[dict]:
                            SUM(CASE
                                WHEN sh.IslemKodu IN (1,4,5,8,15,16,20,22,26,29)
                                    THEN (shd.Miktar - ISNULL(shd_f.Miktar, 0))
-                               WHEN sh.IslemKodu IN (2,3,6,7,17,18,19,21,23,24,28)
+                               WHEN sh.IslemKodu IN (2,3,6,7,17,18,19,21,24,28)
                                    THEN -(shd.Miktar - ISNULL(shd_f.Miktar, 0))
                                ELSE 0
                            END)
@@ -640,7 +646,10 @@ def uretim_emir_bom_patlat(conn, emir_id: int) -> list[dict]:
                     JOIN StokHareket sh ON sh.Id = shd.HareketId
                     LEFT JOIN StokHareketDetay shd_f ON shd_f.Id = shd.FaturaDetayId
                     WHERE shd.IslemKartId IN ({yer})
+                      AND shd.Turu = 1 AND shd.Aktif = 1
                       AND sh.Aktif = 1
+                      AND sh.FaturaId IS NULL
+                      AND sh.IslemKodu NOT IN (9,10,11,12,13,14,25,27,23)
                       AND sh.DepoKartId = ?
                       AND CAST(sh.BelgeTarihi AS DATE) <= CAST(? AS DATE)
                     GROUP BY shd.IslemKartId
@@ -771,7 +780,7 @@ def muhasebe_eksik_raporu_olustur(conn) -> list[dict]:
     from collections import defaultdict
 
     _GIR = (1, 4, 5, 8, 15, 16, 20, 22, 26, 29)
-    _CIK = (2, 3, 6, 7, 17, 18, 19, 21, 23, 24, 28)
+    _CIK = (2, 3, 6, 7, 17, 18, 19, 21, 24, 28)   # k23 hariç — CEO fnStokBakiyeGetir
     _YIG = 500
     gir_s = ','.join(str(x) for x in _GIR)
     cik_s = ','.join(str(x) for x in _CIK)
@@ -944,7 +953,10 @@ def muhasebe_eksik_raporu_olustur(conn) -> list[dict]:
                     JOIN StokHareket sh ON sh.Id = shd.HareketId
                     LEFT JOIN StokHareketDetay shd_f ON shd_f.Id = shd.FaturaDetayId
                     WHERE shd.IslemKartId IN ({yer})
+                      AND shd.Turu = 1 AND shd.Aktif = 1
                       AND sh.Aktif = 1
+                      AND sh.FaturaId IS NULL
+                      AND sh.IslemKodu NOT IN (9,10,11,12,13,14,25,27,23)
                       AND CAST(sh.BelgeTarihi AS DATE) <= CAST(? AS DATE)
                     GROUP BY shd.IslemKartId
                 """, *tuple(parca), tarih)
@@ -974,7 +986,10 @@ def muhasebe_eksik_raporu_olustur(conn) -> list[dict]:
                         JOIN StokHareket sh ON sh.Id = shd.HareketId
                         LEFT JOIN StokHareketDetay shd_f ON shd_f.Id = shd.FaturaDetayId
                         WHERE shd.IslemKartId IN ({yer})
+                          AND shd.Turu = 1 AND shd.Aktif = 1
                           AND sh.Aktif = 1
+                          AND sh.FaturaId IS NULL
+                          AND sh.IslemKodu NOT IN (9,10,11,12,13,14,25,27,23)
                           AND sh.DepoKartId = ?
                           AND CAST(sh.BelgeTarihi AS DATE) <= CAST(? AS DATE)
                         GROUP BY shd.IslemKartId

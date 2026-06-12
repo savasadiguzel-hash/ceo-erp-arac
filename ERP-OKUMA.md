@@ -63,7 +63,9 @@
 - Emir seç → **Analiz Et** → sağ panelde eksik malzemeler BOM patlatmalı ağaç görünümünde
 - **Hat filtresi:** `HatTipi IN (1, 2)` (ana üretim hattı + aksesuar grubu)
 
-### Bakiye Formülü (Metot E — CEO StokHareketIsGiris uyumlu)
+### Bakiye Formülü (CEO `fnStokBakiyeGetir` inline — tarih filtreli)
+
+CEO ERP'nin kendi `fnStokBakiyeGetir` scalar fonksiyonunun mantığı, tarih filtresi eklenerek Python'dan çağrılabilir hâle getirildi.
 
 **GirenMiktar:** `IslemKodu IN (1, 4, 5, 8, 15, 16, 20, 22, 26, 29)`
 
@@ -96,29 +98,31 @@
 | 24 | Konsinye Çıkış |
 | 28 | Diğer Çıkış |
 
-**FaturaDetayId çift-sayım önleme:**
+**CEO `fnStokBakiyeGetir` SQL (tarih filtreli inline):**
 ```sql
 SUM(CASE
     WHEN sh.IslemKodu IN (1,4,5,8,15,16,20,22,26,29)
         THEN (shd.Miktar - ISNULL(shd_f.Miktar, 0))
-    WHEN sh.IslemKodu IN (2,3,6,7,17,18,19,21,23,24,28)
+    WHEN sh.IslemKodu IN (2,3,6,7,17,18,19,21,24,28)
         THEN -(shd.Miktar - ISNULL(shd_f.Miktar, 0))
     ELSE 0
 END)
 FROM StokHareketDetay shd
 JOIN StokHareket sh ON sh.Id = shd.HareketId
 LEFT JOIN StokHareketDetay shd_f ON shd_f.Id = shd.FaturaDetayId
+WHERE shd.Turu = 1 AND shd.Aktif = 1
+  AND sh.Aktif = 1
+  AND sh.FaturaId IS NULL
+  AND sh.IslemKodu NOT IN (9,10,11,12,13,14,25,27,23)
+  AND CAST(sh.BelgeTarihi AS DATE) <= CAST(? AS DATE)
 ```
 
-- k5 (Alış İrsaliyesi) `FaturaDetayId` bağlıysa `shd_f.Miktar = shd.Miktar` → net = 0 (faturalı irsaliye sayılmaz)
-- k6 (Satış İrsaliyesi) için de aynı mekanizma
+**Üç kilit kural (CEO'dan alınmış):**
+1. `sh.FaturaId IS NULL` — faturalaşmış irsaliyeler (k5/k6 where FaturaId IS NOT NULL) otomatik hariç, çift sayım engellenir
+2. `NOT IN (9,10,11,12,13,14,25,27,23)` — konsinye hareketler + k23 (Depolar Arası Giriş) hariç; k23 toplam şirket stoğunu değiştirmez
+3. `FaturaDetayId` deduction — henüz faturalaşmamış ama kısmi ödenen irsaliyeler için
 
 **Tarih filtresi:** `BelgeTarihi <= UretimEmriTarihi`
-
-**IslemKodu=23 önemli not:**
-- CEO ERP `StokHareketIsGiris` fonksiyonu k23'ü ÇIKIŞ olarak sınıflandırır
-- DB'deki k23 = alıcı depoya "Depolar Arası Giriş" kaydı; kaynak depoda k18 eşi genellikle bulunmaz
-- Toplam şirket bakiyesi: k23 çıkış (-) sayılır → muhafazakâr (fazla stok gösterme riski azalır)
 
 ### BOM Patlatma
 
@@ -157,17 +161,25 @@ Referans: `dist/Stok Kartı Ekstresi_12062026190248.xlsx` (932 kart). **Metot E*
 | 1234| 17/20 | %85  | 09-3782-91-08(-5), GMP-110-230025(+1), MAX98357A(+6) |
 | 5678| 19/20 | **%95** | GMP-101-230035(+5) |
 
-**Ortalama eşleşme:** ~%89 (eski formül %60-70'di)
+**Ortalama eşleşme:** ~%92 (Metot E %89, eski formül %60-70'di)
+
+| Seed | Metot E | CEO formülü |
+|---|---|---|
+| 42 | 16/20 (%80) | **17/20 (%85)** |
+| 99 | 18/20 (%90) | **20/20 (%100)** |
+| 777 | 19/20 (%95) | 18/20 (%90) |
+| 1234 | 17/20 (%85) | **18/20 (%90)** |
+| 5678 | 19/20 (%95) | 19/20 (%95) |
 
 **Kalan uyumsuzlukların kök nedeni:**
-- CEO stok kartı ekstresi **depo-spesifik kalan** gösterir; bizim formülümüz **toplam şirket bakiyesi** hesaplar
-- "Depolar Arası Transfer" (k23) içeren kartlarda CEO extract, aynı belgeyi iki satır gösterir (+x giriş, -x çıkış) → CEO net = 0; DB'de yalnızca bir taraf (k23) kayıtlı
-- Bu fark metodolojik: üretim planlaması için toplam şirket bakiyesi doğru yaklaşım
-- MAL215097011E3: CEO extract'te Haz 2026'da 4 k23 hareketi var, DB'de yok (veri senkron sorunu)
+- CEO stok kartı ekstresi **depo+period spesifik** bakiye gösterir; `fnStokBakiyeGetir` (ve bizim formülümüz) **toplam şirket all-time** bakiyesi hesaplar
+- Fark pozitif (+): bizim formülümüz CEO extract'tan fazla stok gösteriyor → DB'de olmayan June 2026 hareketleri veya depo senkron sorunu
+- MAL215097011E3: CEO extract'te Haz 2026'da k23 hareketleri var, DB'de yok (veri senkron sorunu)
 
-**Önceki formülden fark:**
-- Eski: `IslemKodu IN (1,16,20,22)` giriş — k5/k23/k4 eksikti, `_kod23_paired_ids_str()` dynamic sorgusu
-- Yeni (Metot E): CEO `StokHareketIsGiris` sign map + `FaturaDetayId` çift-sayım önleme, k23 her zaman çıkış
+**Formül evrimi:**
+- v1 (eski): `IslemKodu IN (1,16,20,22)` — k5/k4/k20 eksikti
+- v2 (Metot E): CEO `StokHareketIsGiris` sign map + k23 çıkış
+- **v3 (güncel)**: CEO `fnStokBakiyeGetir` EXACT inline — `FaturaId IS NULL` + `NOT IN (9..23)` + `shd.Turu=1`
 
 ---
 

@@ -93,7 +93,7 @@ for seed in [42, 99, 777, 1234, 5678]:
                SUM(CASE
                    WHEN sh.IslemKodu IN (1,4,5,8,15,16,20,22,26,29)
                        THEN (shd.Miktar - ISNULL(shd_f.Miktar, 0))
-                   WHEN sh.IslemKodu IN (2,3,6,7,17,18,19,21,23,24,28)
+                   WHEN sh.IslemKodu IN (2,3,6,7,17,18,19,21,24,28)
                        THEN -(shd.Miktar - ISNULL(shd_f.Miktar, 0))
                    ELSE 0
                END) AS Bakiye
@@ -101,7 +101,10 @@ for seed in [42, 99, 777, 1234, 5678]:
         JOIN StokHareket sh ON sh.Id = shd.HareketId
         LEFT JOIN StokHareketDetay shd_f ON shd_f.Id = shd.FaturaDetayId
         WHERE shd.IslemKartId IN ({yer_ids})
+          AND shd.Turu = 1 AND shd.Aktif = 1
           AND sh.Aktif = 1
+          AND sh.FaturaId IS NULL
+          AND sh.IslemKodu NOT IN (9,10,11,12,13,14,25,27,23)
           AND CAST(sh.BelgeTarihi AS DATE) <= '2026-06-12'
         GROUP BY shd.IslemKartId
     """, *kid_list)
