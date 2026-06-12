@@ -1,5 +1,5 @@
 from PyQt5.QtWidgets import (
-    QMainWindow, QWidget, QVBoxLayout, QTabWidget, QStatusBar,
+    QMainWindow, QWidget, QVBoxLayout, QTabWidget, QStatusBar, QPushButton,
 )
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QFont
@@ -12,7 +12,6 @@ from ui.tab_erp_aktar           import TabErpAktar
 from ui.tab_satis_faturalari    import SatisFaturalariTab
 from ui.tab_uretim_raporu       import UretimRaporuTab
 from ui.tab_fatura_eslestir     import FaturaEslestirTab
-from ui.tab_ayarlar             import TabAyarlar
 
 
 class AnaPencere(QMainWindow):
@@ -42,7 +41,6 @@ class AnaPencere(QMainWindow):
         self.satis_tab   = SatisFaturalariTab()
         self.uretim_tab  = UretimRaporuTab()
         self.fatura_eslestir_tab = FaturaEslestirTab()
-        self.ayarlar_tab = TabAyarlar()
 
         self.tabs.addTab(self.mamul_tab,   "🔗  Mamül Ağacı")
         self.tabs.addTab(self.maliyet_tab, "💰  Maliyet")
@@ -51,7 +49,19 @@ class AnaPencere(QMainWindow):
         self.tabs.addTab(self.satis_tab,   "🧾  Satış Faturaları")
         self.tabs.addTab(self.uretim_tab,  "🏭  Üretim Eksik Stok")
         self.tabs.addTab(self.fatura_eslestir_tab, "📋  Fatura Eşleştir")
-        self.tabs.addTab(self.ayarlar_tab, "⚙  Ayarlar & Hakkında")
+
+        # ── Ayarlar köşe butonu (sekme çubuğu sağ üstü) ─────────────────────
+        self._ayarlar_btn = QPushButton("⚙")
+        self._ayarlar_btn.setToolTip("Ayarlar & Hakkında")
+        self._ayarlar_btn.setFixedSize(38, 34)
+        self._ayarlar_btn.setStyleSheet(
+            "QPushButton{background:#c5cae9;color:#1a237e;border:none;"
+            "border-radius:5px;font-size:18px;font-weight:bold;}"
+            "QPushButton:hover{background:#9fa8da;}"
+            "QPushButton:pressed{background:#7986cb;}"
+        )
+        self._ayarlar_btn.clicked.connect(self._ayarlar_ac)
+        self.tabs.setCornerWidget(self._ayarlar_btn, Qt.TopRightCorner)
 
         # ── sinyal bağlantıları ──────────────────────────────────────────────
         self.mamul_tab.durum_guncelle.connect(self._durum)
@@ -80,6 +90,11 @@ class AnaPencere(QMainWindow):
 
     def _durum(self, msg: str):
         self.sb.showMessage(msg)
+
+    def _ayarlar_ac(self):
+        from ui.tab_ayarlar import AyarlarDialog
+        dlg = AyarlarDialog(self)
+        dlg.exec_()
 
     def _sw_bitti(self, success: bool, parts: list, _err: str):
         """SW Kodlama tamamlandığında Stok Kartı sekmesini günceller."""

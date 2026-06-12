@@ -1,14 +1,14 @@
-"""tab_ayarlar.py — Ayarlar & Hakkında sekmesi."""
+"""tab_ayarlar.py — Ayarlar & Hakkında diyaloğu."""
 from PyQt5.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QGroupBox,
-    QLineEdit, QPushButton, QScrollArea, QFrame, QSizePolicy,
+    QDialog, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QGroupBox,
+    QLineEdit, QPushButton, QScrollArea, QFrame, QDialogButtonBox,
 )
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QFont
 
 from config import gemini_api_key_kaydet, gemini_api_key_oku
 
-_UYGULAMA_SURUMU = "1.0.0"
+_SURUM = "1.0.0"
 
 _HAKKINDA_METNI = """
 <b>CEO ERP Araçları</b> — Üretim ve Satınalma Yönetim Platformu<br><br>
@@ -25,34 +25,37 @@ işlevlerini tek bir arayüzde bir araya getirir.<br><br>
 <b>Bağlantı:</b> SQL Server · WIN-3FATBI9RQAA\\CEO1 · DATABASE 504<br>
 <b>Platform:</b> Windows 11 · Python 3 · PyQt5<br><br>
 
-<i>Sürüm {surum}</i>
-""".strip().format(surum=_UYGULAMA_SURUMU)
+<i>Sürüm {v}</i>
+""".strip().format(v=_SURUM)
 
 
-class TabAyarlar(QWidget):
+class AyarlarDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setWindowTitle("Ayarlar & Hakkında")
+        self.setMinimumWidth(560)
+        self.setModal(True)
         self._build_ui()
 
     def _build_ui(self):
-        dis = QVBoxLayout(self)
-        dis.setContentsMargins(0, 0, 0, 0)
-
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.NoFrame)
-
-        ic = QWidget()
-        lay = QVBoxLayout(ic)
-        lay.setContentsMargins(32, 28, 32, 28)
-        lay.setSpacing(20)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(20, 20, 20, 16)
+        lay.setSpacing(16)
 
         lay.addWidget(self._ayarlar_grubu())
         lay.addWidget(self._hakkinda_grubu())
-        lay.addStretch()
 
-        scroll.setWidget(ic)
-        dis.addWidget(scroll)
+        kapat = QPushButton("Kapat")
+        kapat.setFixedHeight(34)
+        kapat.setStyleSheet(
+            "background:#546e7a;color:white;border-radius:6px;"
+            "padding:0 24px;font-weight:bold;font-size:12px;border:none;"
+        )
+        kapat.clicked.connect(self.accept)
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        btn_row.addWidget(kapat)
+        lay.addLayout(btn_row)
 
     # ── Gemini API Key ─────────────────────────────────────────────────────────
 
@@ -88,39 +91,40 @@ class TabAyarlar(QWidget):
         self._goster_btn.setFixedSize(34, 34)
         self._goster_btn.setCheckable(True)
         self._goster_btn.setStyleSheet(
-            "background:#e8eaf6;color:#3949ab;border-radius:6px;"
-            "font-size:16px;border:none;"
+            "QPushButton{background:#e8eaf6;color:#3949ab;border-radius:6px;"
+            "font-size:16px;border:none;}"
+            "QPushButton:checked{background:#c5cae9;}"
         )
-        self._goster_btn.toggled.connect(self._goster_toggled)
+        self._goster_btn.toggled.connect(
+            lambda acik: self._key_input.setEchoMode(
+                QLineEdit.Normal if acik else QLineEdit.Password
+            )
+        )
         satir.addWidget(self._goster_btn)
 
         kaydet_btn = QPushButton("💾  Kaydet")
         kaydet_btn.setFixedHeight(34)
         kaydet_btn.setStyleSheet(
-            "background:qlineargradient(x1:0,y1:0,x2:1,y2:0,"
-            "stop:0 #1565c0,stop:1 #1976d2);"
-            "color:white;border-radius:6px;padding:0 18px;"
-            "font-weight:bold;font-size:12px;border:none;"
+            "QPushButton{background:#1565c0;color:white;border-radius:6px;"
+            "padding:0 18px;font-weight:bold;font-size:12px;border:none;}"
+            "QPushButton:hover{background:#1976d2;}"
         )
         kaydet_btn.clicked.connect(self._kaydet)
         satir.addWidget(kaydet_btn)
 
-        sil_btn = QPushButton("🗑  Sil")
-        sil_btn.setFixedHeight(34)
+        sil_btn = QPushButton("🗑")
+        sil_btn.setFixedSize(34, 34)
+        sil_btn.setToolTip("API anahtarını sil")
         sil_btn.setStyleSheet(
-            "background:#ef5350;color:white;border-radius:6px;"
-            "padding:0 14px;font-weight:bold;font-size:12px;border:none;"
+            "QPushButton{background:#ef5350;color:white;border-radius:6px;"
+            "font-size:16px;border:none;}"
+            "QPushButton:hover{background:#e53935;}"
         )
         sil_btn.clicked.connect(self._sil)
         satir.addWidget(sil_btn)
 
         lay.addLayout(satir)
         return grp
-
-    def _goster_toggled(self, acik: bool):
-        self._key_input.setEchoMode(
-            QLineEdit.Normal if acik else QLineEdit.Password
-        )
 
     def _kaydet(self):
         key = self._key_input.text().strip()
@@ -152,11 +156,11 @@ class TabAyarlar(QWidget):
         lay = QVBoxLayout(grp)
         lay.setSpacing(6)
 
-        logo_lbl = QLabel("⚙  CEO ERP Araçları")
-        logo_lbl.setStyleSheet(
-            "font-size:22px;font-weight:bold;color:#1a237e;padding:6px 0;"
+        baslik = QLabel("⚙  CEO ERP Araçları")
+        baslik.setStyleSheet(
+            "font-size:18px;font-weight:bold;color:#1a237e;padding:4px 0;"
         )
-        lay.addWidget(logo_lbl)
+        lay.addWidget(baslik)
 
         ayrac = QFrame()
         ayrac.setFrameShape(QFrame.HLine)
@@ -166,7 +170,7 @@ class TabAyarlar(QWidget):
         metin = QLabel(_HAKKINDA_METNI)
         metin.setTextFormat(Qt.RichText)
         metin.setWordWrap(True)
-        metin.setStyleSheet("color:#37474f;font-size:12px;line-height:1.6;padding:4px 0;")
+        metin.setStyleSheet("color:#37474f;font-size:12px;padding:4px 0;")
         metin.setOpenExternalLinks(True)
         lay.addWidget(metin)
 
