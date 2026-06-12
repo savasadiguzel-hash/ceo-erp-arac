@@ -31,11 +31,12 @@ _SCHEMA_PROMPT = (
 
 
 def _api_key() -> str:
-    key = os.environ.get("GEMINI_API_KEY", "")
+    from config import gemini_api_key_oku
+    key = gemini_api_key_oku()
     if not key:
         raise ValueError(
-            "GEMINI_API_KEY bulunamadı.\n"
-            "PDF/görsel parse için .env dosyasına GEMINI_API_KEY eklenmeli."
+            "Gemini API anahtarı bulunamadı.\n"
+            "Lütfen Ayarlar & Hakkında sekmesinden API anahtarınızı girin."
         )
     return key
 

@@ -12,6 +12,7 @@ from ui.tab_erp_aktar           import TabErpAktar
 from ui.tab_satis_faturalari    import SatisFaturalariTab
 from ui.tab_uretim_raporu       import UretimRaporuTab
 from ui.tab_fatura_eslestir     import FaturaEslestirTab
+from ui.tab_ayarlar             import TabAyarlar
 
 
 class AnaPencere(QMainWindow):
@@ -41,6 +42,7 @@ class AnaPencere(QMainWindow):
         self.satis_tab   = SatisFaturalariTab()
         self.uretim_tab  = UretimRaporuTab()
         self.fatura_eslestir_tab = FaturaEslestirTab()
+        self.ayarlar_tab = TabAyarlar()
 
         self.tabs.addTab(self.mamul_tab,   "🔗  Mamül Ağacı")
         self.tabs.addTab(self.maliyet_tab, "💰  Maliyet")
@@ -49,6 +51,7 @@ class AnaPencere(QMainWindow):
         self.tabs.addTab(self.satis_tab,   "🧾  Satış Faturaları")
         self.tabs.addTab(self.uretim_tab,  "🏭  Üretim Eksik Stok")
         self.tabs.addTab(self.fatura_eslestir_tab, "📋  Fatura Eşleştir")
+        self.tabs.addTab(self.ayarlar_tab, "⚙  Ayarlar & Hakkında")
 
         # ── sinyal bağlantıları ──────────────────────────────────────────────
         self.mamul_tab.durum_guncelle.connect(self._durum)

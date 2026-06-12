@@ -65,6 +65,24 @@ def config_kaydet(sunucu: str, veritabani: str, kullanici: str, sifre: str) -> N
     logging.info("Baglanti bilgileri config.json'a kaydedildi.")
 
 
+def gemini_api_key_kaydet(key: str) -> None:
+    """Gemini API anahtarını config.json'a yazar; base64 ile gizlenir."""
+    data = _cfg_oku()
+    data["gemini_api_key_enc"] = base64.b64encode(key.strip().encode()).decode() if key.strip() else ""
+    _cfg_yaz(data)
+    logging.info("Gemini API anahtari config.json'a kaydedildi.")
+
+
+def gemini_api_key_oku() -> str:
+    """Gemini API anahtarını config.json'dan okur; yoksa GEMINI_API_KEY env var'ına bakar."""
+    import os
+    data = _cfg_oku()
+    enc = data.get("gemini_api_key_enc", "")
+    if enc:
+        return _decode(enc)
+    return os.environ.get("GEMINI_API_KEY", "")
+
+
 _cfg = _cfg_oku()
 
 DB_DEFAULTS: dict = {
