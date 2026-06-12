@@ -1,5 +1,5 @@
 from PyQt5.QtWidgets import (
-    QMainWindow, QWidget, QVBoxLayout, QTabWidget, QStatusBar, QPushButton,
+    QMainWindow, QWidget, QVBoxLayout, QTabWidget, QStatusBar,
 )
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QFont
@@ -50,18 +50,26 @@ class AnaPencere(QMainWindow):
         self.tabs.addTab(self.uretim_tab,  "🏭  Üretim Eksik Stok")
         self.tabs.addTab(self.fatura_eslestir_tab, "📋  Fatura Eşleştir")
 
-        # ── Ayarlar köşe butonu (sekme çubuğu sağ üstü) ─────────────────────
-        self._ayarlar_btn = QPushButton("⚙")
-        self._ayarlar_btn.setToolTip("Ayarlar & Hakkında")
-        self._ayarlar_btn.setFixedSize(38, 34)
-        self._ayarlar_btn.setStyleSheet(
-            "QPushButton{background:#c5cae9;color:#1a237e;border:none;"
-            "border-radius:5px;font-size:18px;font-weight:bold;}"
-            "QPushButton:hover{background:#9fa8da;}"
-            "QPushButton:pressed{background:#7986cb;}"
+        # ── Menü çubuğu ─────────────────────────────────────────────────────
+        menubar = self.menuBar()
+        menubar.setStyleSheet(
+            "QMenuBar{background:#e8eaf6;color:#3949ab;font-size:12px;"
+            "font-weight:bold;padding:2px 4px;border-bottom:1px solid #c5cae9;}"
+            "QMenuBar::item{padding:4px 14px;border-radius:4px;}"
+            "QMenuBar::item:selected{background:#c5cae9;color:#1a237e;}"
+            "QMenu{background:white;border:1px solid #c5cae9;border-radius:6px;"
+            "padding:4px;font-size:12px;}"
+            "QMenu::item{padding:7px 20px;border-radius:4px;color:#37474f;}"
+            "QMenu::item:selected{background:#e8eaf6;color:#1a237e;}"
         )
-        self._ayarlar_btn.clicked.connect(self._ayarlar_ac)
-        self.tabs.setCornerWidget(self._ayarlar_btn, Qt.TopRightCorner)
+
+        ayarlar_menu = menubar.addMenu("⚙  Ayarlar")
+        ayarlar_eylem = ayarlar_menu.addAction("Gemini API Anahtarı")
+        ayarlar_eylem.triggered.connect(self._ayarlar_ac)
+
+        hakkinda_menu = menubar.addMenu("ℹ  Hakkında")
+        hakkinda_eylem = hakkinda_menu.addAction("CEO ERP Araçları Hakkında")
+        hakkinda_eylem.triggered.connect(self._hakkinda_ac)
 
         # ── sinyal bağlantıları ──────────────────────────────────────────────
         self.mamul_tab.durum_guncelle.connect(self._durum)
@@ -93,8 +101,11 @@ class AnaPencere(QMainWindow):
 
     def _ayarlar_ac(self):
         from ui.tab_ayarlar import AyarlarDialog
-        dlg = AyarlarDialog(self)
-        dlg.exec_()
+        AyarlarDialog(self).exec_()
+
+    def _hakkinda_ac(self):
+        from ui.tab_ayarlar import HakkindaDialog
+        HakkindaDialog(self).exec_()
 
     def _sw_bitti(self, success: bool, parts: list, _err: str):
         """SW Kodlama tamamlandığında Stok Kartı sekmesini günceller."""
