@@ -407,21 +407,19 @@ def uretim_emir_eksik_stok(conn, emir_id: int) -> list[dict]:
     Belirli bir üretim emrinin HatTipi=1 hat planındaki malzemeleri için
     ÜRETİM EMRİ TARİHİNDEKİ bakiyeyi hesaplayıp yetersiz olanları döner.
 
-    Bakiye formülü (CEO ERP ile eşleşen):
-      GirenMiktar : IslemKodu IN (1, 16, 22) AND Aktif=1 VEYA
-                    IslemKodu=23 AND eşli Alış İrsaliyesi (aynı BelgeSiraNo+IslemKartId) varsa
-        1=Alış Faturası, 16=Üretimden Giriş, 22=Devir Girişi (20=Sayım Fazlası sayılmaz)
-        23=Depolar Arası Giriş (sadece irsaliye kökenli; saf transferler netleşir)
-      CikanMiktar : IslemKodu IN (2, 3, 6, 17, 18, 19, 21) AND Aktif=1
-        2=Satış Faturası, 3=Alış İade Faturası, 6=Satış İrsaliyesi,
+    Bakiye formülü (CEO ERP StokHareketIsGiris + FaturaDetayId çift-sayım önleme):
+      GirenMiktar : IslemKodu IN (1,4,5,8,15,16,20,22,26,29)
+        1=Alış Faturası, 4=Satış İade, 5=Alış İrsaliyesi (FaturaDetayId ile net=0 faturalıysa)
+        16=Üretimden Giriş, 20=Sayım Fazlası, 22=Devir Girişi
+      CikanMiktar : IslemKodu IN (2,3,6,7,17,18,19,21,23,24,28)
+        2=Satış Faturası, 6=Satış İrsaliyesi (FaturaDetayId ile net=0 faturalıysa)
         17=Üretime Çıkış, 18=Depolar Arası Çıkış, 19=Sayım Eksiği, 21=Fire
-      Not: 5=Alış İrsaliyesi sayılmaz (her zaman 1 fatura veya eşli 23 ile gelir)
+        23=Depolar Arası Giriş (CEO'da çıkış sayılır — toplam bakiyede düşer)
       Tarih filtresi: BelgeTarihi <= UretimEmriTarihi
       Hat filtresi  : HatTipi IN (1, 2) (ana hat + aksesuar grubu)
 
     Her eleman: malzeme_kodu, malzeme_adi, ihtiyac, bakiye_emir_tarihi, eksik
     """
-    k23 = _kod23_paired_ids_str(conn)
     with cursor_ctx(conn) as cur:
         cur.execute(f"""
             WITH EmirBilgi AS (
@@ -443,13 +441,15 @@ def uretim_emir_eksik_stok(conn, emir_id: int) -> list[dict]:
                 SELECT
                     shd.IslemKartId,
                     SUM(CASE
-                        WHEN sh.IslemKodu IN (1, 16, 22)                 THEN  shd.Miktar
-                        WHEN sh.IslemKodu = 23 AND sh.Id IN ({k23})      THEN  shd.Miktar
-                        WHEN sh.IslemKodu IN (2, 3, 6, 17, 18, 19, 21)   THEN -shd.Miktar
+                        WHEN sh.IslemKodu IN (1,4,5,8,15,16,20,22,26,29)
+                            THEN (shd.Miktar - ISNULL(shd_f.Miktar, 0))
+                        WHEN sh.IslemKodu IN (2,3,6,7,17,18,19,21,23,24,28)
+                            THEN -(shd.Miktar - ISNULL(shd_f.Miktar, 0))
                         ELSE 0
                     END) AS Bakiye
                 FROM StokHareketDetay shd
                 JOIN StokHareket sh ON sh.Id = shd.HareketId
+                LEFT JOIN StokHareketDetay shd_f ON shd_f.Id = shd.FaturaDetayId
                 WHERE shd.IslemKartId IN (SELECT KartId FROM ToplamTalep)
                   AND sh.Aktif = 1
                   AND CAST(sh.BelgeTarihi AS DATE) <= (SELECT EmirTarihi FROM EmirBilgi)
@@ -585,7 +585,6 @@ def uretim_emir_bom_patlat(conn, emir_id: int) -> list[dict]:
                     queue.append(bil['kart_id'])
 
     # ── 5. Bakiyeler (toplu, 500'lük yığınlar) ─────────────────────────────
-    k23 = _kod23_paired_ids_str(conn)
     bakiyeler: dict[int, float] = {}
     ids_list = list(all_ids)
     _YIGIN = 500
@@ -596,13 +595,15 @@ def uretim_emir_bom_patlat(conn, emir_id: int) -> list[dict]:
             cur.execute(f"""
                 SELECT shd.IslemKartId,
                        SUM(CASE
-                           WHEN sh.IslemKodu IN (1, 16, 22)                 THEN  shd.Miktar
-                           WHEN sh.IslemKodu = 23 AND sh.Id IN ({k23})      THEN  shd.Miktar
-                           WHEN sh.IslemKodu IN (2, 3, 6, 17, 18, 19, 21)   THEN -shd.Miktar
+                           WHEN sh.IslemKodu IN (1,4,5,8,15,16,20,22,26,29)
+                               THEN (shd.Miktar - ISNULL(shd_f.Miktar, 0))
+                           WHEN sh.IslemKodu IN (2,3,6,7,17,18,19,21,23,24,28)
+                               THEN -(shd.Miktar - ISNULL(shd_f.Miktar, 0))
                            ELSE 0
                        END) AS Bakiye
                 FROM StokHareketDetay shd
                 JOIN StokHareket sh ON sh.Id = shd.HareketId
+                LEFT JOIN StokHareketDetay shd_f ON shd_f.Id = shd.FaturaDetayId
                 WHERE shd.IslemKartId IN ({yer})
                   AND sh.Aktif = 1
                   AND CAST(sh.BelgeTarihi AS DATE) <= CAST(? AS DATE)
@@ -629,13 +630,15 @@ def uretim_emir_bom_patlat(conn, emir_id: int) -> list[dict]:
                 cur.execute(f"""
                     SELECT shd.IslemKartId,
                            SUM(CASE
-                               WHEN sh.IslemKodu IN (1, 16, 22)                 THEN  shd.Miktar
-                               WHEN sh.IslemKodu = 23 AND sh.Id IN ({k23})      THEN  shd.Miktar
-                               WHEN sh.IslemKodu IN (2, 3, 6, 17, 18, 19, 21)   THEN -shd.Miktar
+                               WHEN sh.IslemKodu IN (1,4,5,8,15,16,20,22,26,29)
+                                   THEN (shd.Miktar - ISNULL(shd_f.Miktar, 0))
+                               WHEN sh.IslemKodu IN (2,3,6,7,17,18,19,21,23,24,28)
+                                   THEN -(shd.Miktar - ISNULL(shd_f.Miktar, 0))
                                ELSE 0
                            END)
                     FROM StokHareketDetay shd
                     JOIN StokHareket sh ON sh.Id = shd.HareketId
+                    LEFT JOIN StokHareketDetay shd_f ON shd_f.Id = shd.FaturaDetayId
                     WHERE shd.IslemKartId IN ({yer})
                       AND sh.Aktif = 1
                       AND sh.DepoKartId = ?
@@ -767,10 +770,9 @@ def muhasebe_eksik_raporu_olustur(conn) -> list[dict]:
     """
     from collections import defaultdict
 
-    _GIR = (1, 16, 22)
-    _CIK = (2, 3, 6, 17, 18, 19, 21)
+    _GIR = (1, 4, 5, 8, 15, 16, 20, 22, 26, 29)
+    _CIK = (2, 3, 6, 7, 17, 18, 19, 21, 23, 24, 28)
     _YIG = 500
-    k23   = _kod23_paired_ids_str(conn)
     gir_s = ','.join(str(x) for x in _GIR)
     cik_s = ','.join(str(x) for x in _CIK)
 
@@ -932,13 +934,15 @@ def muhasebe_eksik_raporu_olustur(conn) -> list[dict]:
                 cur.execute(f"""
                     SELECT shd.IslemKartId,
                            SUM(CASE
-                               WHEN sh.IslemKodu IN ({gir_s})              THEN  shd.Miktar
-                               WHEN sh.IslemKodu = 23 AND sh.Id IN ({k23}) THEN  shd.Miktar
-                               WHEN sh.IslemKodu IN ({cik_s})              THEN -shd.Miktar
+                               WHEN sh.IslemKodu IN ({gir_s})
+                                   THEN (shd.Miktar - ISNULL(shd_f.Miktar, 0))
+                               WHEN sh.IslemKodu IN ({cik_s})
+                                   THEN -(shd.Miktar - ISNULL(shd_f.Miktar, 0))
                                ELSE 0
                            END)
                     FROM StokHareketDetay shd
                     JOIN StokHareket sh ON sh.Id = shd.HareketId
+                    LEFT JOIN StokHareketDetay shd_f ON shd_f.Id = shd.FaturaDetayId
                     WHERE shd.IslemKartId IN ({yer})
                       AND sh.Aktif = 1
                       AND CAST(sh.BelgeTarihi AS DATE) <= CAST(? AS DATE)
@@ -960,13 +964,15 @@ def muhasebe_eksik_raporu_olustur(conn) -> list[dict]:
                     cur.execute(f"""
                         SELECT shd.IslemKartId,
                                SUM(CASE
-                                   WHEN sh.IslemKodu IN ({gir_s})              THEN  shd.Miktar
-                                   WHEN sh.IslemKodu = 23 AND sh.Id IN ({k23}) THEN  shd.Miktar
-                                   WHEN sh.IslemKodu IN ({cik_s})              THEN -shd.Miktar
+                                   WHEN sh.IslemKodu IN ({gir_s})
+                                       THEN (shd.Miktar - ISNULL(shd_f.Miktar, 0))
+                                   WHEN sh.IslemKodu IN ({cik_s})
+                                       THEN -(shd.Miktar - ISNULL(shd_f.Miktar, 0))
                                    ELSE 0
                                END)
                         FROM StokHareketDetay shd
                         JOIN StokHareket sh ON sh.Id = shd.HareketId
+                        LEFT JOIN StokHareketDetay shd_f ON shd_f.Id = shd.FaturaDetayId
                         WHERE shd.IslemKartId IN ({yer})
                           AND sh.Aktif = 1
                           AND sh.DepoKartId = ?

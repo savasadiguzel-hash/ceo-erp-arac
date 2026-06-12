@@ -63,21 +63,62 @@
 - Emir seç → **Analiz Et** → sağ panelde eksik malzemeler BOM patlatmalı ağaç görünümünde
 - **Hat filtresi:** `HatTipi IN (1, 2)` (ana üretim hattı + aksesuar grubu)
 
-### Bakiye Formülü
+### Bakiye Formülü (Metot E — CEO StokHareketIsGiris uyumlu)
 
-**GirenMiktar:**
-- `IslemKodu IN (1, 16, 22)` — Alış Faturası, Üretimden Giriş, Devir Girişi
-  - ⚠️ `IslemKodu=20` (Sayım Fazlası) **sayılmaz** — CEO ERP saymıyor; sayılırsa bakiye şişer → false negative
-- `IslemKodu = 23 AND StokHareket.Id IN (paired_ids)` — Depolar Arası Giriş, **yalnızca irsaliye kökenli**
+**GirenMiktar:** `IslemKodu IN (1, 4, 5, 8, 15, 16, 20, 22, 26, 29)`
 
-**CikanMiktar:** `IslemKodu IN (2, 3, 6, 17, 18, 19, 21)` — Satış, Alış İade Faturası, Satış İrsaliyesi, Üretime Çıkış, Depolar Arası Çıkış, Sayım Eksiği, Fire
+| Kod | Açıklama |
+|---|---|
+| 1 | Alış Faturası |
+| 4 | Satış İade Faturası |
+| 5 | Alış İrsaliyesi (FaturaDetayId bağlıysa net = 0 → çift sayım önlenir) |
+| 8 | Üretim Faturası |
+| 15 | Devir Girişi |
+| 16 | Üretimden Giriş |
+| 20 | Sayım Fazlası |
+| 22 | Devir Girişi |
+| 26 | Konsinye Giriş |
+| 29 | Diğer Giriş |
+
+**CikanMiktar:** `IslemKodu IN (2, 3, 6, 7, 17, 18, 19, 21, 23, 24, 28)`
+
+| Kod | Açıklama |
+|---|---|
+| 2 | Satış Faturası |
+| 3 | Alış İade Faturası |
+| 6 | Satış İrsaliyesi |
+| 7 | Üretim İade Faturası |
+| 17 | Üretime Çıkış |
+| 18 | Depolar Arası Çıkış |
+| 19 | Sayım Eksiği |
+| 21 | Fire |
+| **23** | **Depolar Arası Giriş — CEO `StokHareketIsGiris(23)=0` (ÇIKIŞ sayar)** |
+| 24 | Konsinye Çıkış |
+| 28 | Diğer Çıkış |
+
+**FaturaDetayId çift-sayım önleme:**
+```sql
+SUM(CASE
+    WHEN sh.IslemKodu IN (1,4,5,8,15,16,20,22,26,29)
+        THEN (shd.Miktar - ISNULL(shd_f.Miktar, 0))
+    WHEN sh.IslemKodu IN (2,3,6,7,17,18,19,21,23,24,28)
+        THEN -(shd.Miktar - ISNULL(shd_f.Miktar, 0))
+    ELSE 0
+END)
+FROM StokHareketDetay shd
+JOIN StokHareket sh ON sh.Id = shd.HareketId
+LEFT JOIN StokHareketDetay shd_f ON shd_f.Id = shd.FaturaDetayId
+```
+
+- k5 (Alış İrsaliyesi) `FaturaDetayId` bağlıysa `shd_f.Miktar = shd.Miktar` → net = 0 (faturalı irsaliye sayılmaz)
+- k6 (Satış İrsaliyesi) için de aynı mekanizma
 
 **Tarih filtresi:** `BelgeTarihi <= UretimEmriTarihi`
 
-**IslemKodu notları:**
-- `5` (Alış İrsaliyesi) sayılmaz — IslemKodu=1 veya eşli IslemKodu=23 ile gelir, sayılırsa çift sayım
-- `3` (Alış İade Faturası) CIK'ta — geçmişte iade yapılmış kartların tarihsel bakiyesini düzeltir
-- `23` (Depolar Arası Giriş) koşullu: `_kod23_paired_ids_str(conn)` ile hesaplanan eşleşen ID'ler sayılır; eşi olmayan saf depo transferleri IslemKodu=18 ile netleşir (toplam bakiyeye etkisi sıfır). Bu DB'de 8 eşleşen ID: `740137, 741399, 741897, 743385–743389`
+**IslemKodu=23 önemli not:**
+- CEO ERP `StokHareketIsGiris` fonksiyonu k23'ü ÇIKIŞ olarak sınıflandırır
+- DB'deki k23 = alıcı depoya "Depolar Arası Giriş" kaydı; kaynak depoda k18 eşi genellikle bulunmaz
+- Toplam şirket bakiyesi: k23 çıkış (-) sayılır → muhafazakâr (fazla stok gösterme riski azalır)
 
 ### BOM Patlatma
 
@@ -104,26 +145,29 @@
 
 **Fonksiyon:** `db/sorgular.py:muhasebe_eksik_raporu_olustur()`
 
-### Bakiye Doğrulaması — CEO Stok Kartı Ekstresi (2026-06-10)
+### Bakiye Doğrulaması — CEO Stok Kartı Ekstresi (2026-06-12)
 
-Referans: `Stok Kartı Ekstresi_10062026183813.xlsx` (804 kart). 11 kart test edildi.
+Referans: `dist/Stok Kartı Ekstresi_12062026190248.xlsx` (932 kart). **Metot E** (`tani_multi_seed.py`, 5 seed × 20 kart).
 
-| Stok Kodu | CEO | DB | Durum |
+| Seed | Eşleşme | Oran | Uyumsuz kartlar |
 |---|---|---|---|
-| HMGMDDAL004 | 591 | 591 | ✅ |
-| RT0603BRD07665KL | 6 | 6 | ✅ |
-| C0805C103J3GACTU | 238 | 238 | ✅ |
-| 40VK6 | 6 | 6 | ✅ |
-| YMGMKRT0056 | 550 | 550 | ✅ |
-| GMP-200-240294 | -21 | -21 | ✅ |
-| GMP-200-230540 | 0 | 0 | ✅ |
-| GMP-101-230044 | 1 | 1 | ✅ |
-| CL10A475KO8NNNC | 12 | 12 | ✅ |
-| XP10NA1R5TL | 76 | 76 | ✅ |
-| BLM31PG121SN1L | 206 | 206 | ✅ |
+| 42  | 16/20 | %80  | BC81725TP(+1244), GMP-200-230065(-2), HMGMTRM0009(+54), RMCF0805FT10K0(+189) |
+| 99  | 18/20 | %90  | GMP-200-230538(-1), GMP-200-230555(-1) |
+| 777 | 19/20 | **%95** | MAL215097011E3(+6) |
+| 1234| 17/20 | %85  | 09-3782-91-08(-5), GMP-110-230025(+1), MAX98357A(+6) |
+| 5678| 19/20 | **%95** | GMP-101-230035(+5) |
 
-**Hedef:** HMGMDDAL004 → 05.01.2026 = **0** ✓, güncel = **591** ✓  
-**Sonuç: 11/11 eşleşme**
+**Ortalama eşleşme:** ~%89 (eski formül %60-70'di)
+
+**Kalan uyumsuzlukların kök nedeni:**
+- CEO stok kartı ekstresi **depo-spesifik kalan** gösterir; bizim formülümüz **toplam şirket bakiyesi** hesaplar
+- "Depolar Arası Transfer" (k23) içeren kartlarda CEO extract, aynı belgeyi iki satır gösterir (+x giriş, -x çıkış) → CEO net = 0; DB'de yalnızca bir taraf (k23) kayıtlı
+- Bu fark metodolojik: üretim planlaması için toplam şirket bakiyesi doğru yaklaşım
+- MAL215097011E3: CEO extract'te Haz 2026'da 4 k23 hareketi var, DB'de yok (veri senkron sorunu)
+
+**Önceki formülden fark:**
+- Eski: `IslemKodu IN (1,16,20,22)` giriş — k5/k23/k4 eksikti, `_kod23_paired_ids_str()` dynamic sorgusu
+- Yeni (Metot E): CEO `StokHareketIsGiris` sign map + `FaturaDetayId` çift-sayım önleme, k23 her zaman çıkış
 
 ---
 
