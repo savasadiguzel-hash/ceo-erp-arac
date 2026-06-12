@@ -33,6 +33,7 @@ class AnaPencere(QMainWindow):
         self.tabs = QTabWidget()
         self.tabs.setTabPosition(QTabWidget.North)
         self.tabs.setDocumentMode(True)
+        self.tabs.tabBar().setExpanding(True)
 
         self.mamul_tab   = MamulAgaciTab()
         self.maliyet_tab = MaliyetSayfasi()
@@ -122,12 +123,11 @@ QTabWidget::pane {
 QTabBar::tab {
     background: #e8eaf6;
     color: #3949ab;
-    padding: 10px 22px;
-    font-size: 13px;
+    padding: 9px 10px;
+    font-size: 12px;
     font-weight: bold;
     border: none;
     border-bottom: 3px solid transparent;
-    min-width: 160px;
 }
 QTabBar::tab:selected {
     background: #f0f2f5;
