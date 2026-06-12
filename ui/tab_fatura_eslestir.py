@@ -105,6 +105,33 @@ class EslestirmeThread(QThread):
             self.hata.emit(str(e))
 
 
+class FaturaYuklemeThread(QThread):
+    bitti    = pyqtSignal(list)
+    hata     = pyqtSignal(str)
+    ilerleme = pyqtSignal(int, int)   # (tamamlanan, toplam)
+
+    def __init__(self, dosya_yollari: list):
+        super().__init__()
+        self.dosya_yollari = dosya_yollari
+
+    def run(self):
+        from tools.fatura_yukle import parse_fatura
+        toplam   = len(self.dosya_yollari)
+        kalemler = []
+        hatalar  = []
+        for i, dosya in enumerate(self.dosya_yollari, 1):
+            try:
+                kalemler.extend(parse_fatura(dosya))
+            except Exception as e:
+                logging.error("FaturaYuklemeThread %s: %s", dosya, e)
+                hatalar.append(f"{dosya}:\n  {e}")
+            self.ilerleme.emit(i, toplam)
+        if kalemler:
+            self.bitti.emit(kalemler)
+        if hatalar:
+            self.hata.emit("\n\n".join(hatalar))
+
+
 # ── Ana Sekme ──────────────────────────────────────────────────────────────────
 
 class FaturaEslestirTab(QWidget):
@@ -175,25 +202,18 @@ class FaturaEslestirTab(QWidget):
         self.stok_lbl.setStyleSheet("color:#9e9e9e;font-size:11px;padding:2px;")
         lay.addWidget(self.stok_lbl)
 
-        # JSON yükleme
-        fat_grup = QGroupBox("Fatura Kalemleri (JSON)")
+        # Fatura yükleme
+        fat_grup = QGroupBox("Fatura Kalemleri")
         fg = QVBoxLayout(fat_grup)
         fg.setSpacing(6)
         btn_row = QHBoxLayout()
-        self.json_yukle_btn = QPushButton("📂  JSON Yükle")
-        self.json_yukle_btn.setStyleSheet(
+        self.fatura_yukle_btn = QPushButton("📂  Fatura Yükle")
+        self.fatura_yukle_btn.setStyleSheet(
             "background:#546e7a;color:white;border-radius:5px;"
             "padding:6px 12px;font-weight:bold;font-size:11px;"
         )
-        self.json_yukle_btn.clicked.connect(self._json_yukle)
-        self.ornek_yukle_btn = QPushButton("🔬  Örnek Yükle")
-        self.ornek_yukle_btn.setStyleSheet(
-            "background:#546e7a;color:white;border-radius:5px;"
-            "padding:6px 12px;font-weight:bold;font-size:11px;"
-        )
-        self.ornek_yukle_btn.clicked.connect(self._ornek_yukle)
-        btn_row.addWidget(self.json_yukle_btn)
-        btn_row.addWidget(self.ornek_yukle_btn)
+        self.fatura_yukle_btn.clicked.connect(self._fatura_yukle)
+        btn_row.addWidget(self.fatura_yukle_btn)
         fg.addLayout(btn_row)
         self.kalem_sayisi_lbl = QLabel("Yüklü kalem yok.")
         self.kalem_sayisi_lbl.setStyleSheet("color:#9e9e9e;font-size:11px;")
@@ -410,42 +430,48 @@ class FaturaEslestirTab(QWidget):
         QMessageBox.critical(self, "Stok Yukleme Hatasi",
                              f"Stok kartlari alinamadi:\n\n{mesaj}")
 
-    # ── JSON yükleme ──────────────────────────────────────────────────────────
+    # ── Fatura yükleme (PDF / PNG / JPEG / JSON) ──────────────────────────────
 
-    def _json_yukle(self):
-        dosya, _ = QFileDialog.getOpenFileName(
-            self, "Fatura JSON Dosyasi Sec",
+    def _fatura_yukle(self):
+        dosyalar, _ = QFileDialog.getOpenFileNames(
+            self, "Fatura Dosyaları Seç",
             str(BASE / "referans" / "faturalar"),
-            "JSON Dosyasi (*.json)",
+            "Fatura Dosyası (*.pdf *.png *.jpg *.jpeg *.json)",
         )
-        if dosya:
-            self._json_oku(dosya)
+        if not dosyalar:
+            return
+        self._yukleme_toplam = len(dosyalar)
+        self.fatura_yukle_btn.setEnabled(False)
+        self.fatura_yukle_btn.setText("⏳  0 / " + str(self._yukleme_toplam))
+        self.durum_lbl.setText(f"{self._yukleme_toplam} fatura okunuyor, lütfen bekleyin...")
+        self.durum_lbl.setStyleSheet("color:#e65100;font-size:11px;padding:4px;")
+        self._yukleme_thread = FaturaYuklemeThread(dosyalar)
+        self._yukleme_thread.bitti.connect(self._fatura_yuklendi)
+        self._yukleme_thread.hata.connect(self._fatura_yukle_hatasi)
+        self._yukleme_thread.ilerleme.connect(self._yukle_ilerleme)
+        self._yukleme_thread.start()
 
-    def _ornek_yukle(self):
-        ornek = BASE / "referans" / "faturalar" / "test_kalemleri.json"
-        if ornek.exists():
-            self._json_oku(str(ornek))
-        else:
-            QMessageBox.warning(self, "Dosya Bulunamadi",
-                                f"Ornek dosya bulunamadi:\n{ornek}")
+    def _yukle_ilerleme(self, tamamlanan: int, toplam: int):
+        self.fatura_yukle_btn.setText(f"⏳  {tamamlanan} / {toplam}")
 
-    def _json_oku(self, dosya: str):
-        try:
-            with open(dosya, encoding="utf-8") as f:
-                veri = json.load(f)
-            if not isinstance(veri, list):
-                raise ValueError("JSON dosyasi bir liste icermeli.")
-            self._kalemler = veri
-            self._temiz_sonuclar = []
-            self._kirli_kalemler = []
-            self._kalem_listesini_doldur()
-            self.kalem_sayisi_lbl.setText(f"{len(veri)} kalem yuklendi.")
-            self.kalem_sayisi_lbl.setStyleSheet("color:#2e7d32;font-size:11px;")
-            self.durum_lbl.setText(f"{len(veri)} fatura kalemi yuklendi.")
-            self.durum_lbl.setStyleSheet("color:#555;font-size:11px;padding:4px;")
-            self._eslestir_btn_guncelle()
-        except Exception as e:
-            QMessageBox.critical(self, "JSON Okuma Hatasi", f"Dosya okunamadi:\n{e}")
+    def _fatura_yuklendi(self, kalemler: list):
+        self.fatura_yukle_btn.setEnabled(True)
+        self.fatura_yukle_btn.setText("📂  Fatura Yükle")
+        self._kalemler = kalemler
+        self._temiz_sonuclar = []
+        self._kirli_kalemler = []
+        self._kalem_listesini_doldur()
+        self.kalem_sayisi_lbl.setText(f"{len(kalemler)} kalem yüklendi.")
+        self.kalem_sayisi_lbl.setStyleSheet("color:#2e7d32;font-size:11px;")
+        self.durum_lbl.setText(f"{len(kalemler)} fatura kalemi yüklendi.")
+        self.durum_lbl.setStyleSheet("color:#555;font-size:11px;padding:4px;")
+        self._eslestir_btn_guncelle()
+
+    def _fatura_yukle_hatasi(self, mesaj: str):
+        self.fatura_yukle_btn.setEnabled(True)
+        self.fatura_yukle_btn.setText("📂  Fatura Yükle")
+        # Buton sıfırlandı; başarılı kalemler zaten _fatura_yuklendi ile yüklendi
+        QMessageBox.warning(self, "Bazı Dosyalar Okunamadı", mesaj)
 
     def _kalem_listesini_doldur(self):
         self.kalem_liste.clear()
