@@ -1,0 +1,33 @@
+FATURA: TEK-EL — TKL2026000001520 — 02.06.2026
+Toplam (KDV hariç): 8,634.75 TL
+
+  1) KIZIL BRONZ DOLU Ø72 MM — 10.45 KG — 8,307.75 TL
+     → Stok: ⚠ KART YOK — açılması gerekebilir   [EŞLEŞME YOK]
+  2) PASLANMAZ LAMA 304 KALİTE 25*70 MM — 1.09 KG — 327.00 TL
+     → Stok: HMPSLLAMA001  (diğer aday: HMPROJE0002  skor=78.3)   [GÜÇLÜ]
+
+FATURA: CE-KA — CEK2026000000089 — 05.06.2026
+Toplam (KDV hariç): 500.00 TL
+
+  1) CKA-0115 KROM KAPLAMA MİL — 10 Adet — 500.00 TL
+     → ⚙ İŞÇİLİK/OPERASYON — doğru mamul operasyonunu belirleyin
+        olası: ST00003 (skor=80.0), GMP-200-240414:60 (skor=79.1), GMP-200-240416:60 (skor=79.1)
+
+FATURA: EGEDEN — EGE2026000000208 — 02.06.2026
+Toplam (KDV hariç): 9,000.00 TL
+
+  1) LAZER KESİM VE BÜKÜM İŞÇİLİĞİ — 1 Set — 9,000.00 TL
+     → ⚙ İŞÇİLİK/OPERASYON — doğru mamul operasyonunu belirleyin
+        olası: GMP-200-230304:30 (skor=84.5), GMP-200-240229:40 (skor=82.1), HMPROJE0138 (skor=78.6)
+
+FATURA: ARMATEK — ARM2026000000045 — 03.06.2026
+Toplam (KDV hariç): 2,500.00 TL
+
+  1) MUHTELİF ÖLÇÜLERDE ALÜMİNYUM KAYNAK İŞLERİ — 1 Adet — 2,500.00 TL
+     → ⚠ ELLE DAĞITIM GEREKİYOR (Belirsiz 'muhtelif/çeşitli' ifadesi)
+
+=========================================================
+AÇILACAK KART ADAYLARI:
+  ⚠  TEK-EL: "KIZIL BRONZ DOLU Ø72 MM"
+     (DB'de eşleşen kart yok — yeni stok kartı açılması gerekebilir)
+=========================================================

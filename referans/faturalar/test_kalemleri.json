@@ -1,0 +1,57 @@
+[
+  {
+    "tedarikci":   "TEK-EL",
+    "fatura_no":   "TKL2026000001520",
+    "tarih":       "02.06.2026",
+    "aciklama":    "KIZIL BRONZ DOLU Ø72 MM",
+    "siparis_no":  "004212",
+    "miktar":      10.45,
+    "birim":       "KG",
+    "birim_fiyat": 795.00,
+    "tutar":       8307.75
+  },
+  {
+    "tedarikci":   "TEK-EL",
+    "fatura_no":   "TKL2026000001520",
+    "tarih":       "02.06.2026",
+    "aciklama":    "PASLANMAZ LAMA 304 KALİTE 25*70 MM",
+    "siparis_no":  "006292",
+    "miktar":      1.09,
+    "birim":       "KG",
+    "birim_fiyat": 300.00,
+    "tutar":       327.00
+  },
+  {
+    "tedarikci":   "CE-KA",
+    "fatura_no":   "CEK2026000000089",
+    "tarih":       "05.06.2026",
+    "aciklama":    "CKA-0115 KROM KAPLAMA MİL",
+    "siparis_no":  null,
+    "miktar":      10,
+    "birim":       "Adet",
+    "birim_fiyat": 50.0,
+    "tutar":       500.0
+  },
+  {
+    "tedarikci":   "EGEDEN",
+    "fatura_no":   "EGE2026000000208",
+    "tarih":       "02.06.2026",
+    "aciklama":    "LAZER KESİM VE BÜKÜM İŞÇİLİĞİ",
+    "siparis_no":  null,
+    "miktar":      1,
+    "birim":       "Set",
+    "birim_fiyat": 9000.0,
+    "tutar":       9000.0
+  },
+  {
+    "tedarikci":   "ARMATEK",
+    "fatura_no":   "ARM2026000000045",
+    "tarih":       "03.06.2026",
+    "aciklama":    "MUHTELİF ÖLÇÜLERDE ALÜMİNYUM KAYNAK İŞLERİ",
+    "siparis_no":  null,
+    "miktar":      1,
+    "birim":       "Adet",
+    "birim_fiyat": 2500.0,
+    "tutar":       2500.0
+  }
+]

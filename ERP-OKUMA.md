@@ -2,7 +2,7 @@
 
 **GitHub:** https://github.com/savasadiguzel-hash/ceo-erp-arac  
 **Dağıtım:** `dist/CEO-ERP-Araclar.exe`  
-**Son güncelleme:** 2026-06-11
+**Son güncelleme:** 2026-06-12
 
 ---
 
@@ -16,6 +16,7 @@
 | Stok Kartı Aktar | SW sonrası CEO ERP'ye otomatik stok kartı açar |
 | Satış Faturaları | Tarih aralığına göre satış fatura/irsaliye listesi + Excel |
 | Üretim Eksik Stok | "Devam Ediyor" emirlerinde hat planı malzemeleri için eksik stok raporu |
+| Fatura Eşleştir | Gelen e-fatura kalemlerini stok kartlarıyla bulanık eşleştirme; satınalma notu üretir |
 
 ---
 
@@ -161,11 +162,40 @@ Derleme: `build.bat` → `dist/CEO-ERP-Araclar.exe` + `copy config.json dist\con
 main.py / config.py / config.json / build.bat
 db/      baglanti.py, sorgular.py
 logic/   maliyet.py, excel.py
+tools/   fatura_eslestir.py, mutabakat.py
 ui/      ana_pencere.py, maliyet.py, mamul_agaci_tab.py, tarama.py, eslestirme.py, rapor.py
-         tab_satis_faturalari.py, tab_erp_aktar.py, tab_sw.py, tab_uretim_raporu.py, baglanti.py, stil.py
+         tab_satis_faturalari.py, tab_erp_aktar.py, tab_sw.py, tab_uretim_raporu.py, tab_fatura_eslestir.py, baglanti.py, stil.py
 sw/      classifier, pipeline, renamer, erp_handler, vision_handler
+referans/faturalar/  test_kalemleri.json
 dist/    CEO-ERP-Araclar.exe, config.json
 ```
+
+---
+
+## Fatura Eşleştir Sekmesi
+
+Gelen e-fatura kalemlerini CEO ERP stok kartlarıyla **bulanık eşleştirme** yapar; satınalma sorumlusuna iletilecek metin bloğunu üretir.
+
+**Giriş:** JSON dosyası (QFileDialog) veya "Örnek Yükle" (`referans/faturalar/test_kalemleri.json`)
+
+**Akış:**
+1. **Bağlan ve Stok Yükle** — `BaglantiThread` → `StokYuklemeThread` → `StokKarti WHERE Aktif=1` (arka plan, UI donmaz)
+2. **JSON Yükle** — kalem listesi renk badge'li: GÜÇLÜ (yeşil) / GÖZDEN GEÇİR (turuncu) / KART YOK (kırmızı) / İŞÇİLİK (mavi) / MUHTELİF (gri)
+3. **Eşleştir** — `EslestirmeThread` → her kalem için `adaylar_bul()` (`token_set_ratio`, üst 5 aday) + `operasyon_mu()` + `kova_ayir()`
+4. Kalem seçince sağ üstte aday listesi (skor + etiket); muhtelif seçilince sağ altta dağıtım tablosu aktif
+5. **Dağıtım** — yöntem: Eşit / Ağırlık / Miktar / Elle; `dagitim_hesapla()` + `elle_dogrula()` ile tutar sütunu doldurulur
+6. **Satınalma Metni Üret** → `metin_blogu_olustur()` → QTextEdit; Kopyala / Dosyaya Kaydet
+
+**Eşleştirme mantığı (`tools/fatura_eslestir.py`):**
+- Türkçe normalize: `İŞĞÜÇÖ` → büyük harf
+- Ölçü token çıkarımı: CAP_ (Ø çap) / KESIT_ (AxB kesit) / KAL_ (304/316) / FORM_ (DOLU/LAMA/SAC/BORU)
+- Eleme tavanı: çakışan token → 59.9; eksik token → 84.9
+- Eşik: GÜÇLÜ ≥ 85, GÖZDEN GEÇİR ≥ 60
+
+**Kritik kural:** CEO ERP'ye YAZMA YOK — yalnızca `StokKarti` okuma.
+
+**Fonksiyonlar:** `tools/fatura_eslestir.py` → `stok_kartlari_db`, `adaylar_bul`, `kova_ayir`, `kirli_neden`, `operasyon_mu`, `dagitim_hesapla`, `elle_dogrula`, `metin_blogu_olustur`  
+**UI:** `ui/tab_fatura_eslestir.py:FaturaEslestirTab`
 
 ---
 
