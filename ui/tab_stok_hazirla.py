@@ -15,6 +15,7 @@ from PyQt5.QtWidgets import (
     QPlainTextEdit, QTreeWidget, QTreeWidgetItem, QHeaderView,
     QMessageBox, QFileDialog, QComboBox, QStyledItemDelegate,
     QAbstractItemView, QInputDialog,
+    QDialog, QLineEdit, QListWidget, QListWidgetItem, QDialogButtonBox,
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from PyQt5.QtGui import QColor, QTextCursor
@@ -186,6 +187,125 @@ class _BirimleriYukleThread(QThread):
             self.bitti.emit(birimler or {"ADET": _ADET_GUID})
         except Exception:
             self.bitti.emit({"ADET": _ADET_GUID})
+
+
+# ── Thread: Tüm reçete listesini çek ─────────────────────────────────────────
+
+class _TumRecetelerThread(QThread):
+    bitti = pyqtSignal(list)   # [(kod, tanim), ...]
+    hata  = pyqtSignal(str)
+
+    def run(self):
+        try:
+            conn = _baglan()
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT Kodu, ISNULL(Tanim,'') FROM UretimRecete "
+                "WHERE KullanimDisi IS NULL OR KullanimDisi = 0 "
+                "ORDER BY Kodu"
+            )
+            rows = [(str(r[0]), str(r[1])) for r in cur.fetchall()]
+            cur.close()
+            conn.close()
+            self.bitti.emit(rows)
+        except Exception as e:
+            self.hata.emit(str(e))
+
+
+# ── Dialog: Reçete seçim penceresi ───────────────────────────────────────────
+
+class _ReceteSecDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Reçete Seç")
+        self.resize(560, 480)
+        self.setModal(True)
+        self._secilen_kod: str = ""
+
+        lay = QVBoxLayout(self)
+        lay.setSpacing(8)
+        lay.setContentsMargins(12, 12, 12, 12)
+
+        # Arama kutusu
+        self._ara = QLineEdit()
+        self._ara.setPlaceholderText("Kod veya ada göre filtrele…")
+        self._ara.setStyleSheet(
+            "QLineEdit{border:1.5px solid #9fa8da;border-radius:6px;"
+            "padding:6px 10px;background:white;font-size:12px;}"
+            "QLineEdit:focus{border-color:#3f51b5;}"
+        )
+        self._ara.textChanged.connect(self._filtrele)
+        lay.addWidget(self._ara)
+
+        # Yükleniyor etiketi
+        self._yukleniyor = QLabel("Reçeteler yükleniyor…")
+        self._yukleniyor.setStyleSheet("color:#757575;font-size:12px;padding:4px 0;")
+        lay.addWidget(self._yukleniyor)
+
+        # Liste
+        self._liste = QListWidget()
+        self._liste.setStyleSheet(
+            "QListWidget{border:1px solid #e8eaf6;border-radius:6px;background:white;}"
+            "QListWidget::item{padding:5px 8px;font-size:12px;}"
+            "QListWidget::item:selected{background:#bbdefb;color:#0d47a1;}"
+            "QListWidget::item:hover{background:#e3f2fd;}"
+        )
+        self._liste.setFont(self._liste.font())
+        self._liste.itemDoubleClicked.connect(self._kabul_et)
+        lay.addWidget(self._liste, stretch=1)
+
+        # Sayaç etiketi
+        self._sayac = QLabel("")
+        self._sayac.setStyleSheet("color:#9e9e9e;font-size:11px;")
+        lay.addWidget(self._sayac)
+
+        # Butonlar
+        self._butonlar = QDialogButtonBox(
+            QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        self._butonlar.button(QDialogButtonBox.Ok).setText("Seç")
+        self._butonlar.button(QDialogButtonBox.Cancel).setText("İptal")
+        self._butonlar.button(QDialogButtonBox.Ok).setEnabled(False)
+        self._butonlar.button(QDialogButtonBox.Ok).setStyleSheet(_BTN_MAVI)
+        self._butonlar.accepted.connect(self._kabul_et)
+        self._butonlar.rejected.connect(self.reject)
+        lay.addWidget(self._butonlar)
+
+        self._liste.currentItemChanged.connect(self._secim_degisti)
+
+        self._tum_receteler: list[tuple[str, str]] = []
+
+    def doldur(self, receteler: list):
+        """Thread sonucu gelince çağrılır."""
+        self._tum_receteler = receteler
+        self._yukleniyor.hide()
+        self._filtrele(self._ara.text())
+        self._ara.setFocus()
+
+    def _filtrele(self, metin: str):
+        filtre = metin.strip().lower()
+        self._liste.clear()
+        for kod, tanim in self._tum_receteler:
+            if not filtre or filtre in kod.lower() or filtre in tanim.lower():
+                item = QListWidgetItem("%-30s  %s" % (kod, tanim))
+                item.setData(Qt.UserRole, kod)
+                self._liste.addItem(item)
+        n = self._liste.count()
+        toplam = len(self._tum_receteler)
+        self._sayac.setText("%d / %d reçete" % (n, toplam))
+        if n > 0:
+            self._liste.setCurrentRow(0)
+
+    def _secim_degisti(self, current, _prev):
+        self._butonlar.button(QDialogButtonBox.Ok).setEnabled(current is not None)
+
+    def _kabul_et(self):
+        item = self._liste.currentItem()
+        if item:
+            self._secilen_kod = item.data(Qt.UserRole)
+            self.accept()
+
+    def secilen_kod(self) -> str:
+        return self._secilen_kod
 
 
 # ── Thread: Reçete Yükle ─────────────────────────────────────────────────────
@@ -955,14 +1075,21 @@ class StokHazirlaTab(QWidget):
     # ── Reçete Yükle ─────────────────────────────────────────────────────────
 
     def _recete_yukle(self):
-        """CEO ERP'deki mevcut reçeteyi ağaca yükler."""
-        kod, ok = QInputDialog.getText(
-            self, "Reçete Yükle",
-            "Mamül stok kodunu girin:",
-        )
-        if not ok or not kod.strip():
+        """CEO ERP'deki mevcut reçeteyi ağaca yükler — seçim dialog'u ile."""
+        # Dialog'u oluştur ve reçete listesini arka planda çek
+        self._recete_sec_dialog = _ReceteSecDialog(self)
+
+        self._liste_thread = _TumRecetelerThread()
+        self._liste_thread.bitti.connect(self._recete_sec_dialog.doldur)
+        self._liste_thread.hata.connect(
+            lambda mesaj: QMessageBox.critical(
+                self, "Bağlantı Hatası",
+                "Reçete listesi alınamadı:\n\n" + mesaj))
+        self._liste_thread.start()
+
+        if self._recete_sec_dialog.exec_() != QDialog.Accepted:
             return
-        kod = kod.strip().upper()
+        kod = self._recete_sec_dialog.secilen_kod().strip().upper()
 
         # Mevcut ağaç doluysa uyar
         if self._agac.topLevelItemCount() > 0:
