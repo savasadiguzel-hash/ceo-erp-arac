@@ -12,6 +12,8 @@ from ui.tab_erp_aktar           import TabErpAktar
 from ui.tab_satis_faturalari    import SatisFaturalariTab
 from ui.tab_uretim_raporu       import UretimRaporuTab
 from ui.tab_fatura_eslestir     import FaturaEslestirTab
+from ui.tab_recete_sorgula      import ReceteSorgulaTab
+from ui.tab_stok_hazirla        import StokHazirlaTab
 
 
 class AnaPencere(QMainWindow):
@@ -42,14 +44,18 @@ class AnaPencere(QMainWindow):
         self.satis_tab   = SatisFaturalariTab()
         self.uretim_tab  = UretimRaporuTab()
         self.fatura_eslestir_tab = FaturaEslestirTab()
+        self.recete_sorgula_tab  = ReceteSorgulaTab()
+        self.stok_hazirla_tab    = StokHazirlaTab()
 
-        self.tabs.addTab(self.mamul_tab,   "🔗  Mamül Ağacı")
-        self.tabs.addTab(self.maliyet_tab, "💰  Maliyet")
-        self.tabs.addTab(self.sw_tab,      "⚙  SW Kodlama")
-        self.tabs.addTab(self.erp_tab,     "📦  Stok Kartı Aktar")
-        self.tabs.addTab(self.satis_tab,   "🧾  Satış Faturaları")
-        self.tabs.addTab(self.uretim_tab,  "🏭  Üretim Eksik Stok")
-        self.tabs.addTab(self.fatura_eslestir_tab, "📋  Fatura Eşleştir")
+        self.tabs.addTab(self.mamul_tab,          "🔗  Mamül Ağacı")
+        self.tabs.addTab(self.maliyet_tab,        "💰  Maliyet")
+        self.tabs.addTab(self.sw_tab,             "⚙  SW Kodlama")
+        self.tabs.addTab(self.erp_tab,            "📦  Stok Kartı Aktar")
+        self.tabs.addTab(self.satis_tab,          "🧾  Satış Faturaları")
+        self.tabs.addTab(self.uretim_tab,         "🏭  Üretim Eksik Stok")
+        self.tabs.addTab(self.fatura_eslestir_tab,"📋  Fatura Eşleştir")
+        self.tabs.addTab(self.recete_sorgula_tab, "🔍  Reçete Sorgula")
+        self.tabs.addTab(self.stok_hazirla_tab,  "📝  Stok Hazırlık")
 
         # ── Menü çubuğu ─────────────────────────────────────────────────────
         menubar = self.menuBar()
@@ -79,6 +85,8 @@ class AnaPencere(QMainWindow):
         self.satis_tab.durum_guncelle.connect(self._durum)
         self.uretim_tab.durum_guncelle.connect(self._durum)
         self.fatura_eslestir_tab.durum_guncelle.connect(self._durum)
+        self.recete_sorgula_tab.durum_guncelle.connect(self._durum)
+        self.stok_hazirla_tab.durum_guncelle.connect(self._durum)
 
         # SW çalışması bitince Stok Kartı sekmesini güncelle
         self.sw_tab.kodlama_bitti.connect(self._sw_bitti)

@@ -16,6 +16,7 @@ CEO_SQL_CONN ornek (.env, tek satir; DATABASE YAZMAYIN — firma kod icinde seci
 """
 
 import os
+import uuid as _uuid
 from datetime import datetime
 
 try:
@@ -38,6 +39,11 @@ MERKEZ_BOLGE_ID = 2                                         # firma 500 ve 504't
 # 500'u MUHASEBECILER kullaniyor — bizim islerimiz icin DEGIL, oraya YAZMA.
 FIRMA_GERCEK = "504"   # gercek calisma firmasi (kart buraya acilir)
 DEFAULT_FIRMA_DB = FIRMA_GERCEK
+
+
+def _tr_upper(s: str) -> str:
+    """Turkce uyumlu buyuk harf (strip dahil): i→İ, diger karakterler Python upper ile."""
+    return (s or "").strip().replace("i", "İ").upper()
 
 
 class ErpError(Exception):
@@ -105,6 +111,7 @@ def kod_var_mi(cursor, kod):
 # Stok karti acma
 # ---------------------------------------------------------------------------
 def stok_karti_ac(kod, adi, firma_db=DEFAULT_FIRMA_DB, live=False,
+                  adi2="",
                   birim_guid=ADET_BIRIM_GUID, user_guid=SAVAS_USER_GUID,
                   bolge_id=MERKEZ_BOLGE_ID, conn=None):
     """
@@ -116,8 +123,9 @@ def stok_karti_ac(kod, adi, firma_db=DEFAULT_FIRMA_DB, live=False,
              'olusturuldu'    -> live=True, gercekten yazildi
              'hata'           -> istisna olustu (mesaj'da)
     """
-    kod = (kod or "").strip()
-    adi = (adi or "").strip()
+    kod  = (kod or "").strip()
+    adi  = _tr_upper(adi)
+    adi2 = _tr_upper(adi2)
     if not kod:
         return {"kod": kod, "durum": "hata", "id": None, "mesaj": "Bos kod"}
 
@@ -146,14 +154,14 @@ def stok_karti_ac(kod, adi, firma_db=DEFAULT_FIRMA_DB, live=False,
         # (11362 kartin hepsinde bu alanlar dolu; sadece bos birakilan kart formu acmiyor.)
         cur.execute("""
             INSERT INTO StokKarti
-                (Aktif, Kodu, Adi, StokBirim, UretimFireDahil, WebSipariseDahilEt,
+                (Aktif, Kodu, Adi, Adi2, StokBirim, UretimFireDahil, WebSipariseDahilEt,
                  AltStokBirim1Aktif, AltStokBirim1Miktar, AltStokBirim2Aktif, AltStokBirim2Miktar,
                  AltStokBirim3Aktif, AltStokBirim3Miktar,
                  FabrikadaUretimde, FabrikadaUretilmis, CreatedBy, CreationTime,
                  ModifiedBy, ModificationTime, Acik, LotTakibi, SeriNoTakibi, Bakir, Bolgeler)
             OUTPUT INSERTED.Id
-            VALUES (1, ?, ?, ?, 0, 0, 0, 1, 0, 1, 0, 1, 0, 0, ?, ?, ?, ?, 0, 0, 0, 0, ?)
-        """, kod, adi, birim_guid, user_guid, now, user_guid, now, str(bolge_id))
+            VALUES (1, ?, ?, ?, ?, 0, 0, 0, 1, 0, 1, 0, 1, 0, 0, ?, ?, ?, ?, 0, 0, 0, 0, ?)
+        """, kod, adi, adi2 or "", birim_guid, user_guid, now, user_guid, now, str(bolge_id))
         yeni_id = int(cur.fetchone()[0])
 
         cur.execute("INSERT INTO StokKumulatif (StokKartId, GirenMiktar, CikanMiktar) "
@@ -217,6 +225,328 @@ def toplu_kart_ac(kartlar, firma_db=DEFAULT_FIRMA_DB, live=False, log=print):
     log("[ERP] Ozet: olusturuldu=%(olusturuldu)d atlandi=%(atlandi)d "
         "kuru=%(olusturulacak)d hata=%(hata)d" % sonuc)
     return sonuc
+
+
+# ---------------------------------------------------------------------------
+# Masraf karti acma
+# ---------------------------------------------------------------------------
+def masraf_karti_var_mi(cursor, kod):
+    """StokMasrafKarti'de kod var mi? Varsa Id, yoksa None."""
+    cursor.execute("SELECT TOP 1 Id FROM StokMasrafKarti WHERE Kodu = ?", kod)
+    row = cursor.fetchone()
+    return int(row[0]) if row else None
+
+
+def masraf_karti_ac(kod, adi, firma_db=DEFAULT_FIRMA_DB, live=False,
+                    birim_guid=ADET_BIRIM_GUID, user_guid=SAVAS_USER_GUID,
+                    conn=None):
+    """
+    Tek masraf karti acar (StokMasrafKarti).
+    Donen dict: {kod, durum, id, mesaj}
+      durum: 'atlandi' | 'olusturulacak' | 'olusturuldu' | 'hata'
+    """
+    kod = (kod or "").strip()
+    adi = _tr_upper(adi)
+    if not kod:
+        return {"kod": kod, "durum": "hata", "id": None, "mesaj": "Bos kod"}
+
+    dis_baglanti = conn is not None
+    try:
+        if conn is None:
+            conn = get_connection(firma_db)
+        cur = conn.cursor()
+
+        mevcut = masraf_karti_var_mi(cur, kod)
+        if mevcut is not None:
+            return {"kod": kod, "durum": "atlandi", "id": mevcut,
+                    "mesaj": "Masraf karti zaten var (Id=%d)" % mevcut}
+
+        if not live:
+            return {"kod": kod, "durum": "olusturulacak", "id": None,
+                    "mesaj": "KURU: '%s' masraf karti acilacakti" % adi}
+
+        now = datetime.now()
+        cur.execute("""
+            INSERT INTO StokMasrafKarti
+                (Aktif, Kodu, Adi, StokBirimId,
+                 CreatedBy, CreationTime, ModifiedBy, ModificationTime, Acik)
+            OUTPUT INSERTED.Id
+            VALUES (1, ?, ?, ?, ?, ?, ?, ?, 0)
+        """, kod, adi, birim_guid, user_guid, now, user_guid, now)
+        yeni_id = int(cur.fetchone()[0])
+        conn.commit()
+        return {"kod": kod, "durum": "olusturuldu", "id": yeni_id,
+                "mesaj": "Masraf karti acildi (Id=%d)" % yeni_id}
+
+    except Exception as e:
+        try:
+            if conn is not None:
+                conn.rollback()
+        except Exception:
+            pass
+        return {"kod": kod, "durum": "hata", "id": None, "mesaj": str(e)}
+    finally:
+        if conn is not None and not dis_baglanti:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
+# ---------------------------------------------------------------------------
+# BOM / Recete baglantisi
+# ---------------------------------------------------------------------------
+def recete_bagla(parent_kod, parent_adi, parent_stok_id, child_stok_id, miktar,
+                 firma_db=DEFAULT_FIRMA_DB, live=False, conn=None):
+    """
+    parent_kod stok kodu icin UretimRecete + UretimReceteHatPlani olusturur (yoksa).
+    Sonra UretimReceteHatPlaniGirdi'ye child_stok_id + miktar ekler (yoksa).
+
+    Donen dict: {durum: 'olusturuldu'|'olusturulacak'|'atlandi'|'hata', mesaj}
+    """
+    dis_baglanti = conn is not None
+    try:
+        if conn is None:
+            conn = get_connection(firma_db)
+        cur = conn.cursor()
+
+        # 1. Mevcut UretimRecete + HatPlani kontrol
+        cur.execute(
+            "SELECT TOP 1 Id FROM UretimRecete WHERE Kodu = ? "
+            "AND (KullanimDisi IS NULL OR KullanimDisi = 0)",
+            parent_kod,
+        )
+        row = cur.fetchone()
+        recete_id    = row[0] if row else None
+        hat_plani_id = None
+
+        if recete_id is not None:
+            cur.execute(
+                "SELECT TOP 1 Id FROM UretimReceteHatPlani WHERE UretimReceteId = ?",
+                recete_id,
+            )
+            h = cur.fetchone()
+            hat_plani_id = h[0] if h else None
+
+        # 2. Girdi zaten var mi?
+        if hat_plani_id is not None:
+            cur.execute(
+                "SELECT TOP 1 Id FROM UretimReceteHatPlaniGirdi "
+                "WHERE UretimReceteHatPlaniId = ? AND KartId = ?",
+                hat_plani_id, child_stok_id,
+            )
+            if cur.fetchone():
+                return {"durum": "atlandi", "mesaj": "Girdi zaten mevcut"}
+
+        if not live:
+            parcalar = []
+            if recete_id is None:    parcalar.append("Recete")
+            if hat_plani_id is None: parcalar.append("HatPlani")
+            parcalar.append("Girdi")
+            return {"durum": "olusturulacak",
+                    "mesaj": "KURU: %s olusturulacakti" % "+".join(parcalar)}
+
+        # 3. UretimRecete olustur (yoksa) — Id IDENTITY, belirtme
+        if recete_id is None:
+            cur.execute(
+                "INSERT INTO UretimRecete (Kodu, Tanim, KullanimDisi) "
+                "OUTPUT INSERTED.Id VALUES (?, ?, 0)",
+                parent_kod, parent_adi or parent_kod,
+            )
+            recete_id = cur.fetchone()[0]
+
+        # 4. UretimReceteHatPlani olustur (yoksa) — Id IDENTITY, belirtme
+        if hat_plani_id is None:
+            cur.execute(
+                "INSERT INTO UretimReceteHatPlani (UretimReceteId, KartId) "
+                "OUTPUT INSERTED.Id VALUES (?, ?)",
+                recete_id, parent_stok_id,
+            )
+            hat_plani_id = cur.fetchone()[0]
+
+        # 5. Girdi ekle — Tipi=1 (StokKarti), SabitMiktar/GarantiKapsaminda zorunlu
+        cur.execute(
+            "INSERT INTO UretimReceteHatPlaniGirdi "
+            "(UretimReceteHatPlaniId, Tipi, KartId, Miktar, SabitMiktar, GarantiKapsaminda) "
+            "VALUES (?, 1, ?, ?, 0, 0)",
+            hat_plani_id, child_stok_id, float(miktar),
+        )
+
+        conn.commit()
+        return {"durum": "olusturuldu", "mesaj": "BOM baglantisi olusturuldu"}
+
+    except Exception as e:
+        try:
+            if conn is not None:
+                conn.rollback()
+        except Exception:
+            pass
+        return {"durum": "hata", "mesaj": str(e)}
+    finally:
+        if conn is not None and not dis_baglanti:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
+def recete_masraf_bagla(parent_kod, parent_adi, parent_stok_id, masraf_id, miktar,
+                        firma_db=DEFAULT_FIRMA_DB, live=False, conn=None):
+    """
+    parent_kod reçetesine masraf bileşeni (Tipi=2) ekler.
+    UretimRecete + HatPlani yoksa olusturur, sonra UretimReceteHatPlaniGirdi'ye
+    Tipi=2 ile ekler.
+    Donen dict: {durum, mesaj}
+    """
+    dis_baglanti = conn is not None
+    try:
+        if conn is None:
+            conn = get_connection(firma_db)
+        cur = conn.cursor()
+
+        cur.execute(
+            "SELECT TOP 1 Id FROM UretimRecete WHERE Kodu = ? "
+            "AND (KullanimDisi IS NULL OR KullanimDisi = 0)",
+            parent_kod,
+        )
+        row = cur.fetchone()
+        recete_id    = row[0] if row else None
+        hat_plani_id = None
+
+        if recete_id is not None:
+            cur.execute(
+                "SELECT TOP 1 Id FROM UretimReceteHatPlani WHERE UretimReceteId = ?",
+                recete_id,
+            )
+            h = cur.fetchone()
+            hat_plani_id = h[0] if h else None
+
+        if hat_plani_id is not None:
+            cur.execute(
+                "SELECT TOP 1 Id FROM UretimReceteHatPlaniGirdi "
+                "WHERE UretimReceteHatPlaniId = ? AND KartId = ? AND Tipi = 2",
+                hat_plani_id, masraf_id,
+            )
+            if cur.fetchone():
+                return {"durum": "atlandi", "mesaj": "Masraf girdisi zaten mevcut"}
+
+        if not live:
+            parcalar = []
+            if recete_id is None:    parcalar.append("Recete")
+            if hat_plani_id is None: parcalar.append("HatPlani")
+            parcalar.append("MasrafGirdi")
+            return {"durum": "olusturulacak",
+                    "mesaj": "KURU: %s olusturulacakti" % "+".join(parcalar)}
+
+        if recete_id is None:
+            cur.execute(
+                "INSERT INTO UretimRecete (Kodu, Tanim, KullanimDisi) "
+                "OUTPUT INSERTED.Id VALUES (?, ?, 0)",
+                parent_kod, parent_adi or parent_kod,
+            )
+            recete_id = cur.fetchone()[0]
+
+        if hat_plani_id is None:
+            cur.execute(
+                "INSERT INTO UretimReceteHatPlani (UretimReceteId, KartId) "
+                "OUTPUT INSERTED.Id VALUES (?, ?)",
+                recete_id, parent_stok_id,
+            )
+            hat_plani_id = cur.fetchone()[0]
+
+        cur.execute(
+            "INSERT INTO UretimReceteHatPlaniGirdi "
+            "(UretimReceteHatPlaniId, Tipi, KartId, Miktar, SabitMiktar, GarantiKapsaminda) "
+            "VALUES (?, 2, ?, ?, 0, 0)",
+            hat_plani_id, masraf_id, float(miktar),
+        )
+        conn.commit()
+        return {"durum": "olusturuldu", "mesaj": "Masraf BOM baglantisi olusturuldu"}
+
+    except Exception as e:
+        try:
+            if conn is not None:
+                conn.rollback()
+        except Exception:
+            pass
+        return {"durum": "hata", "mesaj": str(e)}
+    finally:
+        if conn is not None and not dis_baglanti:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
+# ---------------------------------------------------------------------------
+# BOM satiri guncelleme / silme
+# ---------------------------------------------------------------------------
+def recete_satiri_guncelle(girdi_id: int, yeni_miktar: float,
+                            live: bool = False, conn=None):
+    """
+    UretimReceteHatPlaniGirdi.Miktar'i gunceller.
+    Donen dict: {durum, mesaj}
+    """
+    dis_baglanti = conn is not None
+    try:
+        if conn is None:
+            conn = get_connection()
+        cur = conn.cursor()
+        if not live:
+            return {"durum": "olusturulacak",
+                    "mesaj": "KURU: Id=%d Miktar=%g güncellenecekti" % (girdi_id, yeni_miktar)}
+        cur.execute(
+            "UPDATE UretimReceteHatPlaniGirdi SET Miktar = ? WHERE Id = ?",
+            float(yeni_miktar), int(girdi_id),
+        )
+        conn.commit()
+        return {"durum": "guncellendi", "mesaj": "Miktar güncellendi"}
+    except Exception as e:
+        try:
+            if conn:
+                conn.rollback()
+        except Exception:
+            pass
+        return {"durum": "hata", "mesaj": str(e)}
+    finally:
+        if conn and not dis_baglanti:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
+def recete_satiri_sil(girdi_id: int, live: bool = False, conn=None):
+    """
+    UretimReceteHatPlaniGirdi satirini siler.
+    Donen dict: {durum, mesaj}
+    """
+    dis_baglanti = conn is not None
+    try:
+        if conn is None:
+            conn = get_connection()
+        cur = conn.cursor()
+        if not live:
+            return {"durum": "olusturulacak",
+                    "mesaj": "KURU: Id=%d silinecekti" % girdi_id}
+        cur.execute(
+            "DELETE FROM UretimReceteHatPlaniGirdi WHERE Id = ?", int(girdi_id)
+        )
+        conn.commit()
+        return {"durum": "silindi", "mesaj": "Bileşen silindi"}
+    except Exception as e:
+        try:
+            if conn:
+                conn.rollback()
+        except Exception:
+            pass
+        return {"durum": "hata", "mesaj": str(e)}
+    finally:
+        if conn and not dis_baglanti:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
 
 # ---------------------------------------------------------------------------

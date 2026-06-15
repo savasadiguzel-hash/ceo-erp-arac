@@ -2,7 +2,7 @@
 
 **GitHub:** https://github.com/savasadiguzel-hash/ceo-erp-arac  
 **Dağıtım:** `dist/CEO-ERP-Araclar.exe`  
-**Son güncelleme:** 2026-06-12
+**Son güncelleme:** 2026-06-15
 
 ---
 
@@ -17,6 +17,8 @@
 | Satış Faturaları | Tarih aralığına göre satış fatura/irsaliye listesi + Excel |
 | Üretim Eksik Stok | "Devam Ediyor" emirlerinde hat planı malzemeleri için eksik stok raporu |
 | Fatura Eşleştir | Gelen e-fatura kalemlerini stok kartlarıyla bulanık eşleştirme; satınalma notu üretir |
+| Reçete Sorgula | Stok kodunu hangi mamül ağaçlarında bileşen olarak kullandığını bulur (BFS) |
+| Stok Hazırlık | BOM ağacı oluşturma / yükleme / düzenleme + CEO ERP'ye yazma |
 
 ---
 
@@ -252,6 +254,94 @@ Gelen e-fatura kalemlerini CEO ERP stok kartlarıyla **bulanık eşleştirme** y
 
 **Fonksiyonlar:** `tools/fatura_eslestir.py` → `stok_kartlari_db`, `adaylar_bul`, `kova_ayir`, `kirli_neden`, `operasyon_mu`, `dagitim_hesapla`, `elle_dogrula`, `metin_blogu_olustur`  
 **UI:** `ui/tab_fatura_eslestir.py:FaturaEslestirTab`
+
+---
+
+## Reçete Sorgula Sekmesi
+
+Girilen stok / masraf kodlarının hangi mamül ağaçlarında **bileşen** olarak kullanıldığını bulur.
+
+**Akış:**
+1. Kodları metin kutusuna yaz (her satır bir kod) veya Excel'den yükle
+2. **Sorgula** → `bilesen_mamul_bul()` BFS ile tüm üst seviyeleri tarar
+3. Sonuçlar renkli tabloda: Direkt (yeşil) / Dolaylı (mavi) / Bağlantısız (kırmızı)
+4. **Excel'e Aktar** — 5 sütunlu xlsx
+
+**Masraf desteği:** `StokMasrafKarti` (Tipi=2) de sorgulanır — `GMP-xxx:110` gibi masraf kodları doğru mamüle bağlanır.
+
+**Fonksiyon:** `db/sorgular.py:bilesen_mamul_bul()`  
+**UI:** `ui/tab_recete_sorgula.py:ReceteSorgulaTab`
+
+---
+
+## Stok Hazırlık Sekmesi
+
+BOM (Malzeme Ağacı) oluşturma, yükleme, düzenleme ve CEO ERP'ye yazma.
+
+### Ağaç Yapısı
+
+QTreeWidget — 7 sütun: **Tip | Stok Kodu | Stok Adı | Stok Adı-2 | Miktar | Birim | Durum**
+
+Tip seçenekleri: `Hammadde / Yarımamül / Mamül / Reçete / Masraf`
+
+### Reçete Yükleme
+
+**Reçete Yükle** butonu → stok kodu sorar → `recete_yukle()` recursive ağacı çeker:
+
+- `Tipi=1` girdiler → `StokKarti` (normal malzeme/yarı mamül)
+- `Tipi=2` girdiler → `StokMasrafKarti` (masraf/işlem kartı — `GMP-xxx:NN` formatı)
+- Tüm seviyeleri recursive yükler (max 8 seviye, döngü korumalı)
+- Birim GUID → isim çözümü thread'de yapılır (`birimleri_getir()` sonucu)
+
+**Fonksiyon:** `db/sorgular.py:recete_yukle()`
+
+### Excel Aktar / Yükle
+
+**Excel'e Aktar** → Excel Outline formatı (native +/- satır grupları):
+- 7 sütun: Seviye | Tip | Stok Kodu | Stok Adı | Stok Adı-2 | Miktar | Birim
+- Derinlik bazlı arka plan renkleri; `summaryBelow=False`; freeze pane A2
+
+**Excel'den Yükle** — 3 format tanır:
+- Yeni format (Seviye kolonu ile)
+- Eski 6-kolon (girintili Stok Kodu)
+- Çok eski (A=Kod, B=Ad)
+
+### Kontrol Et / CANLI Aktar
+
+**Kontrol Et (Kuru):** Her öğe için kart varlığını kontrol eder (StokKarti veya StokMasrafKarti), BOM bağlantısını loglar.
+
+**CANLI Aktar — 3 faz:**
+
+| Faz | İşlem |
+|-----|-------|
+| 1 | Stok/masraf kartlarını aç (`stok_karti_ac` veya `masraf_karti_ac`) |
+| 2a | Yüklenen satırlarda miktar değişikliği → `UPDATE UretimReceteHatPlaniGirdi.Miktar` |
+| 2b | Yeni bileşenler → `recete_bagla()` (Tipi=1) veya `recete_masraf_bagla()` (Tipi=2) |
+| 3 | Ağaçtan silinen yüklü bileşenler → `DELETE UretimReceteHatPlaniGirdi` |
+
+### CEO ERP Tablo Yapısı
+
+```
+UretimRecete
+  └─ UretimReceteHatPlani  (KartId → StokKarti — mamülün kendi satırı)
+       └─ UretimReceteHatPlaniGirdi
+            ├─ Tipi=1  KartId → StokKarti       (hammadde / yarı mamül)
+            └─ Tipi=2  KartId → StokMasrafKarti  (masraf / işlem)
+```
+
+### Yeni ERP Fonksiyonları (`sw/erp_handler.py`)
+
+| Fonksiyon | Açıklama |
+|-----------|----------|
+| `masraf_karti_var_mi(cur, kod)` | `StokMasrafKarti`'de varlık kontrolü |
+| `masraf_karti_ac(kod, adi, ...)` | Yeni masraf kartı açar |
+| `recete_masraf_bagla(...)` | Reçeteye `Tipi=2` girdi ekler |
+| `recete_satiri_guncelle(girdi_id, miktar)` | Miktar günceller |
+| `recete_satiri_sil(girdi_id)` | Girdiyi siler |
+
+**Kritik:** `UretimReceteHatPlaniGirdi.Tipi` NOT NULL — INSERT'te `Tipi=1` veya `Tipi=2` zorunlu; `SabitMiktar=0`, `GarantiKapsaminda=0` da gerekli.
+
+**UI:** `ui/tab_stok_hazirla.py:StokHazirlaTab`
 
 ---
 

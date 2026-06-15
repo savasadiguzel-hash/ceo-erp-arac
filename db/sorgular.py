@@ -1089,3 +1089,319 @@ def satis_faturalari(conn, bas_tarih: str, bit_tarih: str) -> list[dict]:
             }
             for row in cur.fetchall()
         ]
+
+
+# ── Araç 8: Reçete Sorgula — Bileşen → Mamül Ağacı ───────────────────────────
+
+def bilesen_mamul_bul(conn, kodlar: list[str]) -> dict[str, dict]:
+    """
+    Verilen stok kodlarının hangi mamül ağaçlarında bileşen olarak kullanıldığını bulur.
+    BFS ile tüm seviyeleri (recursive) tarar: direkt ve dolaylı (alt montaj üzerinden).
+
+    Returns:
+        {giris_kodu: {
+            "mamullar": [{"kodu", "adi", "seviye"}, ...],  # seviye 1=direkt
+            "bulundu":    bool,
+            "kod_gecerli": bool,
+        }}
+    """
+    from collections import defaultdict
+
+    # 1. Tüm aktif BOM kenarları: mamül ID → bileşen ID
+    #    Tipi=1 (StokKarti) ve Tipi=2 (StokMasrafKarti) birlikte alınır.
+    with cursor_ctx(conn) as cur:
+        cur.execute("""
+            SELECT DISTINCT
+                sk_u.Id         AS MamulId,
+                sk_u.Kodu       AS MamulKodu,
+                sk_u.Adi        AS MamulAdi,
+                urhpg.KartId    AS BilesenId
+            FROM UretimRecete ur
+            JOIN StokKarti sk_u
+                ON sk_u.Kodu = ur.Kodu
+            JOIN UretimReceteHatPlani urhp
+                ON urhp.UretimReceteId = ur.Id
+            JOIN UretimReceteHatPlaniGirdi urhpg
+                ON urhpg.UretimReceteHatPlaniId = urhp.Id
+            WHERE (ur.KullanimDisi IS NULL OR ur.KullanimDisi = 0)
+              AND urhpg.KartId IS NOT NULL
+        """)
+        kenarlar = cur.fetchall()
+
+    mamul_bilgi: dict[int, dict] = {}
+    ust_harita: dict[int, set] = defaultdict(set)  # bilesen_id → {mamul_id, ...}
+
+    for mamul_id, mamul_kodu, mamul_adi, bilesen_id in kenarlar:
+        mid, bid = int(mamul_id), int(bilesen_id)
+        mamul_bilgi[mid] = {"kodu": mamul_kodu, "adi": str(mamul_adi or "").strip()}
+        ust_harita[bid].add(mid)
+
+    # 2. Girdi kodları → Id eşlemesi: StokKarti (Tipi=1) + StokMasrafKarti (Tipi=2)
+    with cursor_ctx(conn) as cur:
+        cur.execute("SELECT Id, Kodu FROM StokKarti WHERE Aktif = 1")
+        kodu_to_id: dict[str, int] = {r[1]: int(r[0]) for r in cur.fetchall()}
+    with cursor_ctx(conn) as cur:
+        cur.execute("SELECT Id, Kodu FROM StokMasrafKarti")
+        masraf_kodu_to_id: dict[str, int] = {r[1]: int(r[0]) for r in cur.fetchall()}
+
+    sonuclar: dict[str, dict] = {}
+
+    for giris_kodu in kodlar:
+        gk = giris_kodu.strip().upper()
+        if not gk:
+            continue
+
+        if gk not in kodu_to_id and gk not in masraf_kodu_to_id:
+            sonuclar[gk] = {"mamullar": [], "bulundu": False, "kod_gecerli": False}
+            continue
+
+        giris_id = kodu_to_id.get(gk) or masraf_kodu_to_id.get(gk)
+
+        # BFS yukarı: kısa yol garantili, döngü korumalı
+        min_seviye: dict[int, int] = {}
+        visited: set = {giris_id}
+        queue = [(giris_id, 0)]
+
+        while queue:
+            sonraki = []
+            for current_id, sev in queue:
+                for parent_id in ust_harita.get(current_id, set()):
+                    if parent_id not in visited:
+                        visited.add(parent_id)
+                        min_seviye[parent_id] = sev + 1
+                        sonraki.append((parent_id, sev + 1))
+            queue = sonraki
+
+        mamullar = sorted(
+            [
+                {
+                    "kodu":   mamul_bilgi[mid]["kodu"],
+                    "adi":    mamul_bilgi[mid]["adi"],
+                    "seviye": sev,
+                }
+                for mid, sev in min_seviye.items()
+                if mid in mamul_bilgi
+            ],
+            key=lambda x: (x["seviye"], x["kodu"]),
+        )
+
+        sonuclar[gk] = {
+            "mamullar": mamullar,
+            "bulundu":  bool(mamullar),
+            "kod_gecerli": True,
+        }
+
+    return sonuclar
+
+
+# ── Araç 9: Stok Hazırlık — Birimler / Reçete Kontrol ────────────────────────
+
+def recete_yukle(conn, mamul_kod: str, max_derinlik: int = 8) -> dict | None:
+    """
+    mamul_kod için CEO ERP'den reçete ağacını recursive yükler.
+    Döner nested dict veya None (reçete yok).
+
+    Dict yapısı (her node):
+      {kod, stok_id, adi, adi2, birim_guid, tip, girdi_id, org_miktar, miktar, children}
+    birim_guid: StokKarti.StokBirim kolonundan alınan GUID str (JOIN yok).
+                Thread tarafında isim çözümü yapılır.
+    girdi_id: bu öğenin parent reçetesindeki UretimReceteHatPlaniGirdi.Id
+              Root öğe için None.
+    """
+    # Tüm aktif reçete kodları — tek sorguda al
+    with cursor_ctx(conn) as cur:
+        cur.execute(
+            "SELECT Kodu FROM UretimRecete "
+            "WHERE KullanimDisi IS NULL OR KullanimDisi = 0"
+        )
+        recipe_codes: set[str] = {str(r[0]) for r in cur.fetchall()}
+
+    if mamul_kod not in recipe_codes:
+        return None
+
+    # Adi2 kolonu var mı? (tek seferlik; hata olursa rollback + devam)
+    _adi2_var = False
+    try:
+        with cursor_ctx(conn) as cur:
+            cur.execute("SELECT TOP 0 Adi2 FROM StokKarti")
+        _adi2_var = True
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+
+    def _fmt(f: float) -> str:
+        return str(int(f)) if f == int(f) else str(round(f, 4))
+
+    def _stok_bilgi(kod: str):
+        """StokKarti bilgisi. StokBirim tablosuna JOIN YAPMA — GUID doğrudan al."""
+        if _adi2_var:
+            q = ("SELECT Id, ISNULL(Adi,''), ISNULL(Adi2,''), "
+                 "ISNULL(CONVERT(NVARCHAR(50),StokBirim),'') "
+                 "FROM StokKarti WHERE Kodu = ? AND Aktif = 1")
+        else:
+            q = ("SELECT Id, ISNULL(Adi,''), '', "
+                 "ISNULL(CONVERT(NVARCHAR(50),StokBirim),'') "
+                 "FROM StokKarti WHERE Kodu = ? AND Aktif = 1")
+        with cursor_ctx(conn) as cur:
+            cur.execute(q, kod)
+            return cur.fetchone()
+
+    def _bilesenleri(kod: str) -> list:
+        """
+        Reçete bileşenleri. Tipi=1 → StokKarti, Tipi=2 → StokMasrafKarti.
+        Her satır: (c_kod, c_id, c_adi, c_adi2, c_birim_guid, c_girdi_id, c_miktar, c_tipi)
+        StokBirim JOIN yok — GUID direkt alınır.
+        """
+        # Tipi=1: normal stok bileşenleri
+        if _adi2_var:
+            q1 = """
+                SELECT sk.Kodu, sk.Id, ISNULL(sk.Adi,''), ISNULL(sk.Adi2,''),
+                       ISNULL(CONVERT(NVARCHAR(50), sk.StokBirim),''),
+                       urhpg.Id, urhpg.Miktar, 1
+                FROM UretimRecete ur
+                INNER JOIN UretimReceteHatPlani urhp ON urhp.UretimReceteId = ur.Id
+                INNER JOIN UretimReceteHatPlaniGirdi urhpg
+                    ON urhpg.UretimReceteHatPlaniId = urhp.Id
+                INNER JOIN StokKarti sk ON sk.Id = urhpg.KartId
+                WHERE ur.Kodu = ?
+                  AND (ur.KullanimDisi IS NULL OR ur.KullanimDisi = 0)
+                  AND urhpg.Tipi = 1
+                  AND sk.Aktif = 1
+            """
+        else:
+            q1 = """
+                SELECT sk.Kodu, sk.Id, ISNULL(sk.Adi,''), '',
+                       ISNULL(CONVERT(NVARCHAR(50), sk.StokBirim),''),
+                       urhpg.Id, urhpg.Miktar, 1
+                FROM UretimRecete ur
+                INNER JOIN UretimReceteHatPlani urhp ON urhp.UretimReceteId = ur.Id
+                INNER JOIN UretimReceteHatPlaniGirdi urhpg
+                    ON urhpg.UretimReceteHatPlaniId = urhp.Id
+                INNER JOIN StokKarti sk ON sk.Id = urhpg.KartId
+                WHERE ur.Kodu = ?
+                  AND (ur.KullanimDisi IS NULL OR ur.KullanimDisi = 0)
+                  AND urhpg.Tipi = 1
+                  AND sk.Aktif = 1
+            """
+        # Tipi=2: masraf bileşenleri (StokMasrafKarti — Adi2 yok, birim StokBirimId)
+        q2 = """
+            SELECT smk.Kodu, smk.Id, ISNULL(smk.Adi,''), '',
+                   ISNULL(CONVERT(NVARCHAR(50), smk.StokBirimId),''),
+                   urhpg.Id, urhpg.Miktar, 2
+            FROM UretimRecete ur
+            INNER JOIN UretimReceteHatPlani urhp ON urhp.UretimReceteId = ur.Id
+            INNER JOIN UretimReceteHatPlaniGirdi urhpg
+                ON urhpg.UretimReceteHatPlaniId = urhp.Id
+            INNER JOIN StokMasrafKarti smk ON smk.Id = urhpg.KartId
+            WHERE ur.Kodu = ?
+              AND (ur.KullanimDisi IS NULL OR ur.KullanimDisi = 0)
+              AND urhpg.Tipi = 2
+        """
+        with cursor_ctx(conn) as cur:
+            cur.execute(q1, kod)
+            rows = cur.fetchall()
+        with cursor_ctx(conn) as cur:
+            cur.execute(q2, kod)
+            rows = rows + cur.fetchall()
+        return rows
+
+    ziyaret_edildi: set[str] = set()
+
+    def _yukle(kod: str, girdi_id, org_miktar: float, depth: int) -> dict | None:
+        if depth > max_derinlik or kod in ziyaret_edildi:
+            return None
+        ziyaret_edildi.add(kod)
+        try:
+            sb = _stok_bilgi(kod)
+            if not sb:
+                return None
+            stok_id = int(sb[0])
+            adi, adi2, birim_guid = str(sb[1]), str(sb[2]), str(sb[3] or "")
+
+            children = []
+            if kod in recipe_codes:
+                for row in _bilesenleri(kod):
+                    c_kod, c_id, c_adi, c_adi2, c_birim_guid, c_girdi_id, c_miktar, c_tipi = row
+                    if c_tipi == 2:
+                        # Masraf bileşeni — StokMasrafKarti, her zaman yaprak düğüm
+                        children.append({
+                            "kod":        str(c_kod),
+                            "stok_id":    int(c_id),
+                            "adi":        str(c_adi),
+                            "adi2":       "",
+                            "birim_guid": str(c_birim_guid or ""),
+                            "birim_adi":  "ADET",
+                            "tip":        "Masraf",
+                            "girdi_id":   int(c_girdi_id),
+                            "org_miktar": float(c_miktar or 1.0),
+                            "miktar":     _fmt(float(c_miktar or 1.0)),
+                            "children":   [],
+                        })
+                    else:
+                        child = _yukle(str(c_kod), int(c_girdi_id), float(c_miktar or 1.0), depth + 1)
+                        if child:
+                            children.append(child)
+
+            if depth == 0:
+                tip = "Mamül"
+            elif children:
+                tip = "Reçete"
+            else:
+                tip = "Hammadde"
+
+            return {
+                "kod":        kod,
+                "stok_id":    stok_id,
+                "adi":        adi,
+                "adi2":       adi2,
+                "birim_guid": birim_guid,   # thread GUID → adi çözümü yapar
+                "birim_adi":  "ADET",       # thread tarafında güncellenir
+                "tip":        tip,
+                "girdi_id":   girdi_id,
+                "org_miktar": org_miktar,
+                "miktar":     _fmt(org_miktar),
+                "children":   children,
+            }
+        finally:
+            ziyaret_edildi.discard(kod)
+
+    return _yukle(mamul_kod, None, 1.0, 0)
+
+
+def birimleri_getir(conn) -> dict:
+    """StokBirim → {Adi: Id_str}; hata olursa ADET fallback."""
+    try:
+        with cursor_ctx(conn) as cur:
+            cur.execute("SELECT Id, Adi FROM StokBirim WHERE Aktif = 1 ORDER BY Adi")
+            return {r[1]: str(r[0]) for r in cur.fetchall()}
+    except Exception:
+        return {"ADET": "4acc21e3-3140-4863-922d-a0b3d35de8c1"}
+
+
+def recete_var_mi(conn, parent_kod: str) -> tuple:
+    """
+    parent_kod için UretimRecete ve ilk HatPlani Id'lerini döner.
+    Döner: (recete_id, hat_plani_id) — biri veya ikisi None olabilir.
+    """
+    try:
+        with cursor_ctx(conn) as cur:
+            cur.execute(
+                "SELECT TOP 1 Id FROM UretimRecete "
+                "WHERE Kodu = ? AND (KullanimDisi IS NULL OR KullanimDisi = 0)",
+                parent_kod,
+            )
+            row = cur.fetchone()
+        if not row:
+            return None, None
+        recete_id = row[0]
+        with cursor_ctx(conn) as cur:
+            cur.execute(
+                "SELECT TOP 1 Id FROM UretimReceteHatPlani WHERE UretimReceteId = ?",
+                recete_id,
+            )
+            h = cur.fetchone()
+        return recete_id, (h[0] if h else None)
+    except Exception:
+        return None, None
