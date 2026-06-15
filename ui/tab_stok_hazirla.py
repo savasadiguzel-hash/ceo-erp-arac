@@ -5,6 +5,7 @@ organize eder; CEO ERP'de kontrol eder, eksik kartları açar, BOM bağlantılar
 """
 from __future__ import annotations
 
+import copy
 from pathlib import Path
 from typing import Optional
 
@@ -15,10 +16,12 @@ from PyQt5.QtWidgets import (
     QPlainTextEdit, QTreeWidget, QTreeWidgetItem, QHeaderView,
     QMessageBox, QFileDialog, QComboBox, QStyledItemDelegate,
     QAbstractItemView, QInputDialog,
-    QDialog, QLineEdit, QListWidget, QListWidgetItem, QDialogButtonBox,
+    QDialog, QLineEdit, QListWidget, QListWidgetItem, QDialogButtonBox, QMenu,
+    QGraphicsView, QGraphicsScene, QGraphicsPathItem,
+    QGraphicsTextItem,
 )
-from PyQt5.QtCore import Qt, QThread, pyqtSignal
-from PyQt5.QtGui import QColor, QTextCursor
+from PyQt5.QtCore import Qt, QThread, QTimer, pyqtSignal, QRectF
+from PyQt5.QtGui import QColor, QTextCursor, QPen, QBrush, QPainterPath, QPainter
 
 from config import DB_DEFAULTS
 
@@ -308,6 +311,84 @@ class _ReceteSecDialog(QDialog):
         return self._secilen_kod
 
 
+class _EbeveynSecDialog(QDialog):
+    """BOM diyagramında düğüm taşıma için yeni ebeveyn seçim dialog'u."""
+
+    def __init__(self, hareketli_node: dict, hedefler: list, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Yeni Ebeveyn Seç — %s" % hareketli_node.get("kod", ""))
+        self.setMinimumSize(480, 400)
+        self._secilen: Optional[str] = None
+
+        # İlk seçenek: kök'e taşı
+        self._hedefler = [{"kod": None, "adi": "[ Kök seviyesine taşı ]", "tip": ""}] + hedefler
+
+        lay = QVBoxLayout(self)
+        lay.setSpacing(8)
+        lay.setContentsMargins(12, 12, 12, 12)
+
+        self._ara = QLineEdit()
+        self._ara.setPlaceholderText("Kod veya ada göre filtrele…")
+        self._ara.setStyleSheet(
+            "QLineEdit{border:1.5px solid #9fa8da;border-radius:6px;"
+            "padding:6px 10px;background:white;font-size:12px;}"
+            "QLineEdit:focus{border-color:#3f51b5;}"
+        )
+        self._ara.textChanged.connect(self._filtrele)
+        lay.addWidget(self._ara)
+
+        self._liste = QListWidget()
+        self._liste.setStyleSheet(
+            "QListWidget{border:1px solid #e8eaf6;border-radius:6px;background:white;}"
+            "QListWidget::item{padding:5px 8px;font-size:12px;}"
+            "QListWidget::item:selected{background:#bbdefb;color:#0d47a1;}"
+            "QListWidget::item:hover{background:#e3f2fd;}"
+        )
+        self._liste.itemDoubleClicked.connect(self.accept)
+        lay.addWidget(self._liste, stretch=1)
+
+        self._sayac = QLabel("")
+        self._sayac.setStyleSheet("color:#9e9e9e;font-size:11px;")
+        lay.addWidget(self._sayac)
+
+        btn = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        btn.button(QDialogButtonBox.Ok).setText("Seç")
+        btn.button(QDialogButtonBox.Cancel).setText("İptal")
+        btn.button(QDialogButtonBox.Ok).setStyleSheet(_BTN_MAVI)
+        btn.accepted.connect(self.accept)
+        btn.rejected.connect(self.reject)
+        lay.addWidget(btn)
+
+        self._filtrele("")
+        self._ara.setFocus()
+
+    def _filtrele(self, metin: str):
+        self._liste.clear()
+        metin = metin.strip().lower()
+        for h in self._hedefler:
+            if h["kod"] is None:
+                etiket = "[ Kök seviyesine taşı ]"
+            else:
+                etiket = "%s — %s (%s)" % (h["kod"], h["adi"], h["tip"])
+            if not metin or metin in etiket.lower():
+                it = QListWidgetItem(etiket)
+                it.setData(Qt.UserRole, h["kod"])
+                self._liste.addItem(it)
+        n = self._liste.count()
+        self._sayac.setText("%d hedef" % n)
+        if n:
+            self._liste.setCurrentRow(0)
+
+    def accept(self):
+        cur = self._liste.currentItem()
+        if cur:
+            self._secilen = cur.data(Qt.UserRole)
+        super().accept()
+
+    def secilen_kod(self) -> Optional[str]:
+        return self._secilen
+
+
 # ── Thread: Reçete Yükle ─────────────────────────────────────────────────────
 
 class _ReceteYukleThread(QThread):
@@ -584,6 +665,199 @@ class _AktarThread(QThread):
             self.hata.emit(str(e))
 
 
+# ── BOM harita sabitleri ─────────────────────────────────────────────────────
+
+_NODE_W, _NODE_H, _GAP_X, _GAP_Y = 180, 72, 24, 56
+_TIP_RENK = {
+    "Mamül":     ("#e8eaf6", "#3949ab"),
+    "Yarımamül": ("#f3e5f5", "#8e24aa"),
+    "Hammadde":  ("#e8f5e9", "#43a047"),
+    "Masraf":    ("#fff3e0", "#fb8c00"),
+    "Reçete":    ("#e1f5fe", "#039be5"),
+}
+_TIP_RENK_DEFAULT = ("#f5f5f5", "#757575")
+
+
+class _DugumItem(QGraphicsPathItem):
+    """BOM düğüm kutusu — context menu VIEW seviyesinde yakalanır."""
+
+    def __init__(self, path, node_dict: dict, harita_ref):
+        super().__init__(path)
+        self._node = node_dict
+        self._harita = harita_ref
+
+
+class _ReceteHaritaWidget(QGraphicsView):
+    """Salt-okunur BOM ağaç diyagramı — kutucuklar ve L-bağlantı çizgileri."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._sahne = QGraphicsScene(self)
+        self.setScene(self._sahne)
+        self.setFrameShape(QGraphicsView.NoFrame)
+        self.setRenderHint(QPainter.Antialiasing)
+        self.setRenderHint(QPainter.TextAntialiasing)
+        self.setDragMode(QGraphicsView.ScrollHandDrag)
+        self.setBackgroundBrush(QBrush(QColor("#fafafa")))
+        self.setMinimumWidth(280)
+        self.setToolTip("BOM Diyagramı — tekerlek: zoom · sol tık: pan · sağ tık: taşı")
+        self._nodes: list = []
+
+    def guncelle(self, nodes_list: list):
+        self._nodes = copy.deepcopy(nodes_list)
+        self._sahne.clear()
+        if not self._nodes:
+            return
+        x = 0.0
+        for root in self._nodes:
+            self._yerles(root, x, 0.0)
+            x += self._genislik(root) + _GAP_X
+        rect = self._sahne.itemsBoundingRect()
+        self.fitInView(rect, Qt.KeepAspectRatio)
+        # Büyük ağaçlarda minimum okunaklı zoom: kök üstte, scroll ile gez
+        if self.transform().m11() < 0.30:
+            self.resetTransform()
+            self.scale(0.30, 0.30)
+            vp_half = self.viewport().height() / (2 * 0.30)
+            self.centerOn(rect.center().x(), rect.top() + vp_half)
+
+    def temizle(self):
+        self._sahne.clear()
+        self._nodes = []
+
+    def degisiklikleri_al(self) -> list:
+        return self._nodes
+
+    # ── ağaç manipülasyonu ────────────────────────────────────────────────────
+
+    def _valid_targets(self, nodes: list, haric_kod: str, sonuc=None) -> list:
+        if sonuc is None:
+            sonuc = []
+        for n in nodes:
+            if n["kod"] == haric_kod:
+                continue  # bu düğümün tüm alt ağacını atla
+            sonuc.append({"kod": n["kod"], "adi": n["adi"], "tip": n["tip"]})
+            self._valid_targets(n.get("children", []), haric_kod, sonuc)
+        return sonuc
+
+    def _dugumu_kaldir(self, nodes: list, kod: str) -> Optional[dict]:
+        for i, n in enumerate(nodes):
+            if n["kod"] == kod:
+                return nodes.pop(i)
+            buldu = self._dugumu_kaldir(n.get("children", []), kod)
+            if buldu is not None:
+                return buldu
+        return None
+
+    def _dugumu_ekle(self, nodes: list, parent_kod: Optional[str], dugum: dict) -> bool:
+        if parent_kod is None:
+            nodes.append(dugum)
+            return True
+        for n in nodes:
+            if n["kod"] == parent_kod:
+                n.setdefault("children", []).append(dugum)
+                return True
+            if self._dugumu_ekle(n.get("children", []), parent_kod, dugum):
+                return True
+        return False
+
+    def _ebeveyn_degistir(self, node_dict: dict):
+        hedefler = self._valid_targets(self._nodes, node_dict["kod"])
+        dlg = _EbeveynSecDialog(node_dict, hedefler, parent=self)
+        if dlg.exec_() != QDialog.Accepted:
+            return
+        yeni_parent_kod = dlg.secilen_kod()
+        tasınan = self._dugumu_kaldir(self._nodes, node_dict["kod"])
+        if tasınan is None:
+            return
+        self._dugumu_ekle(self._nodes, yeni_parent_kod, tasınan)
+        # contextMenuEvent hâlâ bu item içinde yürütülüyor;
+        # sahneyi anında temizlemek (clear) use-after-free çökmesine yol açar.
+        # singleShot(0) event handler dönene kadar erteleyerek bunu önler.
+        nodes_snap = copy.deepcopy(self._nodes)
+        QTimer.singleShot(0, lambda: self.guncelle(nodes_snap))
+
+    def wheelEvent(self, event):
+        factor = 1.25 if event.angleDelta().y() > 0 else 0.8
+        self.scale(factor, factor)
+
+    def contextMenuEvent(self, event):
+        # QGraphicsTextItem üstte olabileceği için itemAt tek item döndürmez;
+        # tüm item'ları tara ve ilk _DugumItem'ı bul.
+        scene_pos = self.mapToScene(event.pos())
+        dugum = next(
+            (it for it in self._sahne.items(scene_pos) if isinstance(it, _DugumItem)),
+            None
+        )
+        if dugum is None:
+            super().contextMenuEvent(event)
+            return
+        menu = QMenu(self)
+        act = menu.addAction("🔁  Ebeveynini Değiştir")
+        chosen = menu.exec_(event.globalPos())
+        if chosen == act:
+            self._ebeveyn_degistir(dugum._node)
+
+    def _genislik(self, node: dict) -> float:
+        children = node.get("children", [])
+        if not children:
+            return float(_NODE_W)
+        total = sum(self._genislik(c) for c in children) + _GAP_X * (len(children) - 1)
+        return max(float(_NODE_W), total)
+
+    def _yerles(self, node: dict, x: float, y: float):
+        self._dugum_ciz(node, x, y)
+        children = node.get("children", [])
+        if not children:
+            return
+        toplam = sum(self._genislik(c) for c in children) + _GAP_X * (len(children) - 1)
+        cx = x + _NODE_W / 2 - toplam / 2
+        cy = y + _NODE_H + _GAP_Y
+        for child in children:
+            cw = self._genislik(child)
+            child_x = cx + cw / 2 - _NODE_W / 2
+            self._baglanti_ciz(x + _NODE_W / 2, y + _NODE_H, child_x + _NODE_W / 2, cy)
+            self._yerles(child, child_x, cy)
+            cx += cw + _GAP_X
+
+    def _dugum_ciz(self, node: dict, x: float, y: float):
+        tip = node.get("tip", "")
+        fill, border = _TIP_RENK.get(tip, _TIP_RENK_DEFAULT)
+        path = QPainterPath()
+        path.addRoundedRect(QRectF(x, y, _NODE_W, _NODE_H), 8, 8)
+        box = _DugumItem(path, node, self)
+        box.setBrush(QBrush(QColor(fill)))
+        box.setPen(QPen(QColor(border), 1.8))
+        self._sahne.addItem(box)
+        kod = node.get("kod", "—")
+        adi = node.get("adi", "")
+        miktar = node.get("miktar", "")
+        birim = node.get("birim", "")
+        adi_k = adi[:22] + ("…" if len(adi) > 22 else "")
+        html = (
+            f'<div style="font-size:9px;color:{border};">{tip}</div>'
+            f'<div style="font-size:11px;font-weight:bold;color:#212121;">{kod}</div>'
+            f'<div style="font-size:9px;color:#555;">{adi_k}</div>'
+            f'<div style="font-size:9px;color:#757575;">{miktar} {birim}</div>'
+        )
+        t = QGraphicsTextItem()
+        t.setHtml(html)
+        t.setTextWidth(_NODE_W - 8)
+        t.setPos(x + 4, y + 3)
+        self._sahne.addItem(t)
+
+    def _baglanti_ciz(self, px: float, py: float, cx: float, cy: float):
+        mid_y = (py + cy) / 2
+        path = QPainterPath()
+        path.moveTo(px, py)
+        path.lineTo(px, mid_y)
+        path.lineTo(cx, mid_y)
+        path.lineTo(cx, cy)
+        item = QGraphicsPathItem(path)
+        item.setPen(QPen(QColor("#9e9e9e"), 1.5, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+        self._sahne.addItem(item)
+
+
 # ── Ana sekme widget'ı ────────────────────────────────────────────────────────
 
 class StokHazirlaTab(QWidget):
@@ -598,6 +872,7 @@ class StokHazirlaTab(QWidget):
         self._uid_harita           : dict[int, QTreeWidgetItem]  = {}
         self._birim_yuklendi       : bool                        = False
         self._yuklenen_girdi_ids   : set[int]                    = set()
+        self._bom_nodes            : list                          = []
 
         ana = QVBoxLayout(self)
         ana.setContentsMargins(12, 12, 12, 10)
@@ -663,6 +938,18 @@ class StokHazirlaTab(QWidget):
         self._yukle_btn.clicked.connect(self._recete_yukle)
         row1.addWidget(self._yukle_btn)
 
+        self._bom_btn = QPushButton("🗺  BOM Diyagramı")
+        self._bom_btn.setStyleSheet(
+            "QPushButton{background:#4a148c;color:white;border:none;"
+            "border-radius:4px;padding:5px 14px;font-size:13px;}"
+            "QPushButton:hover{background:#6a1b9a;}"
+            "QPushButton:disabled{background:#bdbdbd;color:#757575;}"
+        )
+        self._bom_btn.setToolTip("BOM ağacını görsel diyagram penceresinde aç")
+        self._bom_btn.setEnabled(False)
+        self._bom_btn.clicked.connect(self._bom_goster)
+        row1.addWidget(self._bom_btn)
+
         row1.addStretch()
         vlay.addLayout(row1)
 
@@ -716,6 +1003,90 @@ class StokHazirlaTab(QWidget):
 
         vlay.addLayout(row2)
         return w
+
+    def _bom_goster(self):
+        if not self._bom_nodes:
+            return
+        dlg = QDialog(self)
+        dlg.setWindowTitle("BOM Diyagramı")
+        dlg.setWindowFlags(
+            dlg.windowFlags()
+            | Qt.WindowMaximizeButtonHint
+            | Qt.WindowMinimizeButtonHint
+        )
+        lay = QVBoxLayout(dlg)
+        lay.setContentsMargins(0, 4, 0, 8)
+        lay.setSpacing(6)
+
+        harita = _ReceteHaritaWidget()
+        lay.addWidget(harita, stretch=1)
+
+        bar = QHBoxLayout()
+        bar.setContentsMargins(12, 0, 12, 0)
+        bar.addStretch()
+
+        sifirla_btn = QPushButton("↩  Sıfırla")
+        sifirla_btn.setStyleSheet(_BTN_GERI)
+        sifirla_btn.setToolTip("Tüm değişiklikleri geri al ve orijinal ağacı yükle")
+        bar.addWidget(sifirla_btn)
+
+        kaydet_btn = QPushButton("💾  Kaydet")
+        kaydet_btn.setStyleSheet(_BTN_YESIL)
+        kaydet_btn.setToolTip("Diyagram değişikliklerini Stok Hazırlık ağacına yansıt")
+        bar.addWidget(kaydet_btn)
+        lay.addLayout(bar)
+
+        nodes_orijinal = copy.deepcopy(self._bom_nodes)
+        QTimer.singleShot(0, lambda: harita.guncelle(nodes_orijinal))
+
+        def _kaydet():
+            degisen = harita.degisiklikleri_al()
+            self._bom_nodes = copy.deepcopy(degisen)
+            self._agac_nodes_yukle(degisen)
+            self._log_yaz("[BOM] Diyagram değişiklikleri ağaca yansıtıldı.")
+            dlg.accept()
+
+        def _sifirla():
+            harita.guncelle(nodes_orijinal)
+
+        kaydet_btn.clicked.connect(_kaydet)
+        sifirla_btn.clicked.connect(_sifirla)
+
+        dlg.showMaximized()
+        dlg.exec_()
+
+    def _agac_nodes_yukle(self, nodes_list: list):
+        """BOM node listesini QTreeWidget'a yansıt (diyagram kaydet sonrası)."""
+        self._agac.clear()
+        self._uid_harita.clear()
+        self._uid_say = 0
+        self._yuklenen_girdi_ids.clear()
+
+        def _ekle(node: dict, parent):
+            item = self._item_olustur(
+                tip=node.get("tip", "Hammadde"),
+                kod=node.get("kod", ""),
+                adi=node.get("adi", ""),
+                adi2=node.get("adi2", ""),
+                miktar=str(node.get("miktar", "1")),
+                birim=node.get("birim", "ADET"),
+            )
+            girdi_id   = node.get("girdi_id")
+            org_miktar = node.get("org_miktar")
+            item.setData(_COL_TIP, _ROLE_GIRDI_ID,   girdi_id)
+            item.setData(_COL_TIP, _ROLE_ORG_MIKTAR, org_miktar)
+            if girdi_id is not None:
+                self._yuklenen_girdi_ids.add(int(girdi_id))
+            if parent is None:
+                self._agac.addTopLevelItem(item)
+            else:
+                parent.addChild(item)
+            for child in node.get("children", []):
+                _ekle(child, item)
+
+        for node in nodes_list:
+            _ekle(node, None)
+        self._agac.expandAll()
 
     # ── ağaç ─────────────────────────────────────────────────────────────────
 
@@ -823,6 +1194,8 @@ class StokHazirlaTab(QWidget):
         self._yuklenen_girdi_ids.clear()
         self._log.clear()
         self._ozet_lbl.setText("Ağaca öğe ekleyin veya Excel'den yükleyin.")
+        self._bom_nodes = []
+        self._bom_btn.setEnabled(False)
 
     # ── Excel yükleme ─────────────────────────────────────────────────────────
 
@@ -915,6 +1288,8 @@ class StokHazirlaTab(QWidget):
             wb.close()
             self._log_yaz("Excel: %d satır eklendi (%s)" % (eklendi, Path(path).name))
             self.durum_guncelle.emit("Stok Hazırlık: %d satır yüklendi." % eklendi)
+            self._bom_nodes = self._agac_verisi_al()
+            self._bom_btn.setEnabled(bool(self._bom_nodes))
         except Exception as e:
             QMessageBox.critical(self, "Excel Hatası", "Dosya okunamadı:\n%s" % e)
 
@@ -1125,6 +1500,8 @@ class StokHazirlaTab(QWidget):
 
         self._items_yukle_olustur(sonuc, parent=None)
         self._agac.expandAll()
+        self._bom_nodes = self._agac_verisi_al()
+        self._bom_btn.setEnabled(bool(self._bom_nodes))
 
         n_girdi = len(self._yuklenen_girdi_ids)
         flat    = _dfs([sonuc])

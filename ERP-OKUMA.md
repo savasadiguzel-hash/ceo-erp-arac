@@ -2,7 +2,7 @@
 
 **GitHub:** https://github.com/savasadiguzel-hash/ceo-erp-arac  
 **Dağıtım:** `dist/CEO-ERP-Araclar.exe`  
-**Son güncelleme:** 2026-06-15
+**Son güncelleme:** 2026-06-16
 
 ---
 
@@ -283,6 +283,31 @@ BOM (Malzeme Ağacı) oluşturma, yükleme, düzenleme ve CEO ERP'ye yazma.
 QTreeWidget — 7 sütun: **Tip | Stok Kodu | Stok Adı | Stok Adı-2 | Miktar | Birim | Durum**
 
 Tip seçenekleri: `Hammadde / Yarımamül / Mamül / Reçete / Masraf`
+
+### BOM Görsel Diyagram
+
+**BOM Diyagramı** butonu (mor, "Reçete Yükle" yanında) — reçete veya Excel yüklendikten sonra aktif olur.
+
+Butona basınca maximize dialog açılır:
+
+| Eylem | Davranış |
+|---|---|
+| Fare tekerleği | Zoom in / out (1.25× adım) |
+| Sol tık + sürükle | Kaydırma (pan) |
+| Sağ tık → kutucuk | "Ebeveynini Değiştir" context menu |
+| **Ebeveynini Değiştir** | Arama kutulu liste → yeni ebeveyn seç; tüm alt ağaç birlikte taşınır |
+| **Kaydet** | Diyagram değişiklikleri QTreeWidget'a yansır, dialog kapanır |
+| **Sıfırla** | Diyagramı orijinal yüklü hale döndürür |
+
+**Düğüm renkleri:** Mamül (indigo) / Reçete (açık mavi) / Hammadde (yeşil) / Yarımamül (mor) / Masraf (turuncu)
+
+**Teknik:** `_ReceteHaritaWidget(QGraphicsView)` + `_DugumItem(QGraphicsPathItem)` + `_EbeveynSecDialog`.  
+Context menu VIEW seviyesinde yakalanır (`scene.items(pos)` ile `_DugumItem` bulunur) — item seviyesi event çökmesi önlenir.  
+Sahne yeniden çizimi `QTimer.singleShot(0, ...)` ile ertelenerek event handler içinden `scene.clear()` çakışması engellenir.
+
+**`_agac_nodes_yukle(nodes_list)`** — Kaydet sonrası diyagram yapısını QTreeWidget'a geri yazar; `girdi_id` / `org_miktar` rolleri korunur (CANLI Aktar akışı bozulmaz).
+
+---
 
 ### Reçete Yükleme
 
