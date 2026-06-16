@@ -685,6 +685,17 @@ class _DugumItem(QGraphicsPathItem):
         super().__init__(path)
         self._node = node_dict
         self._harita = harita_ref
+        self.setFlag(QGraphicsPathItem.ItemIsSelectable, True)
+
+    def paint(self, painter, option, widget=None):
+        from PyQt5.QtWidgets import QStyleOptionGraphicsItem, QStyle
+        opt = QStyleOptionGraphicsItem(option)
+        opt.state &= ~QStyle.State_Selected   # Qt'nin varsayılan kesik çizgisini kapat
+        super().paint(painter, opt, widget)
+        if self.isSelected():
+            painter.setPen(QPen(QColor("#f57c00"), 3.0))
+            painter.setBrush(Qt.NoBrush)
+            painter.drawPath(self.path())
 
 
 class _ReceteHaritaWidget(QGraphicsView):
@@ -700,7 +711,11 @@ class _ReceteHaritaWidget(QGraphicsView):
         self.setDragMode(QGraphicsView.ScrollHandDrag)
         self.setBackgroundBrush(QBrush(QColor("#fafafa")))
         self.setMinimumWidth(280)
-        self.setToolTip("BOM Diyagramı — tekerlek: zoom · sol tık: pan · sağ tık: taşı")
+        self.setFocusPolicy(Qt.StrongFocus)
+        self.setToolTip(
+            "BOM Diyagramı — tekerlek: zoom · sol tık: pan\n"
+            "CTRL+sol tık: çoklu seçim · sağ tık: menü"
+        )
         self._nodes: list = []
 
     def guncelle(self, nodes_list: list):
@@ -777,6 +792,62 @@ class _ReceteHaritaWidget(QGraphicsView):
         nodes_snap = copy.deepcopy(self._nodes)
         QTimer.singleShot(0, lambda: self.guncelle(nodes_snap))
 
+    def _dugum_atasi_mi(self, node: dict, hedef_kod: str) -> bool:
+        """node'un alt ağacında hedef_kod var mı? (döngü koruması)"""
+        for child in node.get("children", []):
+            if child["kod"] == hedef_kod:
+                return True
+            if self._dugum_atasi_mi(child, hedef_kod):
+                return True
+        return False
+
+    def _secilileri_bagla(self, hedef_node: dict, secili_dugumler: list):
+        """Seçili düğümleri (alt ağaçlarıyla) hedef_node'un çocuğu yap."""
+        hedef_kod = hedef_node["kod"]
+
+        # Hedef düğümü seçimden çıkar; döngü yaratacakları filtrele
+        tasınacaklar = [
+            it for it in secili_dugumler
+            if it._node["kod"] != hedef_kod
+            and not self._dugum_atasi_mi(it._node, hedef_kod)
+        ]
+        if not tasınacaklar:
+            QMessageBox.information(
+                self, "Bağlama",
+                "Taşınabilecek düğüm bulunamadı.\n"
+                "(Hedef, seçili düğümlerin alt ağacında olabilir.)")
+            return
+
+        # Yarımamül → Reçete dönüşümü onayı
+        if hedef_node.get("tip") == "Yarımamül":
+            cevap = QMessageBox.question(
+                self, "Tip Dönüşümü",
+                "Hedef düğüm <b>%s</b> Yarımamül tipinde.\n\n"
+                "Reçete'ye dönüştürülsün mü?" % hedef_kod,
+                QMessageBox.Yes | QMessageBox.No,
+            )
+            if cevap == QMessageBox.Yes:
+                hedef_node["tip"] = "Reçete"
+
+        for item in tasınacaklar:
+            tasınan = self._dugumu_kaldir(self._nodes, item._node["kod"])
+            if tasınan is not None:
+                hedef_node.setdefault("children", []).append(tasınan)
+
+        nodes_snap = copy.deepcopy(self._nodes)
+        QTimer.singleShot(0, lambda: self.guncelle(nodes_snap))
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key_Control:
+            self.setDragMode(QGraphicsView.NoDrag)
+            self.viewport().setCursor(Qt.ArrowCursor)
+        super().keyPressEvent(event)
+
+    def keyReleaseEvent(self, event):
+        if event.key() == Qt.Key_Control:
+            self.setDragMode(QGraphicsView.ScrollHandDrag)
+        super().keyReleaseEvent(event)
+
     def wheelEvent(self, event):
         factor = 1.25 if event.angleDelta().y() > 0 else 0.8
         self.scale(factor, factor)
@@ -792,11 +863,21 @@ class _ReceteHaritaWidget(QGraphicsView):
         if dugum is None:
             super().contextMenuEvent(event)
             return
+
+        secili = [it for it in self._sahne.selectedItems() if isinstance(it, _DugumItem)]
         menu = QMenu(self)
-        act = menu.addAction("🔁  Ebeveynini Değiştir")
-        chosen = menu.exec_(event.globalPos())
-        if chosen == act:
-            self._ebeveyn_degistir(dugum._node)
+
+        if secili:
+            act = menu.addAction(
+                "🔗  Seçilileri Buraya Bağla  (%d düğüm)" % len(secili))
+            chosen = menu.exec_(event.globalPos())
+            if chosen == act:
+                self._secilileri_bagla(dugum._node, secili)
+        else:
+            act = menu.addAction("🔁  Ebeveynini Değiştir")
+            chosen = menu.exec_(event.globalPos())
+            if chosen == act:
+                self._ebeveyn_degistir(dugum._node)
 
     def _genislik(self, node: dict) -> float:
         children = node.get("children", [])

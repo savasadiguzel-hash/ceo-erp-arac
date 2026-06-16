@@ -2,7 +2,7 @@
 
 **GitHub:** https://github.com/savasadiguzel-hash/ceo-erp-arac  
 **Dağıtım:** `dist/CEO-ERP-Araclar.exe`  
-**Son güncelleme:** 2026-06-16
+**Son güncelleme:** 2026-06-16 (BOM çoklu seçim + bağlama)
 
 ---
 
@@ -294,14 +294,19 @@ Butona basınca maximize dialog açılır:
 |---|---|
 | Fare tekerleği | Zoom in / out (1.25× adım) |
 | Sol tık + sürükle | Kaydırma (pan) |
-| Sağ tık → kutucuk | "Ebeveynini Değiştir" context menu |
+| **CTRL + sol tık** | Çoklu seçim (turuncu çerçeve); CTRL bırakılınca pan moduna döner |
+| Sağ tık → seçim YOK | "Ebeveynini Değiştir" context menu |
+| Sağ tık → seçim VAR | "Seçilileri Buraya Bağla (N düğüm)" — seçili düğümleri tıklanan kutucuğa bağlar |
 | **Ebeveynini Değiştir** | Arama kutulu liste → yeni ebeveyn seç; tüm alt ağaç birlikte taşınır |
+| **Seçilileri Buraya Bağla** | Her seçili düğüm alt ağacıyla birlikte hedefin çocuğu olur; hedef Yarımamülse Reçete'ye dönüştürme onayı sorar; döngü koruması vardır |
 | **Kaydet** | Diyagram değişiklikleri QTreeWidget'a yansır, dialog kapanır |
 | **Sıfırla** | Diyagramı orijinal yüklü hale döndürür |
 
-**Düğüm renkleri:** Mamül (indigo) / Reçete (açık mavi) / Hammadde (yeşil) / Yarımamül (mor) / Masraf (turuncu)
+**Düğüm renkleri:** Mamül (indigo) / Reçete (açık mavi) / Hammadde (yeşil) / Yarımamül (mor) / Masraf (turuncu)  
+**Seçili düğüm:** Turuncu kalın çerçeve (`#f57c00`, 3px) — Qt varsayılan kesik çizgi `QStyle.State_Selected` maskesiyle kapatılır.
 
 **Teknik:** `_ReceteHaritaWidget(QGraphicsView)` + `_DugumItem(QGraphicsPathItem)` + `_EbeveynSecDialog`.  
+`_DugumItem.ItemIsSelectable` flag ile Qt'nin seçim altyapısı kullanılır; `keyPressEvent` CTRL algılayıp `NoDrag ↔ ScrollHandDrag` arası geçiş yapar.  
 Context menu VIEW seviyesinde yakalanır (`scene.items(pos)` ile `_DugumItem` bulunur) — item seviyesi event çökmesi önlenir.  
 Sahne yeniden çizimi `QTimer.singleShot(0, ...)` ile ertelenerek event handler içinden `scene.clear()` çakışması engellenir.
 
