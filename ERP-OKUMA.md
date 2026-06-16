@@ -1,8 +1,8 @@
 # CEO ERP Araçları
 
 **GitHub:** https://github.com/savasadiguzel-hash/ceo-erp-arac  
-**Dağıtım:** `dist/CEO-ERP-Araclar.exe`  
-**Son güncelleme:** 2026-06-16 (Kesişim Kümesi → Stok Adı-2 eklendi)
+**Dağıtım:** `dist/CEO-ERP-Araclar.exe` · `dist/CEO-ERP-Kurulum.exe` (Inno Setup)  
+**Son güncelleme:** 2026-06-16 (Kurulum paketi + Kesişim Kümesi Stok Adı-2)
 
 ---
 
@@ -140,6 +140,8 @@ Kalan uyumsuzluğun kök nedeni: CEO stok kartı ekstresi **depo+period spesifik
 
 ## Kurulum
 
+### Geliştirici Ortamı
+
 ```
 git clone https://github.com/savasadiguzel-hash/ceo-erp-arac
 pip install -r requirements.txt
@@ -152,14 +154,33 @@ GEMINI_API_KEY=...
 CEO_SQL_CONN=DRIVER={SQL Server};SERVER=WIN-3FATBI9RQAA\CEO1;UID=sa;PWD=...
 ```
 
-Derleme: `build.bat` → `dist/CEO-ERP-Araclar.exe` + `copy config.json dist\config.json`
+Exe derleme: `build.bat` → `dist/CEO-ERP-Araclar.exe` + `copy config.json dist\config.json`
+
+### Şirket İçi Dağıtım (Yeni PC)
+
+**Gereksinim:** Inno Setup 6 ([jrsoftware.org/isdl.php](https://jrsoftware.org/isdl.php)) — yalnızca paketi derleyen makinede.
+
+```
+build.bat              ← önce exe derle
+create_installer.bat   ← ardından kurulum paketi oluştur
+```
+
+Çıktı: `dist\CEO-ERP-Kurulum.exe` (~72 MB, her şey dahil)
+
+**Hedef PC'de kurulum:**
+1. `CEO-ERP-Kurulum.exe` çalıştır → sihirbaz `Program Files\CEO ERP Araclar\` altına kurar
+2. Başlat Menüsü + isteğe bağlı masaüstü kısayolu otomatik oluşur
+3. İlk çalıştırmada bağlantı bilgileri girilir → `config.json` otomatik kaydedilir
+4. Güncelleme kurulumlarında mevcut `config.json` korunur
+
+**Ekstra bağımlılık yok** — Windows yerleşik `DRIVER={SQL Server}` sürücüsü yeterli.
 
 ---
 
 ## Klasör Yapısı
 
 ```
-main.py / config.py / config.json / build.bat
+main.py / config.py / config.json / build.bat / setup.iss / create_installer.bat
 db/      baglanti.py, sorgular.py
 logic/   maliyet.py, excel.py, excel_is_emri.py, pdf_is_emri.py
 tools/   fatura_eslestir.py, mutabakat.py
