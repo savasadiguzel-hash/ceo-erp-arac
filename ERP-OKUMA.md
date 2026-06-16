@@ -2,7 +2,7 @@
 
 **GitHub:** https://github.com/savasadiguzel-hash/ceo-erp-arac  
 **Dağıtım:** `dist/CEO-ERP-Araclar.exe`  
-**Son güncelleme:** 2026-06-16 (BOM çoklu seçim + bağlama)
+**Son güncelleme:** 2026-06-16 (Kesişim Kümesi → Stok Adı-2 eklendi)
 
 ---
 
@@ -19,6 +19,7 @@
 | Fatura Eşleştir | Gelen e-fatura kalemlerini stok kartlarıyla bulanık eşleştirme; satınalma notu üretir |
 | Reçete Sorgula | Stok kodunu hangi mamül ağaçlarında bileşen olarak kullandığını bulur (BFS) |
 | Stok Hazırlık | BOM ağacı oluşturma / yükleme / düzenleme + CEO ERP'ye yazma |
+| İş Emri Formu | Tüm durumlardaki üretim emirlerini listeler; checkbox seçim + toplu PDF çıktısı; boş doldurulabilir Excel formu (A4) |
 
 ---
 
@@ -29,7 +30,7 @@
 **Fiyat yöntemi:** FIFO / LIFO / Ağırlıklı Ortalama — tarama başlamadan seçilir.
 
 **Excel çıktısı — 2 sayfa:**
-- `Kesişim Kümesi` — stok bazında özet (7 sütun)
+- `Kesişim Kümesi` — stok bazında özet (8 sütun: Stok Kodu / Stok Adı / **Stok Adı-2** / Fatura Sayısı / Birim Fiyat / İlk Fatura / Son Fatura / Tedarikçi)
 - `Fatura Detayları` — her fatura satırı ayrı (9 sütun)
 
 **Kritik filtreler:**
@@ -67,46 +68,12 @@
 
 ### Bakiye Formülü (CEO `fnStokBakiyeGetir` inline — tarih filtreli)
 
-CEO ERP'nin kendi `fnStokBakiyeGetir` scalar fonksiyonunun mantığı, tarih filtresi eklenerek Python'dan çağrılabilir hâle getirildi.
-
-**GirenMiktar:** `IslemKodu IN (1, 4, 5, 8, 15, 16, 20, 22, 26, 29)`
-
-| Kod | Açıklama |
-|---|---|
-| 1 | Alış Faturası |
-| 4 | Satış İade Faturası |
-| 5 | Alış İrsaliyesi (FaturaDetayId bağlıysa net = 0 → çift sayım önlenir) |
-| 8 | Üretim Faturası |
-| 15 | Devir Girişi |
-| 16 | Üretimden Giriş |
-| 20 | Sayım Fazlası |
-| 22 | Devir Girişi |
-| 26 | Konsinye Giriş |
-| 29 | Diğer Giriş |
-
-**CikanMiktar:** `IslemKodu IN (2, 3, 6, 7, 17, 18, 19, 21, 23, 24, 28)`
-
-| Kod | Açıklama |
-|---|---|
-| 2 | Satış Faturası |
-| 3 | Alış İade Faturası |
-| 6 | Satış İrsaliyesi |
-| 7 | Üretim İade Faturası |
-| 17 | Üretime Çıkış |
-| 18 | Depolar Arası Çıkış |
-| 19 | Sayım Eksiği |
-| 21 | Fire |
-| **23** | **Depolar Arası Giriş — CEO `StokHareketIsGiris(23)=0` (ÇIKIŞ sayar)** |
-| 24 | Konsinye Çıkış |
-| 28 | Diğer Çıkış |
-
-**CEO `fnStokBakiyeGetir` SQL (tarih filtreli inline):**
 ```sql
 SUM(CASE
     WHEN sh.IslemKodu IN (1,4,5,8,15,16,20,22,26,29)
-        THEN (shd.Miktar - ISNULL(shd_f.Miktar, 0))
+        THEN (shd.Miktar - ISNULL(shd_f.Miktar, 0))   -- GirenMiktar
     WHEN sh.IslemKodu IN (2,3,6,7,17,18,19,21,24,28)
-        THEN -(shd.Miktar - ISNULL(shd_f.Miktar, 0))
+        THEN -(shd.Miktar - ISNULL(shd_f.Miktar, 0))  -- CikanMiktar
     ELSE 0
 END)
 FROM StokHareketDetay shd
@@ -119,10 +86,12 @@ WHERE shd.Turu = 1 AND shd.Aktif = 1
   AND CAST(sh.BelgeTarihi AS DATE) <= CAST(? AS DATE)
 ```
 
-**Üç kilit kural (CEO'dan alınmış):**
-1. `sh.FaturaId IS NULL` — faturalaşmış irsaliyeler (k5/k6 where FaturaId IS NOT NULL) otomatik hariç, çift sayım engellenir
-2. `NOT IN (9,10,11,12,13,14,25,27,23)` — konsinye hareketler + k23 (Depolar Arası Giriş) hariç; k23 toplam şirket stoğunu değiştirmez
-3. `FaturaDetayId` deduction — henüz faturalaşmamış ama kısmi ödenen irsaliyeler için
+**Üç kilit kural:**
+1. `sh.FaturaId IS NULL` — faturalaşmış irsaliyeler (k5/k6) otomatik hariç, çift sayım engellenir
+2. `NOT IN (9..27,23)` — konsinye hareketler + k23 (Depolar Arası Giriş) hariç; k23 toplam stoğu değiştirmez
+3. `FaturaDetayId` deduction — kısmi ödenen irsaliyeler için
+
+**Not:** k23 (Depolar Arası Giriş) ÇIKIŞ sayılır — CEO `StokHareketIsGiris(23)=0` mantığıyla örtüşür.
 
 **Tarih filtresi:** `BelgeTarihi <= UretimEmriTarihi`
 
@@ -147,41 +116,14 @@ WHERE shd.Turu = 1 AND shd.Aktif = 1
 - **ATP kümülatif rezervasyon:** eski emirlerin talebi yeni emirlerin net bakiyesinden düşülür
 - Net Eksik = ERP Bakiyesi − İhtiyaç − Önceki Rezervasyon (yalnızca > 0 satırlar yazılır)
 - 9 sütun: İş Emri Tarihi / No / Açıklama / Stok Kodu / Adı / İhtiyaç / ERP Bakiyesi / Önceki Rezervasyon / Net Eksik
-- Emir grupları mor header ile; Net Eksik kırmızı/kalın; `auto_filter` tüm sütunlara
 
 **Fonksiyon:** `db/sorgular.py:muhasebe_eksik_raporu_olustur()`
 
-### Bakiye Doğrulaması — CEO Stok Kartı Ekstresi (2026-06-12)
+### Bakiye Formülü Doğrulaması
 
-Referans: `dist/Stok Kartı Ekstresi_12062026190248.xlsx` (932 kart). **Metot E** (`tani_multi_seed.py`, 5 seed × 20 kart).
+CEO `fnStokBakiyeGetir` inline formülü 932 kartlık ekstrede ~%92 eşleşme sağlar (eski v1 formülü %60-70'di).
 
-| Seed | Eşleşme | Oran | Uyumsuz kartlar |
-|---|---|---|---|
-| 42  | 16/20 | %80  | BC81725TP(+1244), GMP-200-230065(-2), HMGMTRM0009(+54), RMCF0805FT10K0(+189) |
-| 99  | 18/20 | %90  | GMP-200-230538(-1), GMP-200-230555(-1) |
-| 777 | 19/20 | **%95** | MAL215097011E3(+6) |
-| 1234| 17/20 | %85  | 09-3782-91-08(-5), GMP-110-230025(+1), MAX98357A(+6) |
-| 5678| 19/20 | **%95** | GMP-101-230035(+5) |
-
-**Ortalama eşleşme:** ~%92 (Metot E %89, eski formül %60-70'di)
-
-| Seed | Metot E | CEO formülü |
-|---|---|---|
-| 42 | 16/20 (%80) | **17/20 (%85)** |
-| 99 | 18/20 (%90) | **20/20 (%100)** |
-| 777 | 19/20 (%95) | 18/20 (%90) |
-| 1234 | 17/20 (%85) | **18/20 (%90)** |
-| 5678 | 19/20 (%95) | 19/20 (%95) |
-
-**Kalan uyumsuzlukların kök nedeni:**
-- CEO stok kartı ekstresi **depo+period spesifik** bakiye gösterir; `fnStokBakiyeGetir` (ve bizim formülümüz) **toplam şirket all-time** bakiyesi hesaplar
-- Fark pozitif (+): bizim formülümüz CEO extract'tan fazla stok gösteriyor → DB'de olmayan June 2026 hareketleri veya depo senkron sorunu
-- MAL215097011E3: CEO extract'te Haz 2026'da k23 hareketleri var, DB'de yok (veri senkron sorunu)
-
-**Formül evrimi:**
-- v1 (eski): `IslemKodu IN (1,16,20,22)` — k5/k4/k20 eksikti
-- v2 (Metot E): CEO `StokHareketIsGiris` sign map + k23 çıkış
-- **v3 (güncel)**: CEO `fnStokBakiyeGetir` EXACT inline — `FaturaId IS NULL` + `NOT IN (9..23)` + `shd.Turu=1`
+Kalan uyumsuzluğun kök nedeni: CEO stok kartı ekstresi **depo+period spesifik** gösterir; bizim formülümüz **toplam şirket all-time** bakiyesi hesaplar.
 
 ---
 
@@ -219,10 +161,12 @@ Derleme: `build.bat` → `dist/CEO-ERP-Araclar.exe` + `copy config.json dist\con
 ```
 main.py / config.py / config.json / build.bat
 db/      baglanti.py, sorgular.py
-logic/   maliyet.py, excel.py
+logic/   maliyet.py, excel.py, excel_is_emri.py, pdf_is_emri.py
 tools/   fatura_eslestir.py, mutabakat.py
 ui/      ana_pencere.py, maliyet.py, mamul_agaci_tab.py, tarama.py, eslestirme.py, rapor.py
-         tab_satis_faturalari.py, tab_erp_aktar.py, tab_sw.py, tab_uretim_raporu.py, tab_fatura_eslestir.py, baglanti.py, stil.py
+         tab_satis_faturalari.py, tab_erp_aktar.py, tab_sw.py, tab_uretim_raporu.py
+         tab_fatura_eslestir.py, tab_recete_sorgula.py, tab_stok_hazirla.py
+         tab_is_emri_formu.py, baglanti.py, stil.py
 sw/      classifier, pipeline, renamer, erp_handler, vision_handler
 referans/faturalar/  test_kalemleri.json
 dist/    CEO-ERP-Araclar.exe, config.json
@@ -237,22 +181,19 @@ Gelen e-fatura kalemlerini CEO ERP stok kartlarıyla **bulanık eşleştirme** y
 **Giriş:** JSON dosyası (QFileDialog) veya "Örnek Yükle" (`referans/faturalar/test_kalemleri.json`)
 
 **Akış:**
-1. **Bağlan ve Stok Yükle** — `BaglantiThread` → `StokYuklemeThread` → `StokKarti WHERE Aktif=1` (arka plan, UI donmaz)
-2. **JSON Yükle** — kalem listesi renk badge'li: GÜÇLÜ (yeşil) / GÖZDEN GEÇİR (turuncu) / KART YOK (kırmızı) / İŞÇİLİK (mavi) / MUHTELİF (gri)
-3. **Eşleştir** — `EslestirmeThread` → her kalem için `adaylar_bul()` (`token_set_ratio`, üst 5 aday) + `operasyon_mu()` + `kova_ayir()`
-4. Kalem seçince sağ üstte aday listesi (skor + etiket); muhtelif seçilince sağ altta dağıtım tablosu aktif
-5. **Dağıtım** — yöntem: Eşit / Ağırlık / Miktar / Elle; `dagitim_hesapla()` + `elle_dogrula()` ile tutar sütunu doldurulur
-6. **Satınalma Metni Üret** → `metin_blogu_olustur()` → QTextEdit; Kopyala / Dosyaya Kaydet
+1. **Bağlan ve Stok Yükle** → `StokKarti WHERE Aktif=1` (arka plan, UI donmaz)
+2. **JSON Yükle** → kalem listesi renk badge'li: GÜÇLÜ / GÖZDEN GEÇİR / KART YOK / İŞÇİLİK / MUHTELİF
+3. **Eşleştir** → `adaylar_bul()` (`token_set_ratio`, üst 5 aday) + `operasyon_mu()` + `kova_ayir()`
+4. Kalem seçince sağ üstte aday listesi; muhtelif seçilince dağıtım tablosu aktif
+5. **Dağıtım** — Eşit / Ağırlık / Miktar / Elle
+6. **Satınalma Metni Üret** → QTextEdit; Kopyala / Dosyaya Kaydet
 
 **Eşleştirme mantığı (`tools/fatura_eslestir.py`):**
 - Türkçe normalize: `İŞĞÜÇÖ` → büyük harf
-- Ölçü token çıkarımı: CAP_ (Ø çap) / KESIT_ (AxB kesit) / KAL_ (304/316) / FORM_ (DOLU/LAMA/SAC/BORU)
+- Ölçü token çıkarımı: CAP_ / KESIT_ / KAL_ / FORM_
 - Eleme tavanı: çakışan token → 59.9; eksik token → 84.9
 - Eşik: GÜÇLÜ ≥ 85, GÖZDEN GEÇİR ≥ 60
 
-**Kritik kural:** CEO ERP'ye YAZMA YOK — yalnızca `StokKarti` okuma.
-
-**Fonksiyonlar:** `tools/fatura_eslestir.py` → `stok_kartlari_db`, `adaylar_bul`, `kova_ayir`, `kirli_neden`, `operasyon_mu`, `dagitim_hesapla`, `elle_dogrula`, `metin_blogu_olustur`  
 **UI:** `ui/tab_fatura_eslestir.py:FaturaEslestirTab`
 
 ---
@@ -261,13 +202,9 @@ Gelen e-fatura kalemlerini CEO ERP stok kartlarıyla **bulanık eşleştirme** y
 
 Girilen stok / masraf kodlarının hangi mamül ağaçlarında **bileşen** olarak kullanıldığını bulur.
 
-**Akış:**
-1. Kodları metin kutusuna yaz (her satır bir kod) veya Excel'den yükle
-2. **Sorgula** → `bilesen_mamul_bul()` BFS ile tüm üst seviyeleri tarar
-3. Sonuçlar renkli tabloda: Direkt (yeşil) / Dolaylı (mavi) / Bağlantısız (kırmızı)
-4. **Excel'e Aktar** — 5 sütunlu xlsx
+**Akış:** Kodları yaz (veya Excel'den yükle) → **Sorgula** → BFS ile tüm üst seviyeleri tarar → renkli tablo (Direkt / Dolaylı / Bağlantısız) → Excel çıktısı (5 sütun)
 
-**Masraf desteği:** `StokMasrafKarti` (Tipi=2) de sorgulanır — `GMP-xxx:110` gibi masraf kodları doğru mamüle bağlanır.
+**Masraf desteği:** `StokMasrafKarti` (Tipi=2) de sorgulanır.
 
 **Fonksiyon:** `db/sorgular.py:bilesen_mamul_bul()`  
 **UI:** `ui/tab_recete_sorgula.py:ReceteSorgulaTab`
@@ -276,7 +213,7 @@ Girilen stok / masraf kodlarının hangi mamül ağaçlarında **bileşen** olar
 
 ## Stok Hazırlık Sekmesi
 
-BOM (Malzeme Ağacı) oluşturma, yükleme, düzenleme ve CEO ERP'ye yazma.
+BOM ağacı oluşturma, yükleme, düzenleme ve CEO ERP'ye yazma.
 
 ### Ağaç Yapısı
 
@@ -286,92 +223,71 @@ Tip seçenekleri: `Hammadde / Yarımamül / Mamül / Reçete / Masraf`
 
 ### BOM Görsel Diyagram
 
-**BOM Diyagramı** butonu (mor, "Reçete Yükle" yanında) — reçete veya Excel yüklendikten sonra aktif olur.
-
-Butona basınca maximize dialog açılır:
+**BOM Diyagramı** butonu (mor) — reçete veya Excel yüklendikten sonra aktif olur.
 
 | Eylem | Davranış |
 |---|---|
-| Fare tekerleği | Zoom in / out (1.25× adım) |
+| Fare tekerleği | Zoom in / out |
 | Sol tık + sürükle | Kaydırma (pan) |
-| **CTRL + sol tık** | Çoklu seçim (turuncu çerçeve); CTRL bırakılınca pan moduna döner |
+| CTRL + sol tık | Çoklu seçim (turuncu çerçeve) |
 | Sağ tık → seçim YOK | "Ebeveynini Değiştir" context menu |
-| Sağ tık → seçim VAR | "Seçilileri Buraya Bağla (N düğüm)" — seçili düğümleri tıklanan kutucuğa bağlar |
-| **Ebeveynini Değiştir** | Arama kutulu liste → yeni ebeveyn seç; tüm alt ağaç birlikte taşınır |
-| **Seçilileri Buraya Bağla** | Her seçili düğüm alt ağacıyla birlikte hedefin çocuğu olur; hedef Yarımamülse Reçete'ye dönüştürme onayı sorar; döngü koruması vardır |
-| **Kaydet** | Diyagram değişiklikleri QTreeWidget'a yansır, dialog kapanır |
-| **Sıfırla** | Diyagramı orijinal yüklü hale döndürür |
+| Sağ tık → seçim VAR | "Seçilileri Buraya Bağla (N düğüm)" |
+| **Kaydet** | Diyagram değişiklikleri QTreeWidget'a yansır |
+| **Sıfırla** | Orijinal yüklü hâle döner |
 
-**Düğüm renkleri:** Mamül (indigo) / Reçete (açık mavi) / Hammadde (yeşil) / Yarımamül (mor) / Masraf (turuncu)  
-**Seçili düğüm:** Turuncu kalın çerçeve (`#f57c00`, 3px) — Qt varsayılan kesik çizgi `QStyle.State_Selected` maskesiyle kapatılır.
+**Düğüm renkleri:** Mamül (indigo) / Reçete (açık mavi) / Hammadde (yeşil) / Yarımamül (mor) / Masraf (turuncu)
 
-**Teknik:** `_ReceteHaritaWidget(QGraphicsView)` + `_DugumItem(QGraphicsPathItem)` + `_EbeveynSecDialog`.  
-`_DugumItem.ItemIsSelectable` flag ile Qt'nin seçim altyapısı kullanılır; `keyPressEvent` CTRL algılayıp `NoDrag ↔ ScrollHandDrag` arası geçiş yapar.  
-Context menu VIEW seviyesinde yakalanır (`scene.items(pos)` ile `_DugumItem` bulunur) — item seviyesi event çökmesi önlenir.  
-Sahne yeniden çizimi `QTimer.singleShot(0, ...)` ile ertelenerek event handler içinden `scene.clear()` çakışması engellenir.
-
-**`_agac_nodes_yukle(nodes_list)`** — Kaydet sonrası diyagram yapısını QTreeWidget'a geri yazar; `girdi_id` / `org_miktar` rolleri korunur (CANLI Aktar akışı bozulmaz).
-
----
+**Teknik:** `_ReceteHaritaWidget(QGraphicsView)` + `_DugumItem(QGraphicsPathItem)`. Context menu VIEW seviyesinde yakalanır; sahne yeniden çizimi `QTimer.singleShot(0, ...)` ile ertelenir.
 
 ### Reçete Yükleme
 
-**Reçete Yükle** butonu → stok kodu sorar → `recete_yukle()` recursive ağacı çeker:
-
-- `Tipi=1` girdiler → `StokKarti` (normal malzeme/yarı mamül)
-- `Tipi=2` girdiler → `StokMasrafKarti` (masraf/işlem kartı — `GMP-xxx:NN` formatı)
-- Tüm seviyeleri recursive yükler (max 8 seviye, döngü korumalı)
-- Birim GUID → isim çözümü thread'de yapılır (`birimleri_getir()` sonucu)
-
-**Fonksiyon:** `db/sorgular.py:recete_yukle()`
+**Reçete Yükle** → `recete_yukle()` recursive ağacı çeker:
+- `Tipi=1` → `StokKarti` (hammadde / yarı mamül)
+- `Tipi=2` → `StokMasrafKarti` (masraf / işlem — `GMP-xxx:NN` formatı)
+- Max 8 seviye, döngü korumalı; birim GUID → isim çözümü thread'de yapılır
 
 ### Excel Aktar / Yükle
 
-**Excel'e Aktar** → Excel Outline formatı (native +/- satır grupları):
-- 7 sütun: Seviye | Tip | Stok Kodu | Stok Adı | Stok Adı-2 | Miktar | Birim
-- Derinlik bazlı arka plan renkleri; `summaryBelow=False`; freeze pane A2
+**Excel'e Aktar** → 7 sütun (Seviye / Tip / Stok Kodu / Stok Adı / Stok Adı-2 / Miktar / Birim), derinlik bazlı renkler, native +/- satır grupları.
 
-**Excel'den Yükle** — 3 format tanır:
-- Yeni format (Seviye kolonu ile)
-- Eski 6-kolon (girintili Stok Kodu)
-- Çok eski (A=Kod, B=Ad)
+**Excel'den Yükle** — 3 format tanır (yeni / eski 6-kolon / çok eski).
 
 ### Kontrol Et / CANLI Aktar
-
-**Kontrol Et (Kuru):** Her öğe için kart varlığını kontrol eder (StokKarti veya StokMasrafKarti), BOM bağlantısını loglar.
 
 **CANLI Aktar — 3 faz:**
 
 | Faz | İşlem |
 |-----|-------|
-| 1 | Stok/masraf kartlarını aç (`stok_karti_ac` veya `masraf_karti_ac`) |
-| 2a | Yüklenen satırlarda miktar değişikliği → `UPDATE UretimReceteHatPlaniGirdi.Miktar` |
-| 2b | Yeni bileşenler → `recete_bagla()` (Tipi=1) veya `recete_masraf_bagla()` (Tipi=2) |
+| 1 | Stok/masraf kartlarını aç |
+| 2a | Miktar değişikliği → `UPDATE UretimReceteHatPlaniGirdi.Miktar` |
+| 2b | Yeni bileşenler → `recete_bagla()` (Tipi=1) / `recete_masraf_bagla()` (Tipi=2) |
 | 3 | Ağaçtan silinen yüklü bileşenler → `DELETE UretimReceteHatPlaniGirdi` |
 
 ### CEO ERP Tablo Yapısı
 
 ```
 UretimRecete
-  └─ UretimReceteHatPlani  (KartId → StokKarti — mamülün kendi satırı)
+  └─ UretimReceteHatPlani  (KartId → StokKarti)
        └─ UretimReceteHatPlaniGirdi
             ├─ Tipi=1  KartId → StokKarti       (hammadde / yarı mamül)
             └─ Tipi=2  KartId → StokMasrafKarti  (masraf / işlem)
 ```
 
-### Yeni ERP Fonksiyonları (`sw/erp_handler.py`)
-
-| Fonksiyon | Açıklama |
-|-----------|----------|
-| `masraf_karti_var_mi(cur, kod)` | `StokMasrafKarti`'de varlık kontrolü |
-| `masraf_karti_ac(kod, adi, ...)` | Yeni masraf kartı açar |
-| `recete_masraf_bagla(...)` | Reçeteye `Tipi=2` girdi ekler |
-| `recete_satiri_guncelle(girdi_id, miktar)` | Miktar günceller |
-| `recete_satiri_sil(girdi_id)` | Girdiyi siler |
-
-**Kritik:** `UretimReceteHatPlaniGirdi.Tipi` NOT NULL — INSERT'te `Tipi=1` veya `Tipi=2` zorunlu; `SabitMiktar=0`, `GarantiKapsaminda=0` da gerekli.
+**Kritik:** `UretimReceteHatPlaniGirdi.Tipi` NOT NULL — INSERT'te `Tipi=1/2` zorunlu; `SabitMiktar=0`, `GarantiKapsaminda=0` da gerekli.
 
 **UI:** `ui/tab_stok_hazirla.py:StokHazirlaTab`
+
+---
+
+## İş Emri Formu Sekmesi
+
+- Tüm durumlardaki üretim emirleri listelenir (aktif + tamamlanmış)
+- Checkbox ile tekli/çoklu seçim → **Toplu PDF** çıktısı (A4, şirket logolu)
+- **Boş Excel Formu** — doldurulabilir xlsx (PDF ile aynı stil, A4 baskıya hazır)
+
+**Fonksiyonlar:** `db/sorgular.py:tum_is_emirleri_listesi()`, `is_emri_malzeme_listesi()`  
+**UI:** `ui/tab_is_emri_formu.py`  
+**PDF:** `logic/pdf_is_emri.py` · **Excel:** `logic/excel_is_emri.py`
 
 ---
 

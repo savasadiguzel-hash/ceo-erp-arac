@@ -80,6 +80,7 @@ def recetesiz_stok_hareketleri(conn, bas_tarih: str, bit_tarih: str) -> list[dic
             SELECT
                 sk.Kodu,
                 sk.Adi,
+                ISNULL(sk.Adi2, ''),
                 sh.Id,
                 CASE sh.IslemKodu WHEN 1 THEN 'Alış Faturası' ELSE 'Alış İrsaliyesi' END,
                 ISNULL(sh.BelgeSeriNo, '') + ISNULL(CAST(sh.BelgeSiraNo AS VARCHAR(20)), '') ,
@@ -115,15 +116,16 @@ def recetesiz_stok_hareketleri(conn, bas_tarih: str, bit_tarih: str) -> list[dic
             {
                 'stok_kodu':   row[0],
                 'stok_adi':    row[1],
-                'hareket_id':  int(row[2]),
-                'islem_turu':  row[3],
-                'belge_no':    row[4],
-                'tarih':       row[5],
-                'tarih_iso':   row[6],
-                'miktar':      float(row[7]),
-                'birim_fiyat': float(row[8]),
-                'tutar':       float(row[9]),
-                'tedarikci':   row[10],
+                'stok_adi2':   row[2],
+                'hareket_id':  int(row[3]),
+                'islem_turu':  row[4],
+                'belge_no':    row[5],
+                'tarih':       row[6],
+                'tarih_iso':   row[7],
+                'miktar':      float(row[8]),
+                'birim_fiyat': float(row[9]),
+                'tutar':       float(row[10]),
+                'tedarikci':   row[11],
             }
             for row in cur.fetchall()
         ]
@@ -160,6 +162,7 @@ def recetesiz_faturali_ozet(hareketler: list[dict], yontem: str) -> list[dict]:
         ozet.append({
             'stok_kodu':   stok_kodu,
             'stok_adi':    grup[0]['stok_adi'],
+            'stok_adi2':   grup[0].get('stok_adi2', ''),
             'fatura_sayisi': len(set(h['hareket_id'] for h in grup)),
             'birim_fiyat': round(birim_fiyat, 4),
             'ilk_fatura':  sirali[0]['tarih'],
@@ -1405,3 +1408,47 @@ def recete_var_mi(conn, parent_kod: str) -> tuple:
         return recete_id, (h[0] if h else None)
     except Exception:
         return None, None
+
+
+# ── İş Emri Formu ─────────────────────────────────────────────────────────────
+
+def tum_is_emirleri_listesi(conn):
+    """Tüm durumlardaki üretim emirlerini döndürür (iş emri formu için)."""
+    sql = """
+        SELECT
+            ue.Id,
+            ue.Kodu,
+            ISNULL(ue.Aciklama, '') AS Aciklama,
+            CONVERT(VARCHAR(10), ue.UretimEmriTarihi, 104) AS EmirTarihi,
+            ue.DurumId
+        FROM UretimEmri ue
+        ORDER BY ue.UretimEmriTarihi DESC, ue.Kodu
+    """
+    try:
+        with cursor_ctx(conn) as cur:
+            cur.execute(sql)
+            cols = [c[0] for c in cur.description]
+            return [dict(zip(cols, r)) for r in cur.fetchall()]
+    except Exception:
+        return []
+
+
+def is_emri_malzeme_listesi(conn, emir_id):
+    """Hat Planı üst tablosundan tüm satırları döndürür (HatTipi fark etmez) — PDF iş emri formu için."""
+    sql = """
+        SELECT
+            sk.Kodu           AS Kodu,
+            sk.Adi            AS Adi,
+            uehp.TalepMiktari AS Miktar
+        FROM UretimEmriHatPlani uehp
+        JOIN StokKarti sk ON sk.Id = uehp.KartId
+        WHERE uehp.UretimEmriId = ?
+        ORDER BY uehp.sira
+    """
+    try:
+        with cursor_ctx(conn) as cur:
+            cur.execute(sql, emir_id)
+            cols = [c[0] for c in cur.description]
+            return [dict(zip(cols, r)) for r in cur.fetchall()]
+    except Exception:
+        return []

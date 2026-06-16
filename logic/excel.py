@@ -285,7 +285,7 @@ def maliyet_excel_kaydet(
 # ── Kesişim Kümesi Raporu ─────────────────────────────────────────────────────
 
 _KESISIM_SUTUNLAR = [
-    ("Stok Kodu", 16), ("Stok Adı", 36),
+    ("Stok Kodu", 16), ("Stok Adı", 36), ("Stok Adı-2", 36),
     ("Fatura Sayısı", 14), ("Birim Fiyat ₺", 20),
     ("İlk Fatura", 14), ("Son Fatura", 14), ("Tedarikçi", 34),
 ]
@@ -293,6 +293,7 @@ _KESISIM_SUTUNLAR = [
 _KESISIM_ALAN = [
     ("stok_kodu",    False, None),
     ("stok_adi",     False, None),
+    ("stok_adi2",    False, None),
     ("fatura_sayisi", True, _FMT_ADET),
     ("birim_fiyat",   True, _FMT_BIRIM),
     ("ilk_fatura",   False, None),

@@ -14,6 +14,7 @@ from ui.tab_uretim_raporu       import UretimRaporuTab
 from ui.tab_fatura_eslestir     import FaturaEslestirTab
 from ui.tab_recete_sorgula      import ReceteSorgulaTab
 from ui.tab_stok_hazirla        import StokHazirlaTab
+from ui.tab_is_emri_formu       import IsEmriFormuTab
 
 
 class AnaPencere(QMainWindow):
@@ -46,6 +47,7 @@ class AnaPencere(QMainWindow):
         self.fatura_eslestir_tab = FaturaEslestirTab()
         self.recete_sorgula_tab  = ReceteSorgulaTab()
         self.stok_hazirla_tab    = StokHazirlaTab()
+        self.is_emri_tab         = IsEmriFormuTab()
 
         self.tabs.addTab(self.mamul_tab,          "🔗  Mamül Ağacı")
         self.tabs.addTab(self.maliyet_tab,        "💰  Maliyet")
@@ -56,6 +58,7 @@ class AnaPencere(QMainWindow):
         self.tabs.addTab(self.fatura_eslestir_tab,"📋  Fatura Eşleştir")
         self.tabs.addTab(self.recete_sorgula_tab, "🔍  Reçete Sorgula")
         self.tabs.addTab(self.stok_hazirla_tab,  "📝  Stok Hazırlık")
+        self.tabs.addTab(self.is_emri_tab,       "📄  İş Emri Formu")
 
         # ── Menü çubuğu ─────────────────────────────────────────────────────
         menubar = self.menuBar()
@@ -87,6 +90,7 @@ class AnaPencere(QMainWindow):
         self.fatura_eslestir_tab.durum_guncelle.connect(self._durum)
         self.recete_sorgula_tab.durum_guncelle.connect(self._durum)
         self.stok_hazirla_tab.durum_guncelle.connect(self._durum)
+        self.is_emri_tab.durum_guncelle.connect(self._durum)
 
         # SW çalışması bitince Stok Kartı sekmesini güncelle
         self.sw_tab.kodlama_bitti.connect(self._sw_bitti)
