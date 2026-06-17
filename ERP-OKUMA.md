@@ -325,6 +325,8 @@ UretimRecete
 
 **Kritik:** `UretimReceteHatPlaniGirdi.Tipi` NOT NULL — INSERT'te `Tipi=1/2` zorunlu; `SabitMiktar=0`, `GarantiKapsaminda=0` da gerekli.
 
+**Kritik:** `UretimReceteHatPlaniGirdi.BirimId` ve `DepoId` NULL bırakılamaz — CEO ERP iş emri oluştururken bu alanları okur; NULL olursa `.NET NullReferenceException` fırlatır. Değerler: `BirimId=ADET_BIRIM_GUID`, `DepoId=2` (Merkez).
+
 **UI:** `ui/tab_stok_hazirla.py:StokHazirlaTab`
 
 ---

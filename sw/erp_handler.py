@@ -368,12 +368,12 @@ def recete_bagla(parent_kod, parent_adi, parent_stok_id, child_stok_id, miktar,
             )
             hat_plani_id = cur.fetchone()[0]
 
-        # 5. Girdi ekle — Tipi=1 (StokKarti), SabitMiktar/GarantiKapsaminda zorunlu
+        # 5. Girdi ekle — BirimId/DepoId zorunlu (NULL bırakılırsa CEO iş emri NullReferenceException fırlatır)
         cur.execute(
             "INSERT INTO UretimReceteHatPlaniGirdi "
-            "(UretimReceteHatPlaniId, Tipi, KartId, Miktar, SabitMiktar, GarantiKapsaminda) "
-            "VALUES (?, 1, ?, ?, 0, 0)",
-            hat_plani_id, child_stok_id, float(miktar),
+            "(UretimReceteHatPlaniId, Tipi, KartId, Miktar, SabitMiktar, GarantiKapsaminda, BirimId, DepoId) "
+            "VALUES (?, 1, ?, ?, 0, 0, ?, ?)",
+            hat_plani_id, child_stok_id, float(miktar), ADET_BIRIM_GUID, MERKEZ_BOLGE_ID,
         )
 
         conn.commit()
@@ -464,9 +464,9 @@ def recete_masraf_bagla(parent_kod, parent_adi, parent_stok_id, masraf_id, mikta
 
         cur.execute(
             "INSERT INTO UretimReceteHatPlaniGirdi "
-            "(UretimReceteHatPlaniId, Tipi, KartId, Miktar, SabitMiktar, GarantiKapsaminda) "
-            "VALUES (?, 2, ?, ?, 0, 0)",
-            hat_plani_id, masraf_id, float(miktar),
+            "(UretimReceteHatPlaniId, Tipi, KartId, Miktar, SabitMiktar, GarantiKapsaminda, BirimId, DepoId) "
+            "VALUES (?, 2, ?, ?, 0, 0, ?, ?)",
+            hat_plani_id, masraf_id, float(miktar), ADET_BIRIM_GUID, MERKEZ_BOLGE_ID,
         )
         conn.commit()
         return {"durum": "olusturuldu", "mesaj": "Masraf BOM baglantisi olusturuldu"}
