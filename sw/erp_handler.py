@@ -348,18 +348,22 @@ def recete_bagla(parent_kod, parent_adi, parent_stok_id, child_stok_id, miktar,
 
         # 3. UretimRecete olustur (yoksa) — Id IDENTITY, belirtme
         if recete_id is None:
+            _now = datetime.now()
             cur.execute(
-                "INSERT INTO UretimRecete (Kodu, Tanim, KullanimDisi) "
-                "OUTPUT INSERTED.Id VALUES (?, ?, 0)",
+                "INSERT INTO UretimRecete "
+                "(Kodu, Tanim, KullanimDisi, UretimYontemi, Acik, "
+                "CreatedBy, CreationTime, ModifiedBy, ModificationTime) "
+                "OUTPUT INSERTED.Id VALUES (?, ?, 0, 1, 0, ?, ?, ?, ?)",
                 parent_kod, parent_adi or parent_kod,
+                SAVAS_USER_GUID, _now, SAVAS_USER_GUID, _now,
             )
             recete_id = cur.fetchone()[0]
 
         # 4. UretimReceteHatPlani olustur (yoksa) — Id IDENTITY, belirtme
         if hat_plani_id is None:
             cur.execute(
-                "INSERT INTO UretimReceteHatPlani (UretimReceteId, KartId) "
-                "OUTPUT INSERTED.Id VALUES (?, ?)",
+                "INSERT INTO UretimReceteHatPlani (UretimReceteId, KartId, Tipi) "
+                "OUTPUT INSERTED.Id VALUES (?, ?, 2)",
                 recete_id, parent_stok_id,
             )
             hat_plani_id = cur.fetchone()[0]
@@ -439,17 +443,21 @@ def recete_masraf_bagla(parent_kod, parent_adi, parent_stok_id, masraf_id, mikta
                     "mesaj": "KURU: %s olusturulacakti" % "+".join(parcalar)}
 
         if recete_id is None:
+            _now = datetime.now()
             cur.execute(
-                "INSERT INTO UretimRecete (Kodu, Tanim, KullanimDisi) "
-                "OUTPUT INSERTED.Id VALUES (?, ?, 0)",
+                "INSERT INTO UretimRecete "
+                "(Kodu, Tanim, KullanimDisi, UretimYontemi, Acik, "
+                "CreatedBy, CreationTime, ModifiedBy, ModificationTime) "
+                "OUTPUT INSERTED.Id VALUES (?, ?, 0, 1, 0, ?, ?, ?, ?)",
                 parent_kod, parent_adi or parent_kod,
+                SAVAS_USER_GUID, _now, SAVAS_USER_GUID, _now,
             )
             recete_id = cur.fetchone()[0]
 
         if hat_plani_id is None:
             cur.execute(
-                "INSERT INTO UretimReceteHatPlani (UretimReceteId, KartId) "
-                "OUTPUT INSERTED.Id VALUES (?, ?)",
+                "INSERT INTO UretimReceteHatPlani (UretimReceteId, KartId, Tipi) "
+                "OUTPUT INSERTED.Id VALUES (?, ?, 2)",
                 recete_id, parent_stok_id,
             )
             hat_plani_id = cur.fetchone()[0]

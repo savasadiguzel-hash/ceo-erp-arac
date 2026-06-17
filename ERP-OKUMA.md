@@ -2,7 +2,7 @@
 
 **GitHub:** https://github.com/savasadiguzel-hash/ceo-erp-arac  
 **Dağıtım:** `dist/CEO-ERP-Araclar.exe` · `dist/CEO-ERP-Kurulum.exe` (Inno Setup)  
-**Son güncelleme:** 2026-06-16 (Kurulum paketi + Kesişim Kümesi Stok Adı-2)
+**Son güncelleme:** 2026-06-17 (UretimRecete INSERT düzeltmeleri + ADLASMKE Excel formatı)
 
 ---
 
@@ -244,7 +244,7 @@ Tip seçenekleri: `Hammadde / Yarımamül / Mamül / Reçete / Masraf`
 
 ### BOM Görsel Diyagram
 
-**BOM Diyagramı** butonu (mor) — reçete veya Excel yüklendikten sonra aktif olur.
+**BOM Diyagramı** butonu (mor) — reçete veya Excel yüklendikten sonra aktif olur. Her açılışta QTreeWidget'taki **güncel** ağaç verisi kullanılır (eski Excel verisi değil).
 
 | Eylem | Davranış |
 |---|---|
@@ -271,7 +271,20 @@ Tip seçenekleri: `Hammadde / Yarımamül / Mamül / Reçete / Masraf`
 
 **Excel'e Aktar** → 7 sütun (Seviye / Tip / Stok Kodu / Stok Adı / Stok Adı-2 / Miktar / Birim), derinlik bazlı renkler, native +/- satır grupları.
 
-**Excel'den Yükle** — 3 format tanır (yeni / eski 6-kolon / çok eski).
+**Excel'den Yükle** — 4 format tanır:
+
+| Format | Tespit | Davranış |
+|---|---|---|
+| Yeni (Seviye-Tip) | A sütunu integer | Seviye+girinti korunarak yüklenir |
+| Eski 6-kolon | A sütunu tip metni | Girintili stok kodu ile hiyerarşi |
+| Çok eski | Diğer durum | Flat yükleme |
+| **ADLASMKE** | A1 = "Stok Kodu" | CEO ERP dışa aktarımı — özel işleme ↓ |
+
+**ADLASMKE formatı** (`_excel_yukle_adlasmke`):
+- Header: `Stok Kodu | Stok Adı | Stok Adı-2 | Gerçek Bakiye | Ölçü Birimi | Depo Raf Adedi`
+- `:XX` sonek taşıyan her kod (ör. `GMP-200-240839:20`) → baz kodunun **çocuk düğümü** olarak eklenir
+- Baz kodu listede varsa → `Reçete` tipine dönüştürülür + çocuk altına alınır
+- Baz kodu listede **yoksa** → sanal `Reçete` ebeveyni oluşturulur (ad boş; kullanıcı doldurur)
 
 ### Kontrol Et / CANLI Aktar
 
@@ -293,6 +306,22 @@ UretimRecete
             ├─ Tipi=1  KartId → StokKarti       (hammadde / yarı mamül)
             └─ Tipi=2  KartId → StokMasrafKarti  (masraf / işlem)
 ```
+
+**UretimRecete INSERT — zorunlu NOT NULL alanlar:**
+
+| Alan | Değer | Açıklama |
+|---|---|---|
+| `UretimYontemi` | `1` | Montaj Üretim Metodu |
+| `Acik` | `0` | **0 = kapalı/bağımsız**; 1 = "kullanıcı ekranında açık" kilidi (1 koyarsan CEO "Başkası tarafından kullanılıyor" der) |
+| `KullanimDisi` | `0` | Aktif reçete |
+| `CreatedBy` | `SAVAS_USER_GUID` | `uniqueidentifier NOT NULL` |
+| `CreationTime` | `datetime.now()` | `datetime NOT NULL` |
+| `ModifiedBy` | `SAVAS_USER_GUID` | `uniqueidentifier NOT NULL` |
+| `ModificationTime` | `datetime.now()` | `datetime NOT NULL` |
+
+**UretimReceteHatPlani.Tipi:**
+- `Tipi=2` → CEO ERP üst kutucukta **Yarı Mamül** gösterir (GMP-200-24xxx gibi ara reçeteler)
+- `Tipi=1` → CEO ERP üst kutucukta **Mamul** gösterir (GMP-101-xxx gibi nihai ürünler)
 
 **Kritik:** `UretimReceteHatPlaniGirdi.Tipi` NOT NULL — INSERT'te `Tipi=1/2` zorunlu; `SabitMiktar=0`, `GarantiKapsaminda=0` da gerekli.
 

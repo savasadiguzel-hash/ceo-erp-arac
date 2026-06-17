@@ -1086,6 +1086,7 @@ class StokHazirlaTab(QWidget):
         return w
 
     def _bom_goster(self):
+        self._bom_nodes = self._agac_verisi_al()
         if not self._bom_nodes:
             return
         dlg = QDialog(self)
@@ -1291,10 +1292,23 @@ class StokHazirlaTab(QWidget):
             import openpyxl
             wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
             ws = wb.active
+            all_rows = list(ws.iter_rows(values_only=True))
+            wb.close()
+
+            # ── ADLASMKE format tespiti (Stok Kodu başlıklı flat liste) ────
+            _ilk = next((r for r in all_rows if any(v for v in r)), None)
+            if _ilk and str(_ilk[0] or "").strip().lower() == "stok kodu":
+                eklendi = self._excel_yukle_adlasmke(all_rows)
+                self._log_yaz("Excel: %d satır eklendi (%s)" % (eklendi, Path(path).name))
+                self.durum_guncelle.emit("Stok Hazırlık: %d satır yüklendi." % eklendi)
+                self._bom_nodes = self._agac_verisi_al()
+                self._bom_btn.setEnabled(bool(self._bom_nodes))
+                return
+
             eklendi = 0
             parent_stack: list = []   # [(depth, QTreeWidgetItem)]
 
-            for row in ws.iter_rows(values_only=True):
+            for row in all_rows:
                 if not row:
                     continue
                 raw = [(str(v) if v is not None else "") for v in row[:7]]
@@ -1366,13 +1380,81 @@ class StokHazirlaTab(QWidget):
                 parent_stack.append((depth, item))
                 eklendi += 1
 
-            wb.close()
             self._log_yaz("Excel: %d satır eklendi (%s)" % (eklendi, Path(path).name))
             self.durum_guncelle.emit("Stok Hazırlık: %d satır yüklendi." % eklendi)
             self._bom_nodes = self._agac_verisi_al()
             self._bom_btn.setEnabled(bool(self._bom_nodes))
         except Exception as e:
             QMessageBox.critical(self, "Excel Hatası", "Dosya okunamadı:\n%s" % e)
+
+    def _excel_yukle_adlasmke(self, all_rows: list) -> int:
+        """ADLASMKE / CEO ERP stok listesi: flat liste, ':XX' sonek ile hiyerarşi çıkarımı.
+
+        Baz kodu listede olan ':XX' kodlar o baz kodun çocuğu olarak eklenir;
+        baz kodu listede olmayan ':XX' kodlar üst-düzey Hammadde olarak kalır.
+        Baz kodu olan kodlar 'Reçete' tipiyle işaretlenir.
+        Sütun: A=Stok Kodu, B=Stok Adı, C=Stok Adı-2, D=Gerçek Bakiye (görmezden gel), E=Birim.
+        """
+        rows: list = []
+        all_codes: set = set()
+
+        for row in all_rows:
+            if not row:
+                continue
+            col_a = str(row[0] or "").strip()
+            if not col_a or col_a.lower() in _BASLIK_ATLA:
+                continue
+            adi   = str(row[1] if len(row) > 1 and row[1] is not None else "").strip()
+            adi2  = str(row[2] if len(row) > 2 and row[2] is not None else "").strip()
+            birim = str(row[4] if len(row) > 4 and row[4] is not None else "").strip() or "ADET"
+            rows.append((col_a, adi, adi2, birim))
+            all_codes.add(col_a)
+
+        # ':XX' sonek taşıyan HER kod → baz kodunun çocuğu (baz listede olsa da olmasa da)
+        parent_of: dict = {}
+        for kod, *_ in rows:
+            if ":" in kod:
+                parent_of[kod] = kod.rsplit(":", 1)[0]
+
+        has_children: set = set(parent_of.values())
+        item_map: dict = {}
+        eklendi = 0
+
+        # Geçiş 1 — üst-düzey öğeler (çocuk OLMAYAN kodlar, dosya sırasıyla)
+        for kod, adi, adi2, birim in rows:
+            if kod in parent_of:
+                continue
+            tip = "Reçete" if kod in has_children else "Hammadde"
+            item = self._item_olustur(
+                tip=tip, kod=kod, adi=adi, adi2=adi2, miktar="1", birim=birim,
+            )
+            self._agac.addTopLevelItem(item)
+            if kod in has_children:
+                item.setExpanded(True)
+            item_map[kod] = item
+            eklendi += 1
+
+        # Geçiş 2 — çocuk öğeler; baz kodu listede yoksa sanal Reçete ebeveyni oluştur
+        for kod, adi, adi2, birim in rows:
+            if kod not in parent_of:
+                continue
+            base = parent_of[kod]
+            if base not in item_map:
+                vitem = self._item_olustur(
+                    tip="Reçete", kod=base, adi="", adi2="", miktar="1", birim=birim,
+                )
+                self._agac.addTopLevelItem(vitem)
+                vitem.setExpanded(True)
+                item_map[base] = vitem
+                eklendi += 1
+            child = self._item_olustur(
+                tip="Hammadde", kod=kod, adi=adi, adi2=adi2, miktar="1", birim=birim,
+            )
+            item_map[base].addChild(child)
+            item_map[kod] = child
+            eklendi += 1
+
+        return eklendi
 
     # ── Excel'e Aktar ────────────────────────────────────────────────────────
 
