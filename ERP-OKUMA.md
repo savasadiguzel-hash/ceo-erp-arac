@@ -327,6 +327,8 @@ UretimRecete
 
 **Kritik:** `UretimReceteHatPlaniGirdi.BirimId` ve `DepoId` NULL bırakılamaz — CEO ERP iş emri oluştururken bu alanları okur; NULL olursa `.NET NullReferenceException` fırlatır. Değerler: `BirimId=ADET_BIRIM_GUID`, `DepoId=2` (Merkez).
 
+**Kritik:** `UretimReceteHatPlani.Miktar`, `BirimId`, `DepoId` de NULL bırakılamaz — CEO ERP `Nullable<T>.Value` ile okur; NULL olursa `InvalidOperationException` fırlatır. Değerler: `Miktar=1`, `BirimId=ADET_BIRIM_GUID`, `DepoId=2` (Merkez).
+
 **UI:** `ui/tab_stok_hazirla.py:StokHazirlaTab`
 
 ---

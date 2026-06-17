@@ -360,11 +360,12 @@ def recete_bagla(parent_kod, parent_adi, parent_stok_id, child_stok_id, miktar,
             recete_id = cur.fetchone()[0]
 
         # 4. UretimReceteHatPlani olustur (yoksa) — Id IDENTITY, belirtme
+        # Miktar/BirimId/DepoId zorunlu: CEO ERP iş emrinde Nullable<T>.Value ile okur, NULL olursa patlıyor
         if hat_plani_id is None:
             cur.execute(
-                "INSERT INTO UretimReceteHatPlani (UretimReceteId, KartId, Tipi) "
-                "OUTPUT INSERTED.Id VALUES (?, ?, 2)",
-                recete_id, parent_stok_id,
+                "INSERT INTO UretimReceteHatPlani (UretimReceteId, KartId, Tipi, Miktar, BirimId, DepoId) "
+                "OUTPUT INSERTED.Id VALUES (?, ?, 2, 1, ?, ?)",
+                recete_id, parent_stok_id, ADET_BIRIM_GUID, MERKEZ_BOLGE_ID,
             )
             hat_plani_id = cur.fetchone()[0]
 
@@ -456,9 +457,9 @@ def recete_masraf_bagla(parent_kod, parent_adi, parent_stok_id, masraf_id, mikta
 
         if hat_plani_id is None:
             cur.execute(
-                "INSERT INTO UretimReceteHatPlani (UretimReceteId, KartId, Tipi) "
-                "OUTPUT INSERTED.Id VALUES (?, ?, 2)",
-                recete_id, parent_stok_id,
+                "INSERT INTO UretimReceteHatPlani (UretimReceteId, KartId, Tipi, Miktar, BirimId, DepoId) "
+                "OUTPUT INSERTED.Id VALUES (?, ?, 2, 1, ?, ?)",
+                recete_id, parent_stok_id, ADET_BIRIM_GUID, MERKEZ_BOLGE_ID,
             )
             hat_plani_id = cur.fetchone()[0]
 
