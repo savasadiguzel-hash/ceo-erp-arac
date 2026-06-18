@@ -1071,7 +1071,6 @@ def satis_faturalari(conn, bas_tarih: str, bit_tarih: str) -> list[dict]:
             LEFT JOIN CariMusteriKarti cmk ON sh.MusteriKartId = cmk.Id
             WHERE sh.IslemKodu IN (2, 6)
               AND shd.Turu = 1
-              AND shd.BirimFiyat > 0
               AND shd.Miktar > 0
               AND CAST(sh.BelgeTarihi AS DATE) >= CAST('{bas_sql}' AS DATE)
               AND CAST(sh.BelgeTarihi AS DATE) <= CAST('{bit_sql}' AS DATE)

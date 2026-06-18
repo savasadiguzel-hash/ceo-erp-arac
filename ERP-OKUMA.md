@@ -2,7 +2,7 @@
 
 **GitHub:** https://github.com/savasadiguzel-hash/ceo-erp-arac  
 **Dağıtım:** `dist/CEO-ERP-Araclar.exe` · `dist/CEO-ERP-Kurulum.exe` (Inno Setup)  
-**Son güncelleme:** 2026-06-17 (UretimRecete INSERT düzeltmeleri + ADLASMKE Excel formatı)
+**Son güncelleme:** 2026-06-18 (Satış Faturaları — 0 TL'lik fatura kalemleri artık gösteriliyor)
 
 ---
 
@@ -57,6 +57,7 @@
 - `IslemKodu IN (2, 6)` — satış faturası + irsaliye; `shd.Turu = 1`
 - 9 kolonlu tablo + anlık arama (müşteri, stok kodu, belge no)
 - Excel çıktısı: biçimlendirilmiş xlsx, son satırda toplam tutar
+- **Filtre:** `shd.Miktar > 0` — miktarsız satırlar hariç; `BirimFiyat = 0` olan (ücretsiz) kalemler dahil edilir
 
 ---
 
