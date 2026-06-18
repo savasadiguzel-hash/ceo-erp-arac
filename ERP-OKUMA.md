@@ -323,6 +323,9 @@ UretimRecete
 - `Tipi=2` → CEO ERP üst kutucukta **Yarı Mamül** gösterir (GMP-200-24xxx gibi ara reçeteler)
 - `Tipi=1` → CEO ERP üst kutucukta **Mamul** gösterir (GMP-101-xxx gibi nihai ürünler)
 
+`recete_bagla()` ve `recete_masraf_bagla()` fonksiyonları `hat_tipi` parametresi alır (varsayılan `2`).  
+`tab_stok_hazirla.py`'deki BOM döngüsü, parent node'un `tip`'i `"Mamül"` ise `hat_tipi=1`, aksi hâlde `hat_tipi=2` geçer.
+
 **Kritik:** `UretimReceteHatPlaniGirdi.Tipi` NOT NULL — INSERT'te `Tipi=1/2` zorunlu; `SabitMiktar=0`, `GarantiKapsaminda=0` da gerekli.
 
 **Kritik:** `UretimReceteHatPlaniGirdi.BirimId` ve `DepoId` NULL bırakılamaz — CEO ERP iş emri oluştururken bu alanları okur; NULL olursa `.NET NullReferenceException` fırlatır. Değerler: `BirimId=ADET_BIRIM_GUID`, `DepoId=2` (Merkez).

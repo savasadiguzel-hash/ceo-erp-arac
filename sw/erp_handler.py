@@ -297,7 +297,7 @@ def masraf_karti_ac(kod, adi, firma_db=DEFAULT_FIRMA_DB, live=False,
 # BOM / Recete baglantisi
 # ---------------------------------------------------------------------------
 def recete_bagla(parent_kod, parent_adi, parent_stok_id, child_stok_id, miktar,
-                 firma_db=DEFAULT_FIRMA_DB, live=False, conn=None):
+                 hat_tipi=2, firma_db=DEFAULT_FIRMA_DB, live=False, conn=None):
     """
     parent_kod stok kodu icin UretimRecete + UretimReceteHatPlani olusturur (yoksa).
     Sonra UretimReceteHatPlaniGirdi'ye child_stok_id + miktar ekler (yoksa).
@@ -364,8 +364,8 @@ def recete_bagla(parent_kod, parent_adi, parent_stok_id, child_stok_id, miktar,
         if hat_plani_id is None:
             cur.execute(
                 "INSERT INTO UretimReceteHatPlani (UretimReceteId, KartId, Tipi, Miktar, BirimId, DepoId) "
-                "OUTPUT INSERTED.Id VALUES (?, ?, 2, 1, ?, ?)",
-                recete_id, parent_stok_id, ADET_BIRIM_GUID, MERKEZ_BOLGE_ID,
+                "OUTPUT INSERTED.Id VALUES (?, ?, ?, 1, ?, ?)",
+                recete_id, parent_stok_id, hat_tipi, ADET_BIRIM_GUID, MERKEZ_BOLGE_ID,
             )
             hat_plani_id = cur.fetchone()[0]
 
@@ -396,7 +396,7 @@ def recete_bagla(parent_kod, parent_adi, parent_stok_id, child_stok_id, miktar,
 
 
 def recete_masraf_bagla(parent_kod, parent_adi, parent_stok_id, masraf_id, miktar,
-                        firma_db=DEFAULT_FIRMA_DB, live=False, conn=None):
+                        hat_tipi=2, firma_db=DEFAULT_FIRMA_DB, live=False, conn=None):
     """
     parent_kod reçetesine masraf bileşeni (Tipi=2) ekler.
     UretimRecete + HatPlani yoksa olusturur, sonra UretimReceteHatPlaniGirdi'ye
@@ -458,8 +458,8 @@ def recete_masraf_bagla(parent_kod, parent_adi, parent_stok_id, masraf_id, mikta
         if hat_plani_id is None:
             cur.execute(
                 "INSERT INTO UretimReceteHatPlani (UretimReceteId, KartId, Tipi, Miktar, BirimId, DepoId) "
-                "OUTPUT INSERTED.Id VALUES (?, ?, 2, 1, ?, ?)",
-                recete_id, parent_stok_id, ADET_BIRIM_GUID, MERKEZ_BOLGE_ID,
+                "OUTPUT INSERTED.Id VALUES (?, ?, ?, 1, ?, ?)",
+                recete_id, parent_stok_id, hat_tipi, ADET_BIRIM_GUID, MERKEZ_BOLGE_ID,
             )
             hat_plani_id = cur.fetchone()[0]
 

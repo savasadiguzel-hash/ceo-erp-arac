@@ -592,7 +592,9 @@ class _AktarThread(QThread):
                     child_kod  = (node.get("kod") or "").strip()
                     parent_kod = node.get("parent_kod", "")
                     parent_adi = node.get("parent_adi", "")
+                    parent_tip = node.get("parent_tip", "")
                     child_tip  = node.get("tip", "")
+                    hat_tipi   = 1 if parent_tip == "Mamül" else 2
                     try:
                         miktar = float(node.get("miktar") or "1")
                     except ValueError:
@@ -611,7 +613,7 @@ class _AktarThread(QThread):
                             continue
                         r = _erp.recete_masraf_bagla(
                             parent_kod, parent_adi, parent_id, child_id, miktar,
-                            live=self._live, conn=conn)
+                            hat_tipi=hat_tipi, live=self._live, conn=conn)
                     else:
                         child_id = kod_id.get(child_kod)
                         if child_id is None or parent_id is None:
@@ -620,7 +622,7 @@ class _AktarThread(QThread):
                             continue
                         r = _erp.recete_bagla(
                             parent_kod, parent_adi, parent_id, child_id, miktar,
-                            live=self._live, conn=conn)
+                            hat_tipi=hat_tipi, live=self._live, conn=conn)
 
                     if r["durum"] == "olusturuldu":
                         ozet["bom"] += 1
@@ -1559,13 +1561,14 @@ class StokHazirlaTab(QWidget):
     # ── ağaç verisi serileştirme (main thread'de çağrılır) ───────────────────
 
     def _agac_verisi_al(self) -> list:
-        def _item_dict(item: QTreeWidgetItem, par_kod="", par_adi="") -> dict:
+        def _item_dict(item: QTreeWidgetItem, par_kod="", par_adi="", par_tip="") -> dict:
             uid  = item.data(_COL_TIP, Qt.UserRole)
             kod  = item.text(_COL_KOD).strip()
             adi  = item.text(_COL_ADI).strip()
+            tip  = item.text(_COL_TIP)
             node = {
                 "uid":        uid,
-                "tip":        item.text(_COL_TIP),
+                "tip":        tip,
                 "kod":        kod,
                 "adi":        adi,
                 "adi2":       item.text(_COL_ADI2).strip(),
@@ -1573,13 +1576,14 @@ class StokHazirlaTab(QWidget):
                 "birim":      item.text(_COL_BIRIM).strip() or "ADET",
                 "parent_kod": par_kod,
                 "parent_adi": par_adi,
+                "parent_tip": par_tip,
                 "girdi_id":   item.data(_COL_TIP, _ROLE_GIRDI_ID),
                 "org_miktar": item.data(_COL_TIP, _ROLE_ORG_MIKTAR),
                 "children":   [],
             }
             for i in range(item.childCount()):
                 node["children"].append(
-                    _item_dict(item.child(i), kod, adi))
+                    _item_dict(item.child(i), kod, adi, tip))
             return node
 
         return [
