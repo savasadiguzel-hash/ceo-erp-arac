@@ -333,6 +333,10 @@ UretimRecete
 
 **Kritik:** `UretimReceteHatPlani.Miktar`, `BirimId`, `DepoId` de NULL bırakılamaz — CEO ERP `Nullable<T>.Value` ile okur; NULL olursa `InvalidOperationException` fırlatır. Değerler: `Miktar=1`, `BirimId=ADET_BIRIM_GUID`, `DepoId=2` (Merkez).
 
+**Kritik — SeriNoTakibi:** Üretilen ürünün `StokKarti.SeriNoTakibi=True` ise CEO ERP maliyetlendirmede seri no bekler; `UretimEmriHatPlani.Seri=NULL` olursa `.NET NullReferenceException` fırlatır. Çözüm: stok kartında `SeriNoTakibi=False` yap ve CEO'yu yeniden başlat (değişiklik önbelleğe alınır, restart gerekir).
+
+**Kritik — Çok katmanlı reçete maliyetlendirme:** CANLI Aktar, Yarımamül (Tipi=2) düğümler için `UretimRecete`+`UretimReceteHatPlani` kaydı oluşturur. CEO ERP maliyetlendirme bu yarımamüllerin kendi üretim maliyetlerini arar; daha önce maliyetlendirilmiş iş emri yoksa `NullReferenceException` verir. Üst ürünü maliyetlendirmeden önce tüm Yarımamül bileşenlerin (Tipi=2) kendi iş emirleri maliyetlendirilmiş olmalıdır.
+
 **UI:** `ui/tab_stok_hazirla.py:StokHazirlaTab`
 
 ---

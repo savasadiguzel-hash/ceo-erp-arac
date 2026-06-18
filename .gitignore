@@ -46,6 +46,10 @@ screenshot*.png
 app_screenshot*.png
 app_front.png
 qt_screenshot.png
+*.png
+
+# Uygulama çıktı klasörleri
+İş Emirleri/
 
 build/
 
