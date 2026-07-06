@@ -172,6 +172,78 @@ def recetesiz_faturali_ozet(hareketler: list[dict], yontem: str) -> list[dict]:
     return ozet
 
 
+def stok_birimleri_getir(conn, stok_kodlari: list) -> dict:
+    """
+    Stok kodları için birim adlarını döner: {stok_kodu: birim_adi}.
+    StokBirim tablosu yoksa 'ADET' fallback kullanılır.
+    """
+    if not stok_kodlari:
+        return {}
+    # StokKarti.StokBirim sütunu (uniqueidentifier) GUID olarak alınır
+    guid_map: dict[str, str] = {}
+    _YIGIN = 500
+    for i in range(0, len(stok_kodlari), _YIGIN):
+        parca = stok_kodlari[i: i + _YIGIN]
+        yer = ','.join(['?'] * len(parca))
+        with cursor_ctx(conn) as cur:
+            cur.execute(
+                f"SELECT Kodu, ISNULL(CONVERT(NVARCHAR(50), StokBirim), '') "
+                f"FROM StokKarti WHERE Kodu IN ({yer})",
+                *parca
+            )
+            for row in cur.fetchall():
+                guid_map[row[0]] = str(row[1])
+    # GUID → birim adı çözümlemesi (StokBirim tablosu yoksa fallback ADET)
+    birimler = birimleri_getir(conn)          # {Adi: guid_str}
+    guid_to_adi = {v: k for k, v in birimler.items()}
+    return {
+        kod: (guid_to_adi.get(guid, 'ADET') if guid else 'ADET')
+        for kod, guid in guid_map.items()
+    }
+
+
+def stok_guncel_bakiyeleri(conn, stok_kodlari: list) -> dict:
+    """
+    Verilen stok kodları için bugünkü tarih itibarıyla güncel stok bakiyesi.
+    Döner: {stok_kodu: bakiye_float}
+    """
+    from datetime import date
+    if not stok_kodlari:
+        return {}
+    bugun = date.today().strftime('%Y-%m-%d')
+    sonuc = {k: 0.0 for k in stok_kodlari}
+    _YIGIN = 500
+    for i in range(0, len(stok_kodlari), _YIGIN):
+        parca = stok_kodlari[i: i + _YIGIN]
+        yer = ','.join(['?'] * len(parca))
+        with cursor_ctx(conn) as cur:
+            cur.execute(f"""
+                SELECT sk.Kodu,
+                       SUM(CASE
+                           WHEN sh.IslemKodu IN (1,4,5,8,15,16,20,22,26,29)
+                               THEN (shd.Miktar - ISNULL(shd_f.Miktar, 0))
+                           WHEN sh.IslemKodu IN (2,3,6,7,17,18,19,21,24,28)
+                               THEN -(shd.Miktar - ISNULL(shd_f.Miktar, 0))
+                           ELSE 0
+                       END)
+                FROM StokHareketDetay shd
+                JOIN StokHareket sh    ON sh.Id  = shd.HareketId
+                LEFT JOIN StokHareketDetay shd_f ON shd_f.Id = shd.FaturaDetayId
+                JOIN StokKarti sk      ON sk.Id  = shd.IslemKartId
+                WHERE sk.Kodu IN ({yer})
+                  AND shd.Turu = 1 AND shd.Aktif = 1
+                  AND sh.Aktif = 1
+                  AND sh.FaturaId IS NULL
+                  AND sh.IslemKodu NOT IN (9,10,11,12,13,14,25,27,23)
+                  AND CAST(sh.BelgeTarihi AS DATE) <= CAST('{bugun}' AS DATE)
+                GROUP BY sk.Kodu
+            """, *parca)
+            for row in cur.fetchall():
+                if row[0] in sonuc:
+                    sonuc[row[0]] = float(row[1]) if row[1] is not None else 0.0
+    return sonuc
+
+
 def stoku_mamule_bagla(conn, stok_kodu: str, mamul_kodu: str) -> None:
     """Stoku reçete bileşenlerine ekler (DB güncelleme)."""
     with cursor_ctx(conn) as cur:

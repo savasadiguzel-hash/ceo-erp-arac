@@ -6,7 +6,8 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from db.sorgular import (tarama_istatistikleri,
-                         recetesiz_stok_hareketleri, recetesiz_faturali_ozet)
+                         recetesiz_stok_hareketleri, recetesiz_faturali_ozet,
+                         stok_birimleri_getir, stok_guncel_bakiyeleri)
 from logic.excel import kesisim_excel_kaydet
 from ui.stil import etiket, buton
 
@@ -35,6 +36,12 @@ class TaramaThread(QThread):
                 time.sleep(0.15)
             hareketler = recetesiz_stok_hareketleri(self.conn, self.bas_tarih, self.bit_tarih)
             ozet = recetesiz_faturali_ozet(hareketler, self.yontem)
+            stok_kodlari = [s['stok_kodu'] for s in ozet]
+            birimler  = stok_birimleri_getir(self.conn, stok_kodlari)
+            bakiyeler = stok_guncel_bakiyeleri(self.conn, stok_kodlari)
+            for s in ozet:
+                s['birim']        = birimler.get(s['stok_kodu'], 'ADET')
+                s['guncel_miktar'] = bakiyeler.get(s['stok_kodu'], 0.0)
             self.bitti.emit(ozet, hareketler)
         except Exception as e:
             import traceback

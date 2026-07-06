@@ -57,19 +57,21 @@ _MALIYET_SUTUNLAR = [
 
 # (alan_adı, sayısal?, number_format)
 _BAGLAMA_ALAN = [
-    ("stok_kodu",    False, None),
-    ("stok_adi",     False, None),
-    ("fatura_sayisi", True, _FMT_ADET),
-    ("birim_fiyat",   True, _FMT_BIRIM),
-    ("ilk_fatura",   False, None),
-    ("son_fatura",   False, None),
-    ("tedarikci",    False, None),
-    ("mamul_kodu",   False, None),
-    ("mamul_adi",    False, None),
-    ("islem",        False, None),
+    ("stok_kodu",     False, None),
+    ("stok_adi",      False, None),
+    ("birim",         False, None),
+    ("guncel_miktar",  True, _FMT_MIKTAR),
+    ("fatura_sayisi",  True, _FMT_ADET),
+    ("birim_fiyat",    True, _FMT_BIRIM),
+    ("ilk_fatura",    False, None),
+    ("son_fatura",    False, None),
+    ("tedarikci",     False, None),
+    ("mamul_kodu",    False, None),
+    ("mamul_adi",     False, None),
+    ("islem",         False, None),
 ]
 
-_BAGLAMA_GENISLIK = [14, 32, 14, 20, 14, 14, 30, 14, 30, 13]
+_BAGLAMA_GENISLIK = [14, 32, 10, 16, 14, 20, 14, 14, 30, 14, 30, 13]
 
 # ── Yardımcı fonksiyonlar ─────────────────────────────────────────────────────
 
@@ -286,19 +288,22 @@ def maliyet_excel_kaydet(
 
 _KESISIM_SUTUNLAR = [
     ("Stok Kodu", 16), ("Stok Adı", 36), ("Stok Adı-2", 36),
+    ("Birim", 10), ("Güncel Miktar", 16),
     ("Fatura Sayısı", 14), ("Birim Fiyat ₺", 20),
     ("İlk Fatura", 14), ("Son Fatura", 14), ("Tedarikçi", 34),
 ]
 
 _KESISIM_ALAN = [
-    ("stok_kodu",    False, None),
-    ("stok_adi",     False, None),
-    ("stok_adi2",    False, None),
-    ("fatura_sayisi", True, _FMT_ADET),
-    ("birim_fiyat",   True, _FMT_BIRIM),
-    ("ilk_fatura",   False, None),
-    ("son_fatura",   False, None),
-    ("tedarikci",    False, None),
+    ("stok_kodu",     False, None),
+    ("stok_adi",      False, None),
+    ("stok_adi2",     False, None),
+    ("birim",         False, None),
+    ("guncel_miktar",  True, _FMT_MIKTAR),
+    ("fatura_sayisi",  True, _FMT_ADET),
+    ("birim_fiyat",    True, _FMT_BIRIM),
+    ("ilk_fatura",    False, None),
+    ("son_fatura",    False, None),
+    ("tedarikci",     False, None),
 ]
 
 _DETAY_SUTUNLAR = [
@@ -426,9 +431,9 @@ def baglama_excel_kaydet(dosya: str, sonuclar: list[dict]) -> None:
 
     # Başlık etiketlerini tekrar doğru adlarla yaz
     basliklar = [
-        "Stok Kodu", "Stok Adı", "Fatura Sayısı",
-        "Birim Fiyat", "İlk Fatura", "Son Fatura", "Tedarikçi",
-        "Mamül Kodu", "Mamül Adı", "İşlem",
+        "Stok Kodu", "Stok Adı", "Birim", "Güncel Miktar",
+        "Fatura Sayısı", "Birim Fiyat", "İlk Fatura", "Son Fatura",
+        "Tedarikçi", "Mamül Kodu", "Mamül Adı", "İşlem",
     ]
     for col, (baslik, gen) in enumerate(zip(basliklar, _BAGLAMA_GENISLIK), 1):
         _hucre(ws, 1, col, baslik, "baslik", "baslik")
@@ -442,7 +447,12 @@ def baglama_excel_kaydet(dosya: str, sonuclar: list[dict]) -> None:
             ham = s.get(key)
 
             if sayisal:
-                val = _para(ham) if fmt == _FMT_PARA else _adet(ham)
+                if fmt == _FMT_ADET:
+                    val = _adet(ham)
+                elif fmt == _FMT_PARA:
+                    val = _para(ham)
+                else:  # _FMT_MIKTAR, _FMT_BIRIM
+                    val = _miktar(ham)
                 aln = _SAG
             else:
                 val = str(ham).strip() if ham is not None else ""
