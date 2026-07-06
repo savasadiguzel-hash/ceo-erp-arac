@@ -331,8 +331,42 @@ def bom_listesi(conn) -> dict:
                     "ad":     bilesen_adi,
                     "miktar": float(miktar) if miktar is not None else 1.0,
                     "birim":  "ADET",
+                    "tip":    "stok",
                 })
             gercek_receteli.add(mamul_kodu)
+
+    # ── Masraf bileşenleri (Tipi=2 → StokMasrafKarti) ───────────────────────
+    with cursor_ctx(conn) as cur:
+        cur.execute("""
+            SELECT DISTINCT
+                ur.Kodu  AS MamulKodu,
+                ur.Tanim AS MamulAdi,
+                smk.Kodu AS BilesenKodu,
+                smk.Adi  AS BilesenAdi,
+                urhpg.Miktar
+            FROM UretimRecete ur
+            INNER JOIN UretimReceteHatPlani urhp
+                    ON urhp.UretimReceteId = ur.Id
+            INNER JOIN UretimReceteHatPlaniGirdi urhpg
+                    ON urhpg.UretimReceteHatPlaniId = urhp.Id
+            INNER JOIN StokMasrafKarti smk
+                    ON smk.Id = urhpg.KartId
+            WHERE urhpg.KartId IS NOT NULL
+              AND urhpg.Tipi = 2
+              AND (ur.KullanimDisi IS NULL OR ur.KullanimDisi = 0)
+            ORDER BY ur.Kodu, smk.Kodu
+        """)
+        for mamul_kodu, mamul_adi, bilesen_kodu, bilesen_adi, miktar in cur.fetchall():
+            if mamul_kodu not in bom:
+                bom[mamul_kodu] = {"ad": mamul_adi, "birim": "ADET", "bilesenleri": []}
+            if not any(b["kod"] == bilesen_kodu for b in bom[mamul_kodu]["bilesenleri"]):
+                bom[mamul_kodu]["bilesenleri"].append({
+                    "kod":    bilesen_kodu,
+                    "ad":     bilesen_adi,
+                    "miktar": float(miktar) if miktar is not None else 1.0,
+                    "birim":  "ADET",
+                    "tip":    "masraf",
+                })
 
     # ── Operasyon alt kodları (KOD:XX) ──────────────────────────────────────
     # CEO ERP'de imalat operasyonları KOD:20 (FREZE), KOD:60 (KAPLAMA),
@@ -364,6 +398,7 @@ def bom_listesi(conn) -> dict:
                     "ad":     c_adi,
                     "miktar": 1.0,
                     "birim":  "ADET",
+                    "tip":    "stok",
                 })
 
     return bom
@@ -399,6 +434,42 @@ def stok_fiyat_gecmisi(conn, stok_kodu: str, bas: str, bit: str) -> list[dict]:
                 "birim_fiyat": float(birim_fiyat) if birim_fiyat else 0.0,
                 "miktar": float(miktar) if miktar else 0.0,
                 "birim": "ADET",
+            }
+            for tarih, birim_fiyat, miktar in cur.fetchall()
+        ]
+
+
+def masraf_fiyat_gecmisi(conn, masraf_kodu: str, bas: str, bit: str) -> list[dict]:
+    """
+    Verilen tarih aralığında masraf kartı için fatura fiyat geçmişi.
+    StokHareketDetay.IslemKartId → StokMasrafKarti.Id üzerinden çekilir.
+    Her eleman: tarih (YYYY-MM-DD), birim_fiyat, miktar, birim
+    """
+    with cursor_ctx(conn) as cur:
+        cur.execute(f"""
+            SELECT
+                CONVERT(VARCHAR(10), sh.BelgeTarihi, 120) AS Tarih,
+                shd.BirimFiyat AS BirimFiyat,
+                shd.Miktar AS Miktar
+            FROM StokHareketDetay shd
+            JOIN StokHareket sh ON sh.Id = shd.HareketId
+            JOIN StokMasrafKarti smk ON smk.Id = shd.IslemKartId
+            WHERE smk.Kodu = ?
+              AND sh.IslemKodu IN (1, 5)
+              AND shd.Turu = 1
+              AND CAST(sh.BelgeTarihi AS DATE) >= CAST('{bas}' AS DATE)
+              AND CAST(sh.BelgeTarihi AS DATE) <= CAST('{bit}' AS DATE)
+              AND shd.BirimFiyat > 0
+              AND shd.Miktar > 0
+            ORDER BY sh.BelgeTarihi ASC
+        """, masraf_kodu)
+
+        return [
+            {
+                "tarih":      tarih,
+                "birim_fiyat": float(birim_fiyat) if birim_fiyat else 0.0,
+                "miktar":     float(miktar) if miktar else 0.0,
+                "birim":      "ADET",
             }
             for tarih, birim_fiyat, miktar in cur.fetchall()
         ]

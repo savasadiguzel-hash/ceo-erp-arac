@@ -16,7 +16,7 @@ Performans notu
 `excel.py` gibi çok mamül hesaplayan üst katmanlar BOM'u bir kez çekip
 tüm çağrılara aynı dict'i geçerek gereksiz DB round-trip'lerini önler.
 """
-from db.sorgular import stok_fiyat_gecmisi, bom_listesi
+from db.sorgular import stok_fiyat_gecmisi, masraf_fiyat_gecmisi, bom_listesi
 
 
 def birim_maliyet(
@@ -37,6 +37,38 @@ def birim_maliyet(
         return _cache[key]
 
     fiyatlar = stok_fiyat_gecmisi(conn, stok_kodu, bas, bit)
+    filtreli  = [f for f in fiyatlar if bas <= f["tarih"] <= bit]
+
+    if not filtreli:
+        sonuc = 0.0
+    elif metod == "WA":
+        top_t = sum(f["birim_fiyat"] * f["miktar"] for f in filtreli)
+        top_m = sum(f["miktar"] for f in filtreli)
+        sonuc = top_t / top_m if top_m else 0.0
+    elif metod == "FIFO":
+        sonuc = min(filtreli, key=lambda x: x["tarih"])["birim_fiyat"]
+    elif metod == "LIFO":
+        sonuc = max(filtreli, key=lambda x: x["tarih"])["birim_fiyat"]
+    else:
+        sonuc = 0.0
+
+    _cache[key] = sonuc
+    return sonuc
+
+
+def masraf_birim_maliyet(
+    conn, masraf_kodu: str, metod: str, bas: str, bit: str,
+    _cache: dict | None = None,
+) -> float:
+    """Masraf kartı için seçilen yönteme göre birim maliyet döner (LIFO/FIFO/WA)."""
+    if _cache is None:
+        _cache = {}
+
+    key = ("masraf", masraf_kodu, metod, bas, bit)
+    if key in _cache:
+        return _cache[key]
+
+    fiyatlar = masraf_fiyat_gecmisi(conn, masraf_kodu, bas, bit)
     filtreli  = [f for f in fiyatlar if bas <= f["tarih"] <= bit]
 
     if not filtreli:
@@ -99,7 +131,9 @@ def mamul_maliyet_hesapla(
     toplam = 0.0
 
     for b in mamul["bilesenleri"]:
-        if b["kod"] in bom:
+        if b.get("tip") == "masraf":
+            bm = masraf_birim_maliyet(conn, b["kod"], metod, bas, bit, _cache)
+        elif b["kod"] in bom:
             # Alt bileşen aynı zamanda bir mamül → özyinelemeli hesapla
             _, bm = mamul_maliyet_hesapla(
                 conn, b["kod"], metod, bas, bit, _cache, ziyaret_edildi, bom
@@ -110,7 +144,7 @@ def mamul_maliyet_hesapla(
         satir_top = b["miktar"] * bm
         toplam   += satir_top
         satirlar.append({
-            "tip":        "BİLEŞEN",
+            "tip":        "MASRAF" if b.get("tip") == "masraf" else "BİLEŞEN",
             "bil_kod":    b["kod"],
             "bil_ad":     b["ad"],
             "bom_miktar": b["miktar"],

@@ -148,7 +148,7 @@ def maliyet_excel_kaydet(
         b["kod"]
         for mamul_veri in bom.values()
         for b in mamul_veri["bilesenleri"]
-        if b["kod"] not in bom
+        if b["kod"] not in bom and b.get("tip") != "masraf"
     })
     if yaprak_kodlari:
         toplu = stok_fiyatlari_toplu(conn, yaprak_kodlari, bas, bit)
@@ -228,7 +228,7 @@ def maliyet_excel_kaydet(
             satir_top  = round(float(b["satir_top"]),  2)
             _b = "bileseni"
             for col, (val, aln, fmt) in enumerate([
-                ("BİLEŞEN",  _ORTA, None),
+                (b["tip"],   _ORTA, None),
                 (mamul_kodu, _ORTA, None),
                 (mamul["ad"],_SOL,  None),
                 (b["bil_kod"],_ORTA, None),
