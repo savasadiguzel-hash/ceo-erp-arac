@@ -19,6 +19,22 @@ tüm çağrılara aynı dict'i geçerek gereksiz DB round-trip'lerini önler.
 from db.sorgular import stok_fiyat_gecmisi, masraf_fiyat_gecmisi, bom_listesi
 
 
+def _metod_uygula(fiyatlar: list[dict], metod: str, bas: str, bit: str) -> float:
+    """Fiyat geçmişi listesine seçilen yöntemi uygular. Boşsa 0.0 döner."""
+    filtreli = [f for f in fiyatlar if bas <= f["tarih"] <= bit]
+    if not filtreli:
+        return 0.0
+    if metod == "WA":
+        top_t = sum(f["birim_fiyat"] * f["miktar"] for f in filtreli)
+        top_m = sum(f["miktar"] for f in filtreli)
+        return top_t / top_m if top_m else 0.0
+    if metod == "FIFO":
+        return min(filtreli, key=lambda x: x["tarih"])["birim_fiyat"]
+    if metod == "LIFO":
+        return max(filtreli, key=lambda x: x["tarih"])["birim_fiyat"]
+    return 0.0
+
+
 def birim_maliyet(
     conn, stok_kodu: str, metod: str, bas: str, bit: str,
     _cache: dict | None = None,
@@ -36,22 +52,7 @@ def birim_maliyet(
     if key in _cache:
         return _cache[key]
 
-    fiyatlar = stok_fiyat_gecmisi(conn, stok_kodu, bas, bit)
-    filtreli  = [f for f in fiyatlar if bas <= f["tarih"] <= bit]
-
-    if not filtreli:
-        sonuc = 0.0
-    elif metod == "WA":
-        top_t = sum(f["birim_fiyat"] * f["miktar"] for f in filtreli)
-        top_m = sum(f["miktar"] for f in filtreli)
-        sonuc = top_t / top_m if top_m else 0.0
-    elif metod == "FIFO":
-        sonuc = min(filtreli, key=lambda x: x["tarih"])["birim_fiyat"]
-    elif metod == "LIFO":
-        sonuc = max(filtreli, key=lambda x: x["tarih"])["birim_fiyat"]
-    else:
-        sonuc = 0.0
-
+    sonuc = _metod_uygula(stok_fiyat_gecmisi(conn, stok_kodu, bas, bit), metod, bas, bit)
     _cache[key] = sonuc
     return sonuc
 
@@ -60,7 +61,16 @@ def masraf_birim_maliyet(
     conn, masraf_kodu: str, metod: str, bas: str, bit: str,
     _cache: dict | None = None,
 ) -> float:
-    """Masraf kartı için seçilen yönteme göre birim maliyet döner (LIFO/FIFO/WA)."""
+    """
+    Masraf kartı için seçilen yönteme göre birim maliyet döner (LIFO/FIFO/WA).
+
+    Fallback: Masraf kartında fatura girişi yoksa, AYNI kod StokKarti'de
+    aranır ve oradaki fatura geçmişi kullanılır. Böylece bir operasyon
+    (ör. `GMP-200-230602:20` FREZE) maliyeti hangi kart tarafına
+    işlendiyse oradan alınır — mükerrer sayım olmadan. Öncelik masrafta;
+    masraf boşsa stok. Her iki durumda da seçilen yöntem (FIFO/LIFO/WA)
+    uygulanır.
+    """
     if _cache is None:
         _cache = {}
 
@@ -68,21 +78,10 @@ def masraf_birim_maliyet(
     if key in _cache:
         return _cache[key]
 
-    fiyatlar = masraf_fiyat_gecmisi(conn, masraf_kodu, bas, bit)
-    filtreli  = [f for f in fiyatlar if bas <= f["tarih"] <= bit]
-
-    if not filtreli:
-        sonuc = 0.0
-    elif metod == "WA":
-        top_t = sum(f["birim_fiyat"] * f["miktar"] for f in filtreli)
-        top_m = sum(f["miktar"] for f in filtreli)
-        sonuc = top_t / top_m if top_m else 0.0
-    elif metod == "FIFO":
-        sonuc = min(filtreli, key=lambda x: x["tarih"])["birim_fiyat"]
-    elif metod == "LIFO":
-        sonuc = max(filtreli, key=lambda x: x["tarih"])["birim_fiyat"]
-    else:
-        sonuc = 0.0
+    sonuc = _metod_uygula(masraf_fiyat_gecmisi(conn, masraf_kodu, bas, bit), metod, bas, bit)
+    if sonuc == 0.0:
+        # Masrafta fatura yok → aynı kodu StokKarti'de dene
+        sonuc = _metod_uygula(stok_fiyat_gecmisi(conn, masraf_kodu, bas, bit), metod, bas, bit)
 
     _cache[key] = sonuc
     return sonuc

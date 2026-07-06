@@ -444,6 +444,10 @@ def masraf_fiyat_gecmisi(conn, masraf_kodu: str, bas: str, bit: str) -> list[dic
     Verilen tarih aralığında masraf kartı için fatura fiyat geçmişi.
     StokHareketDetay.IslemKartId → StokMasrafKarti.Id üzerinden çekilir.
     Her eleman: tarih (YYYY-MM-DD), birim_fiyat, miktar, birim
+
+    NOT: Masraf hareketleri stok hareketlerinden farklı `Turu` değeri
+    kullanır (çoğunlukla Turu=3). Bu yüzden stok sorgusundaki `Turu=1`
+    filtresi burada UYGULANMAZ — aksi halde tüm masraf faturaları elenir.
     """
     with cursor_ctx(conn) as cur:
         cur.execute(f"""
@@ -456,7 +460,6 @@ def masraf_fiyat_gecmisi(conn, masraf_kodu: str, bas: str, bit: str) -> list[dic
             JOIN StokMasrafKarti smk ON smk.Id = shd.IslemKartId
             WHERE smk.Kodu = ?
               AND sh.IslemKodu IN (1, 5)
-              AND shd.Turu = 1
               AND CAST(sh.BelgeTarihi AS DATE) >= CAST('{bas}' AS DATE)
               AND CAST(sh.BelgeTarihi AS DATE) <= CAST('{bit}' AS DATE)
               AND shd.BirimFiyat > 0
