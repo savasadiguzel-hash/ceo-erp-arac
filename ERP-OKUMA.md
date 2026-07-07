@@ -2,7 +2,7 @@
 
 **GitHub:** https://github.com/savasadiguzel-hash/ceo-erp-arac  
 **Dağıtım:** `dist/CEO-ERP-Araclar.exe` · `dist/CEO-ERP-Kurulum.exe` (Inno Setup)  
-**Son güncelleme:** 2026-07-07 (Maliyet — masraf/operasyon kartları maliyete dahil edildi)
+**Son güncelleme:** 2026-07-07 (Maliyet — Excel çıktısına "Stok Miktarı" sütunu eklendi)
 
 ---
 
@@ -50,6 +50,7 @@
 - **Fiyat kaynağı:** `IslemKodu IN (1, 5)` — alış faturası + alış irsaliyesi
 - **Performans:** `stok_fiyatlari_toplu()` ile N bileşen için tek SQL sorgusu
 - **Çok seviyeli BOM:** alt bileşen de mamülse maliyet özyinelemeli hesaplanır; döngü korumalı (`_visiting` frozenset)
+- **Stok Miktarı sütunu (en sağ):** Excel çıktısında son sütun. `stok_guncel_bakiyeleri()` ile **rapor bitiş tarihi** itibarıyla hesaplanır (Üretim Eksik Stok'taki bakiye formülünün aynısı — tarih parametreli). MAMÜL satırında mamülün kendi stoğu, BİLEŞEN satırında bileşenin stoğu gelir; MASRAF / İşçilik / Toplam satırları boş bırakılır (masrafın fiziksel stoğu yoktur).
 
 ### Masraf / Operasyon Kartları (StokMasrafKarti — reçetede Tipi=2)
 

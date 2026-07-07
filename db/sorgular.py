@@ -202,15 +202,16 @@ def stok_birimleri_getir(conn, stok_kodlari: list) -> dict:
     }
 
 
-def stok_guncel_bakiyeleri(conn, stok_kodlari: list) -> dict:
+def stok_guncel_bakiyeleri(conn, stok_kodlari: list, tarih: str | None = None) -> dict:
     """
-    Verilen stok kodları için bugünkü tarih itibarıyla güncel stok bakiyesi.
+    Verilen stok kodları için belirtilen tarih itibarıyla güncel stok bakiyesi.
+    `tarih` verilmezse bugün kullanılır (format: 'YYYY-MM-DD').
     Döner: {stok_kodu: bakiye_float}
     """
     from datetime import date
     if not stok_kodlari:
         return {}
-    bugun = date.today().strftime('%Y-%m-%d')
+    bugun = tarih or date.today().strftime('%Y-%m-%d')
     sonuc = {k: 0.0 for k in stok_kodlari}
     _YIGIN = 500
     for i in range(0, len(stok_kodlari), _YIGIN):

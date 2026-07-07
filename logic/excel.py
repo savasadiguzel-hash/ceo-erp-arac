@@ -5,7 +5,7 @@ from openpyxl.styles import PatternFill, Font as XFont, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 
 from logic.maliyet import mamul_maliyet_hesapla
-from db.sorgular import bom_listesi, stok_fiyatlari_toplu
+from db.sorgular import bom_listesi, stok_fiyatlari_toplu, stok_guncel_bakiyeleri
 
 # ── Stil sabitleri ────────────────────────────────────────────────────────────
 
@@ -53,6 +53,7 @@ _MALIYET_SUTUNLAR = [
     ("Bileşen Kodu", 14), ("Bileşen Adı", 30), ("BOM Miktarı", 13),
     ("Birim", 10), ("Birim Maliyet ₺", 18), ("Satır Maliyeti ₺", 18),
     ("Hammadde Toplamı ₺", 20), ("İşçilik ₺", 16), ("Genel Toplam ₺", 20),
+    ("Stok Miktarı", 14),
 ]
 
 # (alan_adı, sayısal?, number_format)
@@ -188,6 +189,22 @@ def maliyet_excel_kaydet(
         _hucre(ws, 2, col, ad, "baslik", "baslik")
         ws.column_dimensions[get_column_letter(col)].width = gen
 
+    # Stok miktarı sütunu için bakiyeleri tek sorguda topla (bitiş tarihi itibarıyla).
+    # cache paylaşıldığından mamul_maliyet_hesapla aşağıda tekrar çağrıldığında
+    # DB'ye gitmez (cache hit).
+    kodlar: set[str] = set()
+    for mamul_kodu, _ in secili:
+        if mamul_kodu not in bom:
+            continue
+        kodlar.add(mamul_kodu)
+        bilesenleri, _ = mamul_maliyet_hesapla(
+            conn, mamul_kodu, metod, bas, bit, _cache=cache, bom=bom
+        )
+        for b in bilesenleri:
+            if b["tip"] != "MASRAF":
+                kodlar.add(b["bil_kod"])
+    bakiyeler = stok_guncel_bakiyeleri(conn, list(kodlar), bit)
+
     satir = 3
 
     for mamul_kodu, iscilik_ham in secili:
@@ -216,6 +233,7 @@ def maliyet_excel_kaydet(
             (round(hammadde_top, 2), _SAG, _FMT_PARA),
             (round(iscilik,      2), _SAG, _FMT_PARA),
             (round(genel_top,    2), _SAG, _FMT_PARA),
+            (_miktar(bakiyeler.get(mamul_kodu, 0.0)), _SAG, _FMT_MIKTAR),
         ], 1):
             _hucre(ws, satir, col, val, _m, _m, aln, fmt)
         satir += 1
@@ -238,6 +256,8 @@ def maliyet_excel_kaydet(
                 (birim_mal,   _SAG,  _FMT_BIRIM),
                 (satir_top,   _SAG,  _FMT_PARA),
                 (None, _ORTA, None), (None, _ORTA, None), (None, _ORTA, None),
+                (_miktar(bakiyeler.get(b["bil_kod"], 0.0)) if b["tip"] != "MASRAF" else None,
+                 _SAG, _FMT_MIKTAR),
             ], 1):
                 _hucre(ws, satir, col, val, _b, _b, aln, fmt)
             satir += 1
@@ -255,6 +275,7 @@ def maliyet_excel_kaydet(
                 (None, _ORTA, None), (None, _ORTA, None), (None, _ORTA, None),
                 (round(iscilik, 2),      _SAG,  _FMT_PARA),
                 (None, _ORTA, None), (None, _ORTA, None), (None, _ORTA, None),
+                (None, _ORTA, None),
             ], 1):
                 _hucre(ws, satir, col, val, _i, _i, aln, fmt)
             satir += 1
@@ -271,6 +292,7 @@ def maliyet_excel_kaydet(
             (round(hammadde_top, 2), _SAG, _FMT_PARA),
             (round(iscilik,      2), _SAG, _FMT_PARA),
             (round(genel_top,    2), _SAG, _FMT_PARA),
+            (None, _ORTA, None),
         ], 1):
             _hucre(ws, satir, col, val, _t, _t, aln, fmt)
         satir += 1
