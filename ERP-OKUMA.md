@@ -2,7 +2,7 @@
 
 **GitHub:** https://github.com/savasadiguzel-hash/ceo-erp-arac  
 **Dağıtım:** `dist/CEO-ERP-Araclar.exe` · `dist/CEO-ERP-Kurulum.exe` (Inno Setup)  
-**Son güncelleme:** 2026-06-18 (Satış Faturaları — 0 TL'lik fatura kalemleri artık gösteriliyor)
+**Son güncelleme:** 2026-07-07 (Maliyet — masraf/operasyon kartları maliyete dahil edildi)
 
 ---
 
@@ -49,6 +49,18 @@
 - Bağlan → DB bağlantısı arka thread'de kurulur, pencere donmaz
 - **Fiyat kaynağı:** `IslemKodu IN (1, 5)` — alış faturası + alış irsaliyesi
 - **Performans:** `stok_fiyatlari_toplu()` ile N bileşen için tek SQL sorgusu
+- **Çok seviyeli BOM:** alt bileşen de mamülse maliyet özyinelemeli hesaplanır; döngü korumalı (`_visiting` frozenset)
+
+### Masraf / Operasyon Kartları (StokMasrafKarti — reçetede Tipi=2)
+
+Reçetedeki masraf bileşenleri (FREZE, KAPLAMA, TORNA vb. `:XX` kodları) `bom_listesi()` içinde ayrı sorguyla `tip="masraf"` olarak eklenir; maliyetleri **`masraf_birim_maliyet()`** ile hesaplanır. İki kritik kural:
+
+1. **Turu filtresi YOK.** Masraf faturaları stoktan farklı olarak `Turu=3` kullanır (stok `Turu=1`). Bu yüzden `masraf_fiyat_gecmisi()` sorgusunda `Turu` filtrelenmez — aksi hâlde masraf faturalarının %99'u elenir, maliyet sıfır çıkar.
+2. **StokKarti fallback.** Operasyon maliyeti çoğunlukla aynı `:XX` kodun **StokKarti** tarafına işlenir. `masraf_birim_maliyet()` önce masrafa bakar, fatura yoksa aynı kodu StokKarti'de arar (seçilen FIFO/LIFO/WA korunur). Bileşen mükerrer sayılmaz — yalnızca *fiyat kaynağı* değişir.
+
+Metod (FIFO/LIFO/WA) hesabı tek yerde: `logic/maliyet.py::_metod_uygula()`.
+
+**Sıfır maliyetli bileşen = veri boşluğu:** Hiç fatura/reçete/operasyon kodu olmayan parça 0 gösterir (kod hatası değil, ERP veri girişi eksiği). Örn. reçeteye kolonsuz girilen `GMP-200-24044060` (doğrusu `GMP-200-240440:60`) fatura eşleşmez.
 
 ---
 
