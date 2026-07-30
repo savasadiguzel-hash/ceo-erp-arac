@@ -5,6 +5,8 @@ Uygulama konfigürasyonu — config.json'dan okunur, yoksa şablon oluşturulur.
 import json
 import base64
 import logging
+import os
+import shutil
 import sys
 from pathlib import Path
 
@@ -14,7 +16,17 @@ if getattr(sys, "frozen", False):
 else:
     _BASE = Path(__file__).parent
 
-CONFIG_PATH = _BASE / "config.json"
+# Program Files altına kurulduğunda normal kullanıcı buraya yazamaz; yazılabilir
+# config her zaman kullanıcıya özel klasörde tutulur. Kurulum paketinin _BASE'e
+# koyduğu config.json (varsa) yalnızca ilk çalıştırmada tohum olarak kopyalanır.
+if getattr(sys, "frozen", False):
+    _DATA_DIR = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "CEO ERP Araclar"
+    _DATA_DIR.mkdir(parents=True, exist_ok=True)
+else:
+    _DATA_DIR = _BASE
+
+CONFIG_PATH = _DATA_DIR / "config.json"
+_SEED_PATH = _BASE / "config.json"
 
 _SABLON: dict = {
     "sunucu":     "localhost\\SQLEXPRESS",
@@ -26,9 +38,16 @@ _SABLON: dict = {
 
 def _cfg_oku() -> dict:
     if not CONFIG_PATH.exists():
-        _cfg_yaz(_SABLON)
-        logging.info("config.json bulunamadi; varsayilan sablon olusturuldu: %s", CONFIG_PATH)
-        return _SABLON.copy()
+        if _SEED_PATH != CONFIG_PATH and _SEED_PATH.exists():
+            try:
+                shutil.copy(_SEED_PATH, CONFIG_PATH)
+                logging.info("config.json kurulum tohumundan kopyalandi: %s -> %s", _SEED_PATH, CONFIG_PATH)
+            except Exception as e:
+                logging.error("config.json tohumdan kopyalanamadi: %s", e)
+        if not CONFIG_PATH.exists():
+            _cfg_yaz(_SABLON)
+            logging.info("config.json bulunamadi; varsayilan sablon olusturuldu: %s", CONFIG_PATH)
+            return _SABLON.copy()
     try:
         with open(CONFIG_PATH, encoding="utf-8") as f:
             return {**_SABLON, **json.load(f)}

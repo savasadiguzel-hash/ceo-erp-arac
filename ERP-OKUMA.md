@@ -2,7 +2,7 @@
 
 **GitHub:** https://github.com/savasadiguzel-hash/ceo-erp-arac  
 **Dağıtım:** `dist/CEO-ERP-Araclar.exe` · `dist/CEO-ERP-Kurulum.exe` (Inno Setup)  
-**Son güncelleme:** 2026-07-07 (Maliyet — Excel çıktısına "Stok Miktarı" sütunu eklendi)
+**Son güncelleme:** 2026-07-30 (Kurulum — Inno Setup 6.7.3 uyumluluğu: WizardSmallImageFile kaldırıldı, ISCC.exe winget yolu eklendi)
 
 ---
 
@@ -172,20 +172,36 @@ Exe derleme: `build.bat` → `dist/CEO-ERP-Araclar.exe` + `copy config.json dist
 
 ### Şirket İçi Dağıtım (Yeni PC)
 
-**Gereksinim:** Inno Setup 6 ([jrsoftware.org/isdl.php](https://jrsoftware.org/isdl.php)) — yalnızca paketi derleyen makinede.
+**Gereksinim:** Inno Setup 6 ([jrsoftware.org/isdl.php](https://jrsoftware.org/isdl.php) veya `winget install --id JRSoftware.InnoSetup -e`) — yalnızca paketi derleyen makinede.
+`create_installer.bat`, ISCC.exe'yi hem Program Files hem de winget'in kurduğu `%LOCALAPPDATA%\Programs\Inno Setup 6\` altında arar.
 
 ```
-build.bat              ← önce exe derle
+build.bat              ← önce exe derle (kaynak exe'den yeniyse)
 create_installer.bat   ← ardından kurulum paketi oluştur
 ```
 
 Çıktı: `dist\CEO-ERP-Kurulum.exe` (~72 MB, her şey dahil)
 
+**Önemli:** `setup.iss` artık `dist\config.sablon.json` (boş şablon) yerine gerçek `dist\config.json`'ı paketliyor —
+şirket içi tüm PC'ler aynı CEO ERP veritabanına (`WIN-3FATBI9RQAA\CEO1`) bağlandığı için kurulumda bağlantı
+bilgileri/şifre sorulmaz, otomatik gelir. `dist\config.json`'ın güncel/doğru olduğundan emin olmadan
+`create_installer.bat` çalıştırma — şifre base64 ile gizlenmiş, şifreleme değil; bu exe'yi şirket dışına
+veya güvenilmeyen bir yere paylaşma.
+
+**Program Files yazma izni hatası (2026-07-30 düzeltildi):** Kurulum `{autopf}\CEO ERP Araclar\` altına
+yapıldığından (varsayılan Inno Setup davranışı), normal kullanıcı bu klasöre yazamaz →
+`PermissionError: ceo_erp.log` ile açılış anında çöküyordu. Düzeltme:
+- `main.py`: log dosyası artık `%LOCALAPPDATA%\CEO ERP Araclar\ceo_erp.log`'a yazılıyor.
+- `config.py`: yazılabilir `config.json` artık `%LOCALAPPDATA%\CEO ERP Araclar\config.json`'da tutuluyor;
+  kurulumun `{app}\config.json`'a koyduğu gerçek bağlantı bilgileri yalnızca **ilk çalıştırmada tohum
+  (seed) olarak** oraya kopyalanır. Ayarlar sekmesinden yapılan değişiklikler de artık bu yazılabilir
+  kopyaya kaydedilir — Program Files'a yazma denenmez.
+
 **Hedef PC'de kurulum:**
 1. `CEO-ERP-Kurulum.exe` çalıştır → sihirbaz `Program Files\CEO ERP Araclar\` altına kurar
 2. Başlat Menüsü + isteğe bağlı masaüstü kısayolu otomatik oluşur
-3. İlk çalıştırmada bağlantı bilgileri girilir → `config.json` otomatik kaydedilir
-4. Güncelleme kurulumlarında mevcut `config.json` korunur
+3. `config.json` (gerçek bağlantı bilgileriyle) otomatik gelir — ilk çalıştırmada şifre sorulmaz
+4. Güncelleme kurulumlarında mevcut `config.json` korunur (üzerine yazılmaz)
 
 **Ekstra bağımlılık yok** — Windows yerleşik `DRIVER={SQL Server}` sürücüsü yeterli.
 

@@ -24,8 +24,6 @@ DisableProgramGroupPage=no
 PrivilegesRequired=admin
 UninstallDisplayName={#AppName}
 UninstallDisplayIcon={app}\{#AppExe}
-; Türkçe Windows için UTF-8
-WizardSmallImageFile=compiler:WizSmallImage.bmp
 
 [Languages]
 Name: "turkish"; MessagesFile: "compiler:Languages\Turkish.isl"
@@ -37,8 +35,9 @@ Name: "desktopicon"; Description: "Masaüstüne kısayol oluştur"; GroupDescrip
 ; Ana uygulama
 Source: "dist\{#AppExe}"; DestDir: "{app}"; Flags: ignoreversion
 
-; Config şablonu — yalnızca config.json yoksa kopyalanır (mevcut ayarları silmez)
-Source: "dist\config.sablon.json"; DestDir: "{app}"; DestName: "config.json"; Flags: onlyifdoesntexist
+; Gerçek bağlantı bilgileri (şirket içi kullanım — tüm PC'ler aynı CEO ERP veritabanına bağlanır)
+; Yalnızca config.json yoksa kopyalanır (mevcut/özelleştirilmiş ayarları günceleme kurulumunda silmez)
+Source: "dist\config.json"; DestDir: "{app}"; DestName: "config.json"; Flags: onlyifdoesntexist
 
 [Icons]
 ; Başlat Menüsü

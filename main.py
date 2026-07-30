@@ -1,9 +1,19 @@
+import os
 import sys
 import logging
 import traceback
+from pathlib import Path
+
+# Program Files altına kurulduğunda normal kullanıcı bu klasöre yazamaz;
+# log dosyasını her zaman yazılabilir olan kullanıcıya özel klasöre koy.
+if getattr(sys, "frozen", False):
+    _LOG_DIR = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "CEO ERP Araclar"
+    _LOG_DIR.mkdir(parents=True, exist_ok=True)
+else:
+    _LOG_DIR = Path(__file__).parent
 
 logging.basicConfig(
-    filename="ceo_erp.log",
+    filename=str(_LOG_DIR / "ceo_erp.log"),
     level=logging.DEBUG,
     format="%(asctime)s - %(levelname)s - %(module)s - %(message)s",
     encoding="utf-8",
