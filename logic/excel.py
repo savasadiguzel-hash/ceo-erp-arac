@@ -1,11 +1,15 @@
 """Excel raporu üretme iş mantığı. UI'dan bağımsızdır."""
 from datetime import datetime
+from pathlib import Path
 import openpyxl
 from openpyxl.styles import PatternFill, Font as XFont, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 
 from logic.maliyet import mamul_maliyet_hesapla
-from db.sorgular import bom_listesi, stok_fiyatlari_toplu, stok_guncel_bakiyeleri
+from db.sorgular import (
+    bom_listesi, stok_fiyatlari_toplu, stok_guncel_bakiyeleri,
+    bom_operasyon_kodlarini_tamamla,
+)
 
 # ── Stil sabitleri ────────────────────────────────────────────────────────────
 
@@ -132,6 +136,90 @@ def _miktar(v) -> float | None:
 
 # ── Maliyet Raporu ────────────────────────────────────────────────────────────
 
+def _mamul_blogu_yaz(ws, satir: int, mamul_kodu: str, mamul: dict,
+                      bilesenleri: list[dict], hammadde_top: float,
+                      iscilik: float, bakiyeler: dict) -> int:
+    """Tek mamül için başlık + bileşen + işçilik + toplam satırlarını yazar.
+    Bir sonraki boş satır numarasını döner."""
+    genel_top = hammadde_top + iscilik
+
+    ws.row_dimensions[satir].height = 22
+    _m = "mamul"
+    for col, (val, aln, fmt) in enumerate([
+        ("MAMÜL",       _ORTA, None),
+        (mamul_kodu,    _ORTA, None),
+        (mamul["ad"],   _SOL,  None),
+        (None, _ORTA, None), (None, _ORTA, None), (None, _ORTA, None),
+        (None, _ORTA, None), (None, _ORTA, None), (None, _ORTA, None),
+        (round(hammadde_top, 2), _SAG, _FMT_PARA),
+        (round(iscilik,      2), _SAG, _FMT_PARA),
+        (round(genel_top,    2), _SAG, _FMT_PARA),
+        (_miktar(bakiyeler.get(mamul_kodu, 0.0)), _SAG, _FMT_MIKTAR),
+    ], 1):
+        _hucre(ws, satir, col, val, _m, _m, aln, fmt)
+    satir += 1
+
+    for b in bilesenleri:
+        ws.row_dimensions[satir].height = 18
+        bom_miktar = _miktar(b["bom_miktar"])
+        birim_mal  = round(float(b["birim_mal"]),  4)
+        satir_top  = round(float(b["satir_top"]),  2)
+        _b = "bileseni"
+        for col, (val, aln, fmt) in enumerate([
+            (b["tip"],   _ORTA, None),
+            (mamul_kodu, _ORTA, None),
+            (mamul["ad"],_SOL,  None),
+            (b["bil_kod"],_ORTA, None),
+            (b["bil_ad"], _SOL,  None),
+            (bom_miktar,  _SAG,  _FMT_MIKTAR),
+            (b["birim"],  _ORTA, None),
+            (birim_mal,   _SAG,  _FMT_BIRIM),
+            (satir_top,   _SAG,  _FMT_PARA),
+            (None, _ORTA, None), (None, _ORTA, None), (None, _ORTA, None),
+            (_miktar(bakiyeler.get(b["bil_kod"], 0.0)) if not b["tip"].startswith("MASRAF") else None,
+             _SAG, _FMT_MIKTAR),
+        ], 1):
+            _hucre(ws, satir, col, val, _b, _b, aln, fmt)
+        satir += 1
+
+    if iscilik > 0:
+        ws.row_dimensions[satir].height = 18
+        _i = "iscilik"
+        for col, (val, aln, fmt) in enumerate([
+            ("İŞÇİLİK",              _ORTA, None),
+            (mamul_kodu,             _ORTA, None),
+            (mamul["ad"],            _SOL,  None),
+            ("—",                    _ORTA, None),
+            ("Manuel İşçilik Tutarı",_SOL,  None),
+            (None, _ORTA, None), (None, _ORTA, None), (None, _ORTA, None),
+            (round(iscilik, 2),      _SAG,  _FMT_PARA),
+            (None, _ORTA, None), (None, _ORTA, None), (None, _ORTA, None),
+            (None, _ORTA, None),
+        ], 1):
+            _hucre(ws, satir, col, val, _i, _i, aln, fmt)
+        satir += 1
+
+    ws.row_dimensions[satir].height = 20
+    _t = "toplam"
+    for col, (val, aln, fmt) in enumerate([
+        ("TOPLAM",      _ORTA, None),
+        (mamul_kodu,    _ORTA, None),
+        (mamul["ad"],   _SOL,  None),
+        (None, _ORTA, None), (None, _ORTA, None), (None, _ORTA, None),
+        (None, _ORTA, None), (None, _ORTA, None), (None, _ORTA, None),
+        (round(hammadde_top, 2), _SAG, _FMT_PARA),
+        (round(iscilik,      2), _SAG, _FMT_PARA),
+        (round(genel_top,    2), _SAG, _FMT_PARA),
+        (None, _ORTA, None),
+    ], 1):
+        _hucre(ws, satir, col, val, _t, _t, aln, fmt)
+    satir += 1
+
+    ws.row_dimensions[satir].height = 6
+    satir += 1
+    return satir
+
+
 def maliyet_excel_kaydet(
     dosya: str, conn,
     secili: list[tuple[str, float]],   # [(mamul_kodu, iscilik_float), ...]
@@ -201,7 +289,7 @@ def maliyet_excel_kaydet(
             conn, mamul_kodu, metod, bas, bit, _cache=cache, bom=bom
         )
         for b in bilesenleri:
-            if b["tip"] != "MASRAF":
+            if not b["tip"].startswith("MASRAF"):
                 kodlar.add(b["bil_kod"])
     bakiyeler = stok_guncel_bakiyeleri(conn, list(kodlar), bit)
 
@@ -217,93 +305,119 @@ def maliyet_excel_kaydet(
         bilesenleri, hammadde_top = mamul_maliyet_hesapla(
             conn, mamul_kodu, metod, bas, bit, _cache=cache, bom=bom
         )
-        iscilik   = float(iscilik_ham)
-        genel_top = hammadde_top + iscilik
-
-        # ── Mamül başlık satırı ──────────────────────────────────────────────
-        # Sütunlar: Tip | MamulKod | MamulAd | — | — | — | — | — | — | HammaddeTop | Iscilik | GenelTop
-        ws.row_dimensions[satir].height = 22
-        _m = "mamul"
-        for col, (val, aln, fmt) in enumerate([
-            ("MAMÜL",       _ORTA, None),
-            (mamul_kodu,    _ORTA, None),
-            (mamul["ad"],   _SOL,  None),
-            (None, _ORTA, None), (None, _ORTA, None), (None, _ORTA, None),
-            (None, _ORTA, None), (None, _ORTA, None), (None, _ORTA, None),
-            (round(hammadde_top, 2), _SAG, _FMT_PARA),
-            (round(iscilik,      2), _SAG, _FMT_PARA),
-            (round(genel_top,    2), _SAG, _FMT_PARA),
-            (_miktar(bakiyeler.get(mamul_kodu, 0.0)), _SAG, _FMT_MIKTAR),
-        ], 1):
-            _hucre(ws, satir, col, val, _m, _m, aln, fmt)
-        satir += 1
-
-        # ── Bileşen satırları ────────────────────────────────────────────────
-        for b in bilesenleri:
-            ws.row_dimensions[satir].height = 18
-            bom_miktar = _miktar(b["bom_miktar"])
-            birim_mal  = round(float(b["birim_mal"]),  4)
-            satir_top  = round(float(b["satir_top"]),  2)
-            _b = "bileseni"
-            for col, (val, aln, fmt) in enumerate([
-                (b["tip"],   _ORTA, None),
-                (mamul_kodu, _ORTA, None),
-                (mamul["ad"],_SOL,  None),
-                (b["bil_kod"],_ORTA, None),
-                (b["bil_ad"], _SOL,  None),
-                (bom_miktar,  _SAG,  _FMT_MIKTAR),
-                (b["birim"],  _ORTA, None),
-                (birim_mal,   _SAG,  _FMT_BIRIM),
-                (satir_top,   _SAG,  _FMT_PARA),
-                (None, _ORTA, None), (None, _ORTA, None), (None, _ORTA, None),
-                (_miktar(bakiyeler.get(b["bil_kod"], 0.0)) if b["tip"] != "MASRAF" else None,
-                 _SAG, _FMT_MIKTAR),
-            ], 1):
-                _hucre(ws, satir, col, val, _b, _b, aln, fmt)
-            satir += 1
-
-        # ── İşçilik satırı ───────────────────────────────────────────────────
-        if iscilik > 0:
-            ws.row_dimensions[satir].height = 18
-            _i = "iscilik"
-            for col, (val, aln, fmt) in enumerate([
-                ("İŞÇİLİK",              _ORTA, None),
-                (mamul_kodu,             _ORTA, None),
-                (mamul["ad"],            _SOL,  None),
-                ("—",                    _ORTA, None),
-                ("Manuel İşçilik Tutarı",_SOL,  None),
-                (None, _ORTA, None), (None, _ORTA, None), (None, _ORTA, None),
-                (round(iscilik, 2),      _SAG,  _FMT_PARA),
-                (None, _ORTA, None), (None, _ORTA, None), (None, _ORTA, None),
-                (None, _ORTA, None),
-            ], 1):
-                _hucre(ws, satir, col, val, _i, _i, aln, fmt)
-            satir += 1
-
-        # ── Toplam satırı ────────────────────────────────────────────────────
-        ws.row_dimensions[satir].height = 20
-        _t = "toplam"
-        for col, (val, aln, fmt) in enumerate([
-            ("TOPLAM",      _ORTA, None),
-            (mamul_kodu,    _ORTA, None),
-            (mamul["ad"],   _SOL,  None),
-            (None, _ORTA, None), (None, _ORTA, None), (None, _ORTA, None),
-            (None, _ORTA, None), (None, _ORTA, None), (None, _ORTA, None),
-            (round(hammadde_top, 2), _SAG, _FMT_PARA),
-            (round(iscilik,      2), _SAG, _FMT_PARA),
-            (round(genel_top,    2), _SAG, _FMT_PARA),
-            (None, _ORTA, None),
-        ], 1):
-            _hucre(ws, satir, col, val, _t, _t, aln, fmt)
-        satir += 1
-
-        # Mamüller arası boşluk satırı
-        ws.row_dimensions[satir].height = 6
-        satir += 1
+        satir = _mamul_blogu_yaz(ws, satir, mamul_kodu, mamul, bilesenleri,
+                                  hammadde_top, float(iscilik_ham), bakiyeler)
 
     ws.auto_filter.ref = f"A2:{get_column_letter(n_sutun)}2"
     ws.freeze_panes = "A3"
     wb.save(dosya)
+
+
+# ── Excel Taslak Mamül Ağacından Maliyet Raporu ───────────────────────────────
+
+def maliyet_excel_kaydet_excel_bom(
+    dosya_cikti: str, conn, excel_bom_dosyasi: str,
+    metod: str, bas: str, bit: str, bas_g: str, bit_g: str,
+    iscilik: float = 0.0, ilerleme_cb=None,
+) -> list[str]:
+    """
+    CEO ERP'ye henüz işlenmemiş, Excel'de hazırlanmış taslak bir mamül ağacını
+    aynı 13 sütunlu maliyet raporu formatıyla hesaplar. BOM kaynağı
+    db.sorgular.bom_listesi() yerine mamul_agaci_excel_oku'dan gelir; geri
+    kalan hesap/rapor mantığı maliyet_excel_kaydet ile aynıdır.
+
+    Döner: uyarılar listesi (miktarı tahmin edilen satırlar, mükerrer kodlar vb.)
+    """
+    from logic.mamul_agaci_excel_oku import excel_dosyasindan_bom_oku
+
+    metod_ad = {"WA": "Ağırlıklı Ortalama", "FIFO": "FIFO", "LIFO": "LIFO"}[metod]
+    bom, kok_kodlari, uyarilar = excel_dosyasindan_bom_oku(excel_bom_dosyasi)
+    uyarilar.extend(bom_operasyon_kodlarini_tamamla(conn, bom))
+
+    cache: dict = {}
+    yaprak_kodlari = list({
+        b["kod"]
+        for mamul_veri in bom.values()
+        for b in mamul_veri["bilesenleri"]
+        if b["kod"] not in bom and b.get("tip") != "masraf"
+    })
+    if yaprak_kodlari:
+        toplu = stok_fiyatlari_toplu(conn, yaprak_kodlari, bas, bit)
+        for stok_kodu, fiyat_listesi in toplu.items():
+            key = ("birim", stok_kodu, metod, bas, bit)
+            if not fiyat_listesi:
+                cache[key] = 0.0
+            elif metod == "WA":
+                top_t = sum(f["birim_fiyat"] * f["miktar"] for f in fiyat_listesi)
+                top_m = sum(f["miktar"] for f in fiyat_listesi)
+                cache[key] = top_t / top_m if top_m else 0.0
+            elif metod == "FIFO":
+                cache[key] = min(fiyat_listesi, key=lambda x: x["tarih"])["birim_fiyat"]
+            elif metod == "LIFO":
+                cache[key] = max(fiyat_listesi, key=lambda x: x["tarih"])["birim_fiyat"]
+            else:
+                cache[key] = 0.0
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Maliyet Raporu"
+
+    n_sutun = len(_MALIYET_SUTUNLAR)
+    ws.merge_cells(f"A1:{get_column_letter(n_sutun)}1")
+    bilgi = (f"CEO ERP — Excel Taslak Maliyet Raporu  |  Kaynak: {Path(excel_bom_dosyasi).name}  |  "
+             f"Yöntem: {metod_ad}  |  Dönem: {bas_g} – {bit_g}  |  "
+             f"Oluşturma: {datetime.now().strftime('%d.%m.%Y %H:%M')}")
+    if uyarilar:
+        bilgi += f"  |  ⚠ {len(uyarilar)} uyarı (rapor sonunda)"
+    h = ws.cell(row=1, column=1, value=bilgi)
+    h.fill = _FILL["bilgi"]; h.font = _FONT["bilgi"]
+    h.alignment = _SOL; h.border = _KENAR
+    ws.row_dimensions[1].height = 24
+
+    ws.row_dimensions[2].height = 28
+    for col, (ad, gen) in enumerate(_MALIYET_SUTUNLAR, 1):
+        _hucre(ws, 2, col, ad, "baslik", "baslik")
+        ws.column_dimensions[get_column_letter(col)].width = gen
+
+    kodlar: set[str] = set()
+    for mamul_kodu in kok_kodlari:
+        if mamul_kodu not in bom:
+            continue
+        kodlar.add(mamul_kodu)
+        bilesenleri, _ = mamul_maliyet_hesapla(
+            conn, mamul_kodu, metod, bas, bit, _cache=cache, bom=bom
+        )
+        for b in bilesenleri:
+            if not b["tip"].startswith("MASRAF"):
+                kodlar.add(b["bil_kod"])
+    bakiyeler = stok_guncel_bakiyeleri(conn, list(kodlar), bit)
+
+    satir = 3
+    for mamul_kodu in kok_kodlari:
+        mamul = bom.get(mamul_kodu)
+        if not mamul:
+            continue
+        if ilerleme_cb:
+            ilerleme_cb(f"{mamul_kodu} — {mamul['ad']} hesaplanıyor...")
+        bilesenleri, hammadde_top = mamul_maliyet_hesapla(
+            conn, mamul_kodu, metod, bas, bit, _cache=cache, bom=bom
+        )
+        satir = _mamul_blogu_yaz(ws, satir, mamul_kodu, mamul, bilesenleri,
+                                  hammadde_top, float(iscilik), bakiyeler)
+
+    if uyarilar:
+        satir += 1
+        ws.cell(row=satir, column=1, value="Uyarılar:").font = _FONT["iscilik"]
+        satir += 1
+        for u in uyarilar:
+            ws.merge_cells(start_row=satir, start_column=1, end_row=satir, end_column=n_sutun)
+            ws.cell(row=satir, column=1, value=f"• {u}").font = _FONT["bilgi"]
+            satir += 1
+
+    ws.auto_filter.ref = f"A2:{get_column_letter(n_sutun)}2"
+    ws.freeze_panes = "A3"
+    wb.save(dosya_cikti)
+    return uyarilar
 
 
 # ── Kesişim Kümesi Raporu ─────────────────────────────────────────────────────

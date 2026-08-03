@@ -405,6 +405,58 @@ def bom_listesi(conn) -> dict:
     return bom
 
 
+def bom_operasyon_kodlarini_tamamla(conn, bom: dict) -> list[str]:
+    """
+    Excel'den okunan taslak BOM'daki bileşenler için, CEO ERP'de aynı kodun
+    StokKarti veya StokMasrafKarti tarafında ':XX' soneki ile kayıtlı bir
+    operasyon/masraf kodu varsa (ör. GMP-200-240822 için dışarıda yaptırılan
+    GMP-200-240822:30 FREZE/TORNA/KAPLAMA gibi), Excel'de açıkça yazılmamış
+    olsa bile otomatik bulunup masraf bileşeni olarak eklenir. Miktar olarak
+    ana parçanın miktarı kullanılır.
+
+    bom sözlüğü yerinde (in place) güncellenir. Döner: eklenen kodlar için
+    bilgi mesajları listesi.
+    """
+    with cursor_ctx(conn) as cur:
+        cur.execute("""
+            SELECT Kodu, Adi, 'stok' FROM StokKarti
+            WHERE Kodu LIKE '%:%' AND Kodu NOT LIKE '%:%:%' AND Aktif = 1
+            UNION ALL
+            SELECT Kodu, Adi, 'masraf' FROM StokMasrafKarti
+            WHERE Kodu LIKE '%:%' AND Kodu NOT LIKE '%:%:%' AND Aktif = 1
+        """)
+        cocuklar: dict[str, list[tuple[str, str, str]]] = {}
+        for kodu, adi, kaynak in cur.fetchall():
+            taban = kodu.rsplit(":", 1)[0]
+            cocuklar.setdefault(taban, []).append((kodu, adi, kaynak))
+
+    mesajlar: list[str] = []
+    for veri in bom.values():
+        orijinal = veri["bilesenleri"]
+        mevcut_kodlar = {x["kod"] for x in orijinal}
+        yeni_liste: list[dict] = []
+        for b in orijinal:
+            yeni_liste.append(b)
+            taban_kod = b["kod"]
+            if ":" in taban_kod or b.get("tip") == "masraf":
+                continue   # zaten bir operasyon kodu ya da masraf olarak işaretli
+            for child_kod, child_adi, _kaynak in cocuklar.get(taban_kod, []):
+                if child_kod in mevcut_kodlar:
+                    continue   # zaten Excel'de açıkça yazılmış
+                # Ana parçanın hemen altına eklenir — rapor sırasında yan yana görünsün
+                yeni_liste.append({
+                    "kod": child_kod, "ad": child_adi, "miktar": b["miktar"],
+                    "birim": b["birim"], "tip": "masraf", "oto": True,
+                })
+                mevcut_kodlar.add(child_kod)
+                mesajlar.append(
+                    f"{child_kod} ({child_adi}) — {taban_kod} için otomatik "
+                    f"bulunan operasyon kodu eklendi (miktar: {b['miktar']})"
+                )
+        veri["bilesenleri"] = yeni_liste
+    return mesajlar
+
+
 def stok_fiyat_gecmisi(conn, stok_kodu: str, bas: str, bit: str) -> list[dict]:
     """
     Verilen tarih aralığında stok için fatura fiyat geçmişi.

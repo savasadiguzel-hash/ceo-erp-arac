@@ -5,7 +5,7 @@ from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QGroupBox, QGridLayout,
     QLineEdit, QPushButton, QRadioButton, QButtonGroup,
     QDoubleSpinBox, QScrollArea, QFrame, QCheckBox, QSizePolicy,
-    QMessageBox, QFileDialog, QProgressBar,
+    QMessageBox, QFileDialog, QProgressBar, QInputDialog,
 )
 from PyQt5.QtCore import Qt, QEvent, QThread, QTimer, pyqtSignal
 from PyQt5.QtGui import QFont
@@ -13,7 +13,7 @@ from PyQt5.QtGui import QFont
 from config import DB_DEFAULTS
 from db.baglanti import get_connection
 from db.sorgular import bom_listesi
-from logic.excel import maliyet_excel_kaydet
+from logic.excel import maliyet_excel_kaydet, maliyet_excel_kaydet_excel_bom
 from ui.stil import etiket, buton, ayrac
 
 _BTN_AKTIF = (
@@ -23,6 +23,10 @@ _BTN_AKTIF = (
 _BTN_PASIF = (
     "background:#bdbdbd;color:#757575;"
     "border-radius:6px;padding:9px 20px;font-weight:bold;font-size:13px;"
+)
+_BTN_EXCEL_AKTIF = (
+    "background:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #6a1b9a,stop:1 #8e24aa);"
+    "color:white;border-radius:6px;padding:8px 16px;font-weight:bold;font-size:12px;"
 )
 
 
@@ -89,6 +93,47 @@ class MaliyetHesaplamaThread(QThread):
             self.hata.emit(str(e))
 
 
+# ── Excel Taslak BOM Hesaplama Thread'i ──────────────────────────────────────
+
+class ExcelBomMaliyetThread(QThread):
+    """
+    CEO ERP'ye henüz işlenmemiş, Excel'de hazırlanmış taslak bir mamül ağacını
+    hesaplar. MaliyetHesaplamaThread ile aynı sinyal deseni.
+
+    Sinyaller
+    ---------
+    ilerleme(str)      : her mamül işlenmeye başlarken yayımlanır
+    bitti(str, list)   : başarı — (kaydedilen dosya yolu, uyarılar listesi)
+    hata(str)          : hata — hata mesajı
+    """
+    ilerleme = pyqtSignal(str)
+    bitti    = pyqtSignal(str, list)
+    hata     = pyqtSignal(str)
+
+    def __init__(self, dosya_cikti: str, conn, excel_bom_dosyasi: str,
+                 metod: str, bas: str, bit: str, bas_g: str, bit_g: str,
+                 iscilik: float):
+        super().__init__()
+        self.dosya_cikti       = dosya_cikti
+        self.conn              = conn
+        self.excel_bom_dosyasi = excel_bom_dosyasi
+        self.metod              = metod
+        self.bas, self.bit, self.bas_g, self.bit_g = bas, bit, bas_g, bit_g
+        self.iscilik            = iscilik
+
+    def run(self):
+        try:
+            uyarilar = maliyet_excel_kaydet_excel_bom(
+                self.dosya_cikti, self.conn, self.excel_bom_dosyasi,
+                self.metod, self.bas, self.bit, self.bas_g, self.bit_g,
+                iscilik=self.iscilik, ilerleme_cb=self.ilerleme.emit,
+            )
+            self.bitti.emit(self.dosya_cikti, uyarilar)
+        except Exception as e:
+            logging.error("ExcelBomMaliyetThread hatasi: %s", e)
+            self.hata.emit(str(e))
+
+
 # ── Maliyet Sayfası ───────────────────────────────────────────────────────────
 
 class MaliyetSayfasi(QWidget):
@@ -97,6 +142,7 @@ class MaliyetSayfasi(QWidget):
         self.conn = None
         self._mamul_satirlari: dict[str, tuple] = {}
         self._thread: MaliyetHesaplamaThread | None = None
+        self._excel_thread: ExcelBomMaliyetThread | None = None
         self._spinner_timer: QTimer | None = None
         self._spinner_sayac = 0
         self._kur()
@@ -181,6 +227,15 @@ class MaliyetSayfasi(QWidget):
             yg.addWidget(rb)
         lay.addWidget(yontem_grup)
         lay.addStretch()
+
+        self.excelden_hesapla_btn = QPushButton("📄  Excel'den Maliyet Hesapla")
+        self.excelden_hesapla_btn.setStyleSheet(_BTN_EXCEL_AKTIF)
+        self.excelden_hesapla_btn.setToolTip(
+            "CEO ERP'ye henüz işlenmemiş, Excel'de hazırlanmış taslak bir mamül "
+            "ağacını (Stok Kodu + Miktar listesi) seçip aynı yöntemle maliyetlendirir."
+        )
+        self.excelden_hesapla_btn.clicked.connect(self._excelden_hesapla)
+        lay.addWidget(self.excelden_hesapla_btn)
 
         alt = QHBoxLayout()
         geri_btn = QPushButton("← Ana Menü")
@@ -455,12 +510,73 @@ class MaliyetSayfasi(QWidget):
         self._thread.finished.connect(self._ui_serbest_birak)
         self._thread.start()
 
+    # ── Excel taslak BOM'dan hesaplama akışı ─────────────────────────────────
+    def _excelden_hesapla(self):
+        if self.conn is None:
+            QMessageBox.warning(self, "Bağlantı Yok",
+                                "Önce 'Bağlan ve Mamülleri Yükle' butonuna basın.")
+            return
+
+        kaynak, _ = QFileDialog.getOpenFileName(
+            self, "Taslak Mamül Ağacı Excel'i Seç", "",
+            "Excel Dosyası (*.xlsx *.xls)")
+        if not kaynak:
+            return
+
+        bas_dt = self._parse(self.tarih_bas.text())
+        bit_dt = self._parse(self.tarih_bit.text())
+        if bas_dt is None or bit_dt is None:
+            QMessageBox.warning(self, "Eksik Bilgi",
+                                "Lütfen geçerli bir başlangıç ve bitiş tarihi girin.\n\n"
+                                "Format: GG.AA.YYYY  (örn: 01.01.2025)")
+            return
+
+        iscilik, tamam = QInputDialog.getDouble(
+            self, "İşçilik", "İşçilik tutarı (₺, opsiyonel):", 0.0, 0, 9_999_999, 2)
+        if not tamam:
+            return
+
+        dosya, _ = QFileDialog.getSaveFileName(
+            self, "Excel Kaydet",
+            f"ceo_erp_maliyet_taslak_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
+            "Excel Dosyası (*.xlsx)")
+        if not dosya:
+            return
+
+        metod = self._secili_metod()
+        bas   = bas_dt.strftime("%Y-%m-%d")
+        bit   = bit_dt.strftime("%Y-%m-%d")
+        bas_g = bas_dt.strftime("%d.%m.%Y")
+        bit_g = bit_dt.strftime("%d.%m.%Y")
+
+        self._ui_kilitle()
+        self._excel_thread = ExcelBomMaliyetThread(
+            dosya, self.conn, kaynak, metod, bas, bit, bas_g, bit_g, iscilik
+        )
+        self._excel_thread.ilerleme.connect(self._ilerleme_guncelle)
+        self._excel_thread.bitti.connect(self._excel_hesaplama_bitti)
+        self._excel_thread.hata.connect(self._hesaplama_hatasi)
+        self._excel_thread.finished.connect(self._ui_serbest_birak)
+        self._excel_thread.start()
+
+    def _excel_hesaplama_bitti(self, dosya: str, uyarilar: list):
+        self.durum_lbl.setText(f"Rapor olusturuldu: {dosya}")
+        self.durum_lbl.setStyleSheet("color:#2e7d32;font-size:11px;padding:4px;")
+        mesaj = f"Maliyet raporu kaydedildi:\n{dosya}"
+        if uyarilar:
+            ornekler = "\n".join(f"• {u}" for u in uyarilar[:10])
+            fazla = f"\n… ve {len(uyarilar) - 10} uyarı daha" if len(uyarilar) > 10 else ""
+            mesaj += f"\n\n⚠ {len(uyarilar)} uyarı:\n{ornekler}{fazla}"
+        QMessageBox.information(self, "Basarili", mesaj)
+
     # ── UI durum yönetimi ────────────────────────────────────────────────────
     def _ui_kilitle(self):
-        """Hesaplama süresince butonu devre dışı bırakır, spinner başlatır."""
+        """Hesaplama süresince butonları devre dışı bırakır, spinner başlatır."""
         self.hesapla_btn.setEnabled(False)
         self.hesapla_btn.setStyleSheet(_BTN_PASIF)
         self.hesapla_btn.setText("⏳  Hesaplanıyor.")
+        self.excelden_hesapla_btn.setEnabled(False)
+        self.excelden_hesapla_btn.setStyleSheet(_BTN_PASIF)
         self.durum_lbl.setText("Hesaplama başlatıldı, lütfen bekleyin...")
         self.durum_lbl.setStyleSheet("color:#1565c0;font-size:11px;padding:4px;")
         self._spinner_sayac = 0
@@ -485,6 +601,8 @@ class MaliyetSayfasi(QWidget):
         self.hesapla_btn.setEnabled(True)
         self.hesapla_btn.setText("📊  Hesapla ve Excel'e Aktar")
         self.hesapla_btn.setStyleSheet(_BTN_AKTIF)
+        self.excelden_hesapla_btn.setEnabled(True)
+        self.excelden_hesapla_btn.setStyleSheet(_BTN_EXCEL_AKTIF)
 
     def _hesaplama_bitti(self, dosya: str):
         self.durum_lbl.setText(f"Rapor olusturuldu: {dosya}")

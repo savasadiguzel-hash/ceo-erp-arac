@@ -87,6 +87,25 @@ def masraf_birim_maliyet(
     return sonuc
 
 
+def birim_maliyet_oto(
+    conn, kod: str, metod: str, bas: str, bit: str,
+    _cache: dict | None = None,
+) -> float:
+    """
+    Excel'den okunan taslak mamül ağaçlarında bir bileşenin stok mu masraf/
+    operasyon mu olduğu bilinmez. Önce StokKarti fatura fiyatına bakar,
+    sonuç 0.0 ise StokMasrafKarti'ye düşer (masraf_birim_maliyet'in
+    masraf→stok fallback sırasının tersi — bu listede çoğunluk fiziksel parça).
+    """
+    if _cache is None:
+        _cache = {}
+
+    sonuc = birim_maliyet(conn, kod, metod, bas, bit, _cache)
+    if sonuc == 0.0:
+        sonuc = masraf_birim_maliyet(conn, kod, metod, bas, bit, _cache)
+    return sonuc
+
+
 def mamul_maliyet_hesapla(
     conn, mamul_kodu: str, metod: str, bas: str, bit: str,
     _cache: dict | None = None,
@@ -137,13 +156,22 @@ def mamul_maliyet_hesapla(
             _, bm = mamul_maliyet_hesapla(
                 conn, b["kod"], metod, bas, bit, _cache, ziyaret_edildi, bom
             )
+        elif b.get("tip") == "stok_oto":
+            # Excel taslak ağacından gelen, stok/masraf ayrımı bilinmeyen bileşen
+            bm = birim_maliyet_oto(conn, b["kod"], metod, bas, bit, _cache)
         else:
             bm = birim_maliyet(conn, b["kod"], metod, bas, bit, _cache)
 
         satir_top = b["miktar"] * bm
         toplam   += satir_top
+        if b.get("oto"):
+            tip_etiket = "MASRAF (OTO)"
+        elif b.get("tip") == "masraf":
+            tip_etiket = "MASRAF"
+        else:
+            tip_etiket = "BİLEŞEN"
         satirlar.append({
-            "tip":        "MASRAF" if b.get("tip") == "masraf" else "BİLEŞEN",
+            "tip":        tip_etiket,
             "bil_kod":    b["kod"],
             "bil_ad":     b["ad"],
             "bom_miktar": b["miktar"],

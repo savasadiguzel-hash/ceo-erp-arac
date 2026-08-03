@@ -2,7 +2,7 @@
 
 **GitHub:** https://github.com/savasadiguzel-hash/ceo-erp-arac  
 **Dağıtım:** `dist/CEO-ERP-Araclar.exe` · `dist/CEO-ERP-Kurulum.exe` (Inno Setup)  
-**Son güncelleme:** 2026-07-30 (Kurulum — Inno Setup 6.7.3 uyumluluğu: WizardSmallImageFile kaldırıldı, ISCC.exe winget yolu eklendi)
+**Son güncelleme:** 2026-07-30 (Maliyet — "Excel'den Maliyet Hesapla": CEO ERP'ye işlenmemiş taslak mamül ağaçları için)
 
 ---
 
@@ -11,7 +11,7 @@
 | Sekme | Ne yapar |
 |---|---|
 | Mamül Ağacı | Reçetesiz + faturalı stokları tespit eder, mamüle bağlar |
-| Maliyet | LIFO / FIFO / Ağırlıklı Ortalama maliyet raporu (Excel) |
+| Maliyet | LIFO / FIFO / Ağırlıklı Ortalama maliyet raporu (Excel); ayrıca ERP'ye işlenmemiş taslak mamül ağaçlarını Excel'den okuyup maliyetlendirme |
 | SW Kodlama | SolidWorks montaj → AI sınıflandırma → GEM/YMB kodu |
 | Stok Kartı Aktar | SW sonrası CEO ERP'ye otomatik stok kartı açar |
 | Satış Faturaları | Tarih aralığına göre satış fatura/irsaliye listesi + Excel |
@@ -62,6 +62,19 @@ Reçetedeki masraf bileşenleri (FREZE, KAPLAMA, TORNA vb. `:XX` kodları) `bom_
 Metod (FIFO/LIFO/WA) hesabı tek yerde: `logic/maliyet.py::_metod_uygula()`.
 
 **Sıfır maliyetli bileşen = veri boşluğu:** Hiç fatura/reçete/operasyon kodu olmayan parça 0 gösterir (kod hatası değil, ERP veri girişi eksiği). Örn. reçeteye kolonsuz girilen `GMP-200-24044060` (doğrusu `GMP-200-240440:60`) fatura eşleşmez.
+
+### Excel'den Maliyet Hesapla (taslak mamül ağaçları)
+
+CEO ERP'ye henüz işlenmemiş (reçetesi yüklenmemiş) taslak mamül ağaçlarını Excel'den okuyup aynı 13 sütunlu rapor formatıyla maliyetlendiren buton. "Bağlan ve Mamülleri Yükle" ile DB bağlantısı kurulduktan sonra kullanılabilir (fiyat sorguları için gerekli); mevcut tarih aralığı/yöntem alanları paylaşılır, ayrıca tek bir işçilik tutarı sorulur.
+
+- **Okuyucu:** `logic/mamul_agaci_excel_oku.py::excel_dosyasindan_bom_oku()` — Excel'i `db.sorgular.bom_listesi()` ile **aynı şekildeki** bir `bom` dict'ine çevirir, böylece `mamul_maliyet_hesapla()` değişmeden çalışır.
+- **Format tespiti başlık adına göre** (pozisyona göre değil): "Miktar" sütunu bulunursa gerçek adetlerle düz/hiyerarşik liste; "Tip" + "Seviye" sütunları da varsa çok seviyeli ağaç (Mamül/Yarımamül/Reçete düğümleri özyinelemeli). Sadece "Stok Kodu" varsa (gerçek ADLASMKE şekli, miktar bilgisi yok) tüm adetler 1 varsayılır. Hiçbir başlık tanınmazsa Stok Hazırlık'ın pozisyonel tespiti (Seviye-Tip / girintili Tip / düz kod-ad) tekrarlanır.
+- **Kategori başlığı satırları** (kod dolu, miktar boş — ör. "ELEKTRONİK") otomatik atlanır.
+- **Aynı kod birden fazla kez geçerse** (düzleştirilmiş listede farklı alt-montajlardan gelen aynı parça) miktarlar **toplanır** — ilk değeri kullanıp atlamak yanlış (düşük) maliyete yol açar.
+- **Miktar "20M"/"100M" gibi birim ekli metinse** baştaki sayısal kısım alınır (uyarı olarak raporun sonuna eklenir).
+- **Stok/masraf ayrımı bilinmiyorsa** (Tip sütunu yoksa ya da satır düz listede): `birim_maliyet_oto()` önce StokKarti fatura fiyatına bakar, bulamazsa StokMasrafKarti'ye düşer — mevcut `masraf_birim_maliyet()`'in tersi sıralı fallback'i (`logic/maliyet.py`, `tip="stok_oto"`).
+- **`:XX` operasyon kodu otomatik tarama** (`db/sorgular.py::bom_operasyon_kodlarini_tamamla()`): Excel'deki her ana parça kodu için CEO ERP'de (StokKarti **veya** StokMasrafKarti) `ana_kod:XX` formatında kayıtlı bir alt kod varsa — Excel'de hiç yazılmamış olsa bile — otomatik bulunup **ana parçanın hemen altına**, miktar olarak ana parçanın miktarı kullanılarak eklenir. Rapor tipinde `"MASRAF (OTO)"` etiketiyle elle eklenmiş masraf satırlarından (`"MASRAF"`) ayırt edilir. Bulunan kodlar ayrıca rapor sonunda bilgi listesi olarak da özetlenir.
+- **UI:** `ui/maliyet.py::ExcelBomMaliyetThread` — mevcut `MaliyetHesaplamaThread` ile aynı sinyal deseni (`ilerleme`/`bitti`/`hata`), aynı `_ui_kilitle`/`_ui_serbest_birak` kilidini paylaşır (iki hesaplama aynı anda çalışamaz).
 
 ---
 
@@ -212,7 +225,7 @@ yapıldığından (varsayılan Inno Setup davranışı), normal kullanıcı bu k
 ```
 main.py / config.py / config.json / build.bat / setup.iss / create_installer.bat
 db/      baglanti.py, sorgular.py
-logic/   maliyet.py, excel.py, excel_is_emri.py, pdf_is_emri.py
+logic/   maliyet.py, excel.py, excel_is_emri.py, pdf_is_emri.py, mamul_agaci_excel_oku.py
 tools/   fatura_eslestir.py, mutabakat.py
 ui/      ana_pencere.py, maliyet.py, mamul_agaci_tab.py, tarama.py, eslestirme.py, rapor.py
          tab_satis_faturalari.py, tab_erp_aktar.py, tab_sw.py, tab_uretim_raporu.py
