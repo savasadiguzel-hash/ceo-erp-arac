@@ -124,6 +124,26 @@ Maliyet sekmesinde, seçilen mamül(ler)in BOM'dan hesaplanan **teorik** maliyet
 - **İkinci varyant — Excel taslak BOM ile:** "📄 Excel BOM ile Fark Raporu" butonu, "Excel'den Maliyet Hesapla" ile aynı mantıkla (`excel_dosyasindan_bom_oku()` + `bom_operasyon_kodlarini_tamamla()`) CEO ERP'ye **henüz işlenmemiş** bir taslak mamül ağacını okuyup aynı proje koduyla karşılaştırır. Fonksiyon: `logic/excel.py::proje_fark_excel_bom_kaydet()` (`ui/maliyet.py::ProjeFarkExcelBomThread`). İşçilik **sorulmaz** (satınalma tarafının işçilik kalemi yok). Uçtan uca doğrulandı: sentetik tek satırlık taslak + "ADLAS-MKE" ile fiili taraf, ERP-BOM varyantıyla birebir aynı toplamı (5.064.402,93 ₺) verdi — iki fonksiyon aynı `_proje_fark_workbook_yaz()` yardımcısını paylaştığı için beklenen davranış.
 - **⚠ Proje kodu serbest metin — yazım hatası riski ve otomatik tamamlama:** Proje kodu kutusu serbest metindir; gerçek `Proje.ProjeKodu` değeriyle birebir uyuşmazsa (ör. kullanıcı "ADLAS MKE" yazdı, gerçek kod tire ile "ADLAS-MKE") sorgu **sessizce 0 satır** döner ve rapor yanıltıcı biçimde "%100 fark, hiç satınalma yok" gösterir — bu canlı kullanımda bizzat yaşandı. İki katmanlı önlem: (1) "Bağlan ve Mamülleri Yükle" sonrası `proje_kodlari_listele()` ile CEO ERP'deki tüm gerçek proje kodları çekilip proje kodu kutusuna `QCompleter` (case-insensitive, `MatchContains`) olarak bağlanır; (2) `fiili` toplam tam 0 çıkarsa sonuç mesajına açık bir uyarı eklenir.
 
+### LRF 6001 Maliyet Çalışması (`tools/lrf6001_maliyet/`, 2026-10-30)
+
+CEO ERP'de reçetesi olmayan **LRF 6001 (Lazer Mesafe Ölçer)** ürününün malzeme maliyeti, kullanıcının `LRF 6001 ÜRÜN BOM.xlsx` dosyasından **son alış fiyatı + kur farkı** ile hesaplandı. Standalone script seti (UI'da buton yok); yalnızca okuma yapar.
+
+- **`bom_oku.py`** — Excel'i okur: "Urun BOM" sayfası (bölüm başlıkları ELEKTRONİK / AKSESUAR / KABLAJ / MEKANİK / OPTİK, kod önceliği KONFİGÜRASYON NO → ESKİ KOD, `(revizyon olacak)` eki atılır) + 6 elektronik kart sayfası (`Comment`=MPN, `Quantity`).
+- **`maliyet_hesapla.py`** — her kalem için ERP'deki **en son** alış (`IslemKodu=1` veya faturalaşmamış `5`, tarih sınırı yok; stok `Turu=1` + masraf kartı). Kur farkı:
+  - USD/EUR faturalı satır: `StokHareketDetay.DovizBirimFiyati × bugünkü kur` (EUR faturada EUR kuru — USD'ye çevirmek yanlış olurdu)
+  - TL faturalı satır: `TL ÷ alış günü USD × bugünkü USD`
+  - Kur kaynağı: `GunlukKur.Kur1` (döviz alış), `DovizBirimId` USD `93F5D195-…`, EUR `6F454FBD-…`; tarihte kayıt yoksa öncesindeki son kayıt. ⚠ Tarih parametresi **datetime nesnesi** olarak geçilmeli — `'2021-02-12'` string'i Türkçe locale'de YYYY-DD-MM okunuyor. ⚠ Tabloda ileri tarihli (2026-12-31) hatalı bir USD satırı var; sorgu `Tarih <= bugün` ile süzer.
+  - Mekanik parçalar: maliyet = parçanın `:XX` operasyon kodlarının (StokKarti veya StokMasrafKarti) son alışlarının toplamı (+ varsa parçanın kendi alışı).
+  - Elektronik kartlar: Excel kart sayfaları esas; ERP'deki LRF 6001 kart reçetelerinden (`GMP-300-230015…019`) yalnızca çıplak PCB (`GMP-301-23002x`) eklenir. Excel'deki kart kodları (`GMP-300-230007…012`) ERP'de YOK.
+  - `ESLESME` sözlüğü: Excel kodu → ERP kodu (ör. `NOPTEL LRF 221` → `OEM-LRF-NP`, `MICROOLED MDP05A` → `MDP05APRMRO`, kısaltılmış MPN'ler).
+  - Çıktı: 4 sayfalı rapor (Özet / Fiyatı Olmayanlar / Detay / Kontrol Edilecekler) + `<çıktı>.json` (satır bazında hesap).
+- **`bom_fiyat_isle.py`** — orijinal BOM'un **kopyasına** fiyatları kodların karşısına yazar (ana sayfa J–S, kart sayfaları E–N; kart toplamı formülle ana sayfaya bağlı; toplamlar formül). Orijinal dosyaya dokunmaz.
+- **`fiyatsiz.py`** — fiyatı bulunamayan (0 ₺) kalemler sayfası, neden + yapılacak iş.
+
+**Sonuç (30.10.2026, USD 49,6997 / EUR 55,4243):** alış günü 52.707,09 ₺ → güncel kur **93.028,62 ₺ (1.871,81 $)**, BC300 çanta (`GMP-110-230004`, kullanıcı bilgisi) dahil. 20 kalem fiyatsız (MTi-3 IMU, pil kartı PCB, 18 mekanik). Dahil değil: işçilik, SMT dizgi, montaj, test, tripod/omuz çantası/boyun askısı.
+
+**Açık konu:** OEM modül `OEM-LRF-NP` son alışı 24.10.2025 NPT12167 (LRF 6002 projesi) 263,92 EUR/adet — 2021'de 2.311 EUR idi. Teknik resimdeki modül **QS42753BE**, ERP kartı adında QS42526AE yazıyor; QS42753BE ERP'de hiç geçmiyor. Fatura doğrulanmadan sonuç kesin değil (2021 fiyatıyla toplam ≈ 203.000 ₺).
+
 ---
 
 ## Satış Faturaları Sekmesi
