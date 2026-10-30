@@ -2,7 +2,7 @@
 
 **GitHub:** https://github.com/savasadiguzel-hash/ceo-erp-arac  
 **Dağıtım:** `dist/CEO-ERP-Araclar.exe` · `dist/CEO-ERP-Kurulum.exe` (Inno Setup)  
-**Son güncelleme:** 2026-07-30 (Maliyet — "Excel'den Maliyet Hesapla": CEO ERP'ye işlenmemiş taslak mamül ağaçları için)
+**Son güncelleme:** 2026-09-17 (Mamül Ağacı — toplu reçete bağlama)
 
 ---
 
@@ -10,7 +10,7 @@
 
 | Sekme | Ne yapar |
 |---|---|
-| Mamül Ağacı | Reçetesiz + faturalı stokları tespit eder, mamüle bağlar |
+| Mamül Ağacı | Alış belgeli, reçeteye bağlı olmayan stok ve masraf kartlarını tespit eder; mevcut mamül reçetesine bağlar |
 | Maliyet | LIFO / FIFO / Ağırlıklı Ortalama maliyet raporu (Excel); ayrıca ERP'ye işlenmemiş taslak mamül ağaçlarını Excel'den okuyup maliyetlendirme |
 | SW Kodlama | SolidWorks montaj → AI sınıflandırma → GEM/YMB kodu |
 | Stok Kartı Aktar | SW sonrası CEO ERP'ye otomatik stok kartı açar |
@@ -25,22 +25,30 @@
 
 ## Mamül Ağacı Sekmesi
 
-**Tarama — Kesişim Kümesi:** Reçetesiz + faturalı stokları bulur.
+**Tarama — Kesişim Kümesi:** Seçilen dönemde alış faturası veya henüz faturalaşmamış alış irsaliyesi bulunan, reçeteye bağlı olmayan **stok ve masraf kartlarını** bulur. Stok ve masraf aynı kodu taşısa bile ayrı aday olarak tutulur. Masrafın fiziksel stok bakiyesi olmadığından Güncel Miktar alanı boş kalır.
 
 **Fiyat yöntemi:** FIFO / LIFO / Ağırlıklı Ortalama — tarama başlamadan seçilir.
 
 **Excel çıktısı — 2 sayfa:**
-- `Kesişim Kümesi` — stok bazında özet (8 sütun: Stok Kodu / Stok Adı / **Stok Adı-2** / Fatura Sayısı / Birim Fiyat / İlk Fatura / Son Fatura / Tedarikçi)
-- `Fatura Detayları` — her fatura satırı ayrı (9 sütun)
+- `Kesişim Kümesi` — kart bazında özet (11 sütun: Kart Türü / Kart Kodu / Kart Adı / Kart Adı-2 / Birim / Güncel Miktar / Fatura Sayısı / Birim Fiyat / İlk Fatura / Son Fatura / Tedarikçi)
+- `Fatura Detayları` — her alış belgesi satırı ayrı (10 sütun, ilk sütun Kart Türü)
 
 **Kritik filtreler:**
-- `sk.Id NOT IN (UretimReceteHatPlaniGirdi.KartId)` — bileşenler kesişimden çıkar
-- `shd.Turu = 1` — yalnızca ürün satırları (Turu=3 kur farkı/muhasebe satırları hariç)
-- `StokHareketDetay JOIN sk.Id` üzerinden — aksi hâlde 2M+ Kartezyen çarpım
+- Stok: `StokKarti` ve `shd.Turu = 1`; mevcut `UretimReceteHatPlani`, `UretimReceteHatPlaniGirdi` ve `UrunAgaciDetay` bağlantıları elenir.
+- Masraf: `StokMasrafKarti` ve `shd.Turu = 3`; `UretimReceteHatPlaniGirdi.Tipi = 2` bağlantıları elenir. Bu sayede stok ve masraf kartlarının aynı sayısal Id değerleri karışmaz.
+- Alış belgesi: `IslemKodu = 1` veya `IslemKodu = 5 AND FaturaId IS NULL`; pozitif miktar ve birim fiyat aranır.
 
 **Bilinen sorun:** Bazı `sk.Adi` değerleri sonda `\n\n` içerir; `kesisim_excel_kaydet` `.strip()` uygular.
 
-**Eşleştirme sayfası:** Tespit edilen stokları mamüle bağlar; etiketler fare ile seçilebilir.
+**Eşleştirme sayfası:** Tüm tarama sonuçları tek tabloda gösterilir. "Güncel Stok" sütunu tarama sırasında CEO ERP'den hesaplanan stok bakiyesini gösterir; masraf kartında fiziksel stok bulunmadığından boş gösterilir. Başlıklara tıklayarak artan/azalan sıralama yapılır; güncel stok, fatura sayısı, birim fiyat ve reçete miktarı sayısal sıralanır. Kod, ad ve tedarikçiye göre arama; stok/masraf ve bekleyen/bağlanan filtreleri; görünen bekleyenleri topluca seçme vardır. Kartlar fareyle tek tek veya birlikte işaretlenir; klavyede ok tuşlarıyla satıra gelip Boşluk tuşuyla işaret açılıp kapatılır. Reçete miktarı her satırda ayrı düzenlenir (varsayılan 1). Sağ tarafta mamül ve mevcut reçete grubu seçilir. Varsayılan görünüm yalnızca bekleyenleri gösterir: başarılı kayıttan hemen sonra bağlanan stok/masraf satırları işlem listesinden düşer ve tekrar seçilemez. "Bağlananlar" veya "Tüm durumlar" filtresiyle kayıtlar kontrol edilebilir. Rapor istendiği anda tüm tarama sonuçlarını, bağlanan ve bekleyen durumlarıyla birlikte gösterir. Mamul listesi `db/sorgular.py::mamul_agaci_listesi()`'nden gelir — bu fonksiyon 2026-09-14'te düzeltildi (çok-hatlı montaj reçeteli ürünler eskiden listeden düşüyordu, bkz. "Satılıp Üretilmemiş Ürünler Raporu" bölümü).
+
+**Eşleştirme listesi Excel çıktısı:** "Listeyi Excel'e Aktar" düğmesi iki sayfalı `.xlsx` oluşturur. `Görünen Liste` etkin arama, tür/durum filtresi ve başlık sıralamasındaki satırları ekrandaki sırayla içerir; `Tüm Tarama` aynı oturumdaki tüm kartları içerir. Her iki sayfada seçim işareti, kart türü/kodu/adı, birim, güncel stok, fatura sayısı, birim fiyat, düzenlenmiş reçete miktarı, bağlama durumu, fatura tarihleri, tedarikçi ve varsa mamül/grup bilgileri bulunur. Yalnızca yerel dosya yazılır; CEO ERP verileri değiştirilmez.
+
+**Bağlama düzeltmesi (2026-09-17):** `kartlari_receteye_toplu_bagla()` yeni `UretimReceteHatPlani` veya üretim emri satırı oluşturmaz; seçilen aktif reçetenin **mevcut grubuna** `UretimReceteHatPlaniGirdi` bileşenleri ekler (`Tipi=1` stok, `Tipi=2` masraf). Tek gruplu reçetede grup otomatik seçilir, çok gruplu reçetede kullanıcı seçer. Birim ilgili karttan, depo mevcut gruptan alınır. Aktif reçete ve grup ilişkisi doğrulanır; aynı kart mamül reçetesinde zaten varsa tekrar eklenmez. Toplu işlem tek transaction'dır: bir satırda hata olursa bütün seçilen satırlar geri alınır. Kayıt arka thread'de yürür; yalnızca başarılı commit sonrasında ekrandaki durumlar bağlandı olarak güncellenir. `karti_receteye_bagla()` tek kart çağrıları için aynı işlevi kullanır. 16 sütunlu Excel raporu grup, miktar ve bekleyen/bağlanan durumlarını gösterir. Tarama sonucuna dönmek kaydedilmiş bağlantıları geri almaz.
+
+**Canlı doğrulama:** 01.01.2026–17.09.2026 taramasında 534 stok alış satırı / 463 aday stok, 1.354 masraf alış satırı / 313 aday masraf bulundu. Eski kod `GMP-200-240921` → `GMP-101-230008` denemesinde yalnızca hat planına satır ekliyor, gerçek reçete girdisi oluşturmuyordu. Yeni kod `0010541600500011` stokunu aynı mamül reçetesine 2,5 METRE olarak gerçek girdi tablosuna ekledi. Çok gruplu `GMP-101-230022` reçetesinde stok girdisi seçilen grupta ve reçete okuyucusunda göründü. `079` masraf kartı aynı reçeteye `Tipi=2` olarak eklendi ve reçete okuyucusunda Masraf düğümü olarak göründü. Bütün denemeler transaction içinde geri alındı; kalıcı deneme kaydı bırakılmadı.
+
+**Toplu bağlama doğrulaması (2026-09-17):** `GMP-101-230022` reçetesinin `110238` grubuna `0010541600500011` stok ve `079` masraf kartları tek transaction içinde farklı miktarlarla eklendi; tür ve miktarlar sorguyla doğrulandı. Commit kapatılarak deneme sonunda rollback yapıldı. İkinci kart geçersiz olduğunda ilk kartın eklemesi de geri alındı. 776 satırlık tablo ve çoklu seçim arayüz testi ile `main.py` açılış testi başarılı oldu. Deneme kayıtları kalıcı bırakılmadı.
 
 ---
 
@@ -76,14 +84,89 @@ CEO ERP'ye henüz işlenmemiş (reçetesi yüklenmemiş) taslak mamül ağaçlar
 - **`:XX` operasyon kodu otomatik tarama** (`db/sorgular.py::bom_operasyon_kodlarini_tamamla()`): Excel'deki her ana parça kodu için CEO ERP'de (StokKarti **veya** StokMasrafKarti) `ana_kod:XX` formatında kayıtlı bir alt kod varsa — Excel'de hiç yazılmamış olsa bile — otomatik bulunup **ana parçanın hemen altına**, miktar olarak ana parçanın miktarı kullanılarak eklenir. Rapor tipinde `"MASRAF (OTO)"` etiketiyle elle eklenmiş masraf satırlarından (`"MASRAF"`) ayırt edilir. Bulunan kodlar ayrıca rapor sonunda bilgi listesi olarak da özetlenir.
 - **UI:** `ui/maliyet.py::ExcelBomMaliyetThread` — mevcut `MaliyetHesaplamaThread` ile aynı sinyal deseni (`ilerleme`/`bitti`/`hata`), aynı `_ui_kilitle`/`_ui_serbest_birak` kilidini paylaşır (iki hesaplama aynı anda çalışamaz).
 
+### Üretim Emri Masraf Maliyetleri
+
+Maliyet sekmesindeki **"🔧 Üretim Emri Masraflarını Doldur"** butonu, girilen
+üretim emrinin `Tipi=2` masraf satırlarını önce satır bazında ön izler. Fiyat
+kaynağı, üretim emri tarihine kadar olan son aktif masraf alış hareketidir
+(`Turu=3`, `IslemKodu=1` veya faturalaşmamış `IslemKodu=5`). Alış irsaliyesi
+faturaya dönüştüyse `FaturaId` dolu irsaliye tekrar sayılmaz.
+
+- Önerilen toplam: `TalepMiktar × kaynak BirimFiyat`.
+- Mevcut `Tutar` değeri sıfır olmayan satırlar korunur.
+- Üretim emri tarihinden önce fiyatı bulunmayan satırlar değiştirilmez ve
+  ön izlemede açıkça gösterilir.
+- Uygulama yalnızca `UretimEmriHatPlaniGirdi.Tutar` alanına yapılır; fatura,
+  irsaliye ve stok hareketleri değişmez.
+- Uygulama öncesi satır değerleri `%LOCALAPPDATA%\CEO ERP Araclar\yedekler`
+  altında `masraf_maliyet_yedek_*.json` dosyasına yazılır.
+
+Veri erişimi `db/sorgular.py::uretim_emri_masraf_maliyet_onizle()` ve
+`uretim_emri_masraf_maliyet_uygula()` fonksiyonlarındadır; uygulama transaction
+ile çalışır. CEO ERP'de güncel üretim maliyet hareketlerinin oluşması için
+aktarımı yaptıktan sonra native **İşlemler → Maliyetlendir** işlemi ayrıca
+çalıştırılmalıdır.
+
+### Proje Fiili Satınalma Karşılaştırması (Teorik BOM vs Fiili Alım)
+
+Maliyet sekmesinde, seçilen mamül(ler)in BOM'dan hesaplanan **teorik** maliyetini, belirli bir CEO ERP proje koduna fiilen kesilmiş alış faturalarıyla (**fiili** satınalma) kalem bazında karşılaştıran ayrı bir buton: "📊 Proje Fark Raporu (Excel)".
+
+- **Proje kodu şeması:** CEO ERP'de proje kodu **belge başlığında değil, satır bazında** tutulur — `StokHareketDetay.ProjeId` → `Proje.Id` (`Proje.ProjeKodu` / `Proje.ProjeAdi`). Aynı faturanın bazı satırları bir projeye, bazıları başka bir projeye/hiçbir projeye ait olmayabilir. Sorgu: `db/sorgular.py::proje_satinalma_hareketleri()`.
+- **Kapsam:** Hem stok (`StokKarti`, `shd.Turu = 1`) hem masraf/operasyon (`StokMasrafKarti`) tarafı `UNION ALL` ile tek listede birleştirilir — CEO'nun kendi "Stok Hareketleri Raporu"ndaki "Detay İşlem Türü" (Stok/Masraf) ayrımıyla aynı.
+- **Alış iadeleri:** `IslemKodu=3` CEO ERP'de alış iadesidir. Miktar ve tutar ERP'de pozitif saklansa da `proje_satinalma_hareketleri()` bunları `-ABS(...)` olarak döndürür. Böylece `proje_fiili_maliyet()` net satınalma hesabında iadeleri düşer; `Satınalma Detayı` sayfasında işlem türü `Alış İadesi` ve miktar/tutar negatif görünür.
+- **Sabit Kıymet HARİÇ:** `StokHareketDetay.SabitKiymetId` ile işaretli demirbaş/ekipman alımları bu rapora dahil edilmez (BOM'a girmeyen kalemler, kasıtlı dışlama).
+- **⚠ Faturalaşan irsaliye — mükerrer sayım düzeltmesi:** Bir irsaliye (`IslemKodu=5`) sonradan faturaya dönüştüğünde CEO ERP `StokHareket.FaturaId` alanını doldurur; hem irsaliye hem faturası ayrı satır olarak durur. Sadece `IslemKodu=1` (Alış Faturası) VE `FaturaId`'si BOŞ olan `IslemKodu=5` (henüz faturalaşmamış irsaliye) satırları toplanır — aksi hâlde aynı alım iki kez sayılır. Aynı desen (2026-09-14) `stok_fiyat_gecmisi()`, `masraf_fiyat_gecmisi()`, `stok_fiyatlari_toplu()`, `recetesiz_stok_hareketleri()`, `recetesiz_masraf_hareketleri()`, `son_alis_fiyati_toplu()` ve satış tarafında `satis_faturalari()` (`IslemKodu = 2 OR (IslemKodu = 6 AND FaturaId IS NULL)`) fonksiyonlarına da uygulandı.
+- **Doğrulama:** ADLAS-MKE projesi için CEO ERP'nin kendi "Stok Hareketleri Raporu" Excel çıktısıyla satır satır karşılaştırıldı — düzeltme sonrası **Stok: 542 satır / 4.475.809,98 ₺** ve **Masraf: 128 satır / 588.592,95 ₺** birebir eşleşti (toplam 5.064.402,93 ₺).
+- **Fark hesaplama:** `logic/maliyet.py::proje_fiili_maliyet()` satırları `bil_kod` bazında gruplar; `proje_fark_raporu()` bunu teorik BOM satırlarıyla (`bil_kod` birleşimi/union) eşleştirip miktar/tutar farkını ve durumu (`"Sadece Satınalmada"` / `"Sadece BOM'da"` / `"Miktar Farkı"` / `"Eşleşiyor"`) üretir.
+- **1 birim üretim varsayımı:** Uygulamanın geri kalanındaki BOM hesaplama mantığıyla tutarlı — her seçili mamül için 1 adet üretim varsayılır, adet çarpanı yoktur.
+- **Excel çıktısı** (`logic/excel.py::_proje_fark_workbook_yaz()`, ortak) 3 sayfa (+ uyarı varsa 4.): **Özet** (proje kodu, dönem, teorik/fiili toplam, fark ₺ ve %), **Fark Detayı** (kod bazında karşılaştırma, durum renk kodlu), **Satınalma Detayı** (ham fatura satırları — belge no, tarih, tedarikçi), **Uyarılar** (opsiyonel).
+- **UI:** `ui/maliyet.py::ProjeFarkThread` — mevcut thread deseniyle aynı (`ilerleme`/`bitti`/`hata`), `_ui_kilitle`/`_ui_serbest_birak` kilidini paylaşır.
+- **İkinci varyant — Excel taslak BOM ile:** "📄 Excel BOM ile Fark Raporu" butonu, "Excel'den Maliyet Hesapla" ile aynı mantıkla (`excel_dosyasindan_bom_oku()` + `bom_operasyon_kodlarini_tamamla()`) CEO ERP'ye **henüz işlenmemiş** bir taslak mamül ağacını okuyup aynı proje koduyla karşılaştırır. Fonksiyon: `logic/excel.py::proje_fark_excel_bom_kaydet()` (`ui/maliyet.py::ProjeFarkExcelBomThread`). İşçilik **sorulmaz** (satınalma tarafının işçilik kalemi yok). Uçtan uca doğrulandı: sentetik tek satırlık taslak + "ADLAS-MKE" ile fiili taraf, ERP-BOM varyantıyla birebir aynı toplamı (5.064.402,93 ₺) verdi — iki fonksiyon aynı `_proje_fark_workbook_yaz()` yardımcısını paylaştığı için beklenen davranış.
+- **⚠ Proje kodu serbest metin — yazım hatası riski ve otomatik tamamlama:** Proje kodu kutusu serbest metindir; gerçek `Proje.ProjeKodu` değeriyle birebir uyuşmazsa (ör. kullanıcı "ADLAS MKE" yazdı, gerçek kod tire ile "ADLAS-MKE") sorgu **sessizce 0 satır** döner ve rapor yanıltıcı biçimde "%100 fark, hiç satınalma yok" gösterir — bu canlı kullanımda bizzat yaşandı. İki katmanlı önlem: (1) "Bağlan ve Mamülleri Yükle" sonrası `proje_kodlari_listele()` ile CEO ERP'deki tüm gerçek proje kodları çekilip proje kodu kutusuna `QCompleter` (case-insensitive, `MatchContains`) olarak bağlanır; (2) `fiili` toplam tam 0 çıkarsa sonuç mesajına açık bir uyarı eklenir.
+
 ---
 
 ## Satış Faturaları Sekmesi
 
-- `IslemKodu IN (2, 6)` — satış faturası + irsaliye; `shd.Turu = 1`
+- `IslemKodu = 2 OR (IslemKodu = 6 AND FaturaId IS NULL)` — satış faturası + henüz faturalaşmamış irsaliye; `shd.Turu = 1`
 - 9 kolonlu tablo + anlık arama (müşteri, stok kodu, belge no)
 - Excel çıktısı: biçimlendirilmiş xlsx, son satırda toplam tutar
 - **Filtre:** `shd.Miktar > 0` — miktarsız satırlar hariç; `BirimFiyat = 0` olan (ücretsiz) kalemler dahil edilir
+- **⚠ Faturalaşan irsaliye — mükerrer sayım düzeltmesi (2026-09-14):** Bir satış irsaliyesi (`IslemKodu=6`) sonradan faturaya dönüştüğünde CEO ERP `StokHareket.FaturaId` alanını doldurur; hem irsaliye hem faturası ayrı satır olarak durur. Eskiden sorgu `IslemKodu IN (2, 6)` deseniyle ikisini birden sayıyordu — aynı satış iki kez raporlanıyordu. `proje_satinalma_hareketleri()`'ndeki alış tarafı düzeltmesinin satış aynası uygulandı (bkz. `db/sorgular.py::satis_faturalari()`).
+
+### Birim ana verisi ve geçmiş birim hataları
+
+CEO ERP'nin birim sözlüğü şirket veritabanında değil, ortak `CeoCommon.dbo.StokBirim` tablosunda tutulur. `StokKarti.StokBirim`, `StokHareketDetay.StokBirimId`, `UretimReceteHatPlaniGirdi.BirimId` ve `UretimEmriHatPlaniGirdi.StokBirim` alanları bu sözlükteki GUID'lere bağlanır. Raporlar ortak tabloyu kullanmalı; şirket DB'sinde bulunmayan `StokBirim` tablosu nedeniyle bilinmeyen GUID'leri `ADET` göstermek hatalıdır.
+
+2026-09-15 incelemesinde kullanıcı tarafından verilen Kardağ ve Tek-El belgelerinin canlı kayıtları doğrulandı: `HMGMKBL0040` hareketi `METRE`, `HMALMÇBK114` ve `HMALMDRT003` hareketleri `KG` birim GUID'leriyle kayıtlıdır. Bu üç satır için mevcut hareket miktarı fiziksel birimle uyumludur; önceki rapordaki `ADET` etiketi veri tabanından değil, uygulamanın yanlış fallback'inden kaynaklanmıştır.
+
+Geçmişte ADET GUID'iyle kesirli miktar girilmiş 21 alış/alış irsaliyesi satırı tespit edilmiştir. Bu kayıtlar otomatik olarak başka birime çevrilmemelidir: hedef birim fatura/irsaliye, stok kartı, reçete ve üretim hareketleri birlikte incelenerek belirlenmeli; miktarın fiziksel birim mi yoksa dönüşüm sonrası değer mi olduğu doğrulanmalıdır. Vergi belgesi ve muhasebe kayıtları için düzeltme CEO ERP'nin resmi iade/düzeltme akışıyla yapılmalı, doğrudan SQL güncellemesi son seçenek olarak transaction ve ön izleme ile ele alınmalıdır.
+
+**Bu olay için önerilen düzeltme sırası:**
+
+1. Önce `CeoCommon.dbo.StokBirim` üzerinden denetim raporu alınır; her satırda kart birimi, reçete birimi, üretim emri birimi, belge birimi ve miktar birlikte gösterilir. ADET ile KG/METRE farkı otomatik aday olarak işaretlenir, ancak hedef birim insan onayı olmadan yazılmaz.
+2. Bu incelemede aktif reçetelerde kart birimi ile reçete satırı birimi arasında **50 uyumsuzluk** bulundu: **29 KG**, **21 METRE** satırı reçetede ADET kayıtlı. `GMP-101-230134` ve `GMP-101-230136` altındaki alüminyum ve kablo satırları bu kümededir. Reçete satırlarının `BirimId` değeri, miktarlar fiziksel temel birimde tutuluyorsa kartın doğru birim GUID'iyle eşleştirilmelidir.
+3. Üretim emri oluşturulurken reçete birimi emre kopyalandığı için mevcut emirler ayrıca kontrol edilir. Canlı kontrolde `ŞİRKET.1092026-2` emrinde 5 KG ve 2 METRE satırının `StokBirim` alanı ADET, `TalepMiktari` ise sırasıyla 15,49 KG ve 2 METRE karşılığıdır. Bu emir için resmi CEO ERP ekranından birimlerin yenilenmesi veya emrin doğru reçeteden yeniden oluşturulması gerekir; yalnız reçeteyi düzeltmek mevcut emir satırını geriye dönük değiştirmeyebilir.
+4. Fatura/irsaliye hareketi ile kart birimi de yanlışsa ilgili belge CEO ERP'nin resmi iade/düzeltme akışıyla düzeltilir. İncelenen Kardağ ve Tek-El belgelerinde hareket birimleri zaten doğru olduğundan bu iki belge için hareket miktarı değiştirilmemelidir.
+5. Düzeltme sonrasında aynı denetim tekrar çalıştırılır; açık üretim emri ihtiyaçları, stok bakiyeleri, malzeme düşümleri ve maliyet raporları karşılaştırılır. Doğrudan SQL yazımı uygulanmaz; zorunlu kalırsa önce yalnızca ön izleme çıktısı ve geri alınabilir transaction hazırlanır.
+
+**Uygulama aracı:** `tools/birim_tutarlilik_duzelt.py` varsayılan olarak yalnızca ön izleme yapar. `--recete-kodu KOD --sadece-recete --uygula` ile tek reçete, `--uygula` ile tanımlı tüm reçete ve devam eden emir adayları transaction içinde düzeltilebilir. Her gerçek çalıştırmada işlem öncesi değerler `birim_duzeltme_yedek_*.json` dosyasına alınır; miktar/fiyat ve fatura/irsaliye hareketleri değiştirilmez. Kullanıcı onayıyla 2026-09-15 tarihinde üç reçetedeki toplam **50 satır** düzeltildi (`GMP-101-230134`: 7, `GMP-101-230136`: 41, `MMSBIŞIK002`: 2). İşlem sonrası aktif reçete birim uyumsuzluğu **0** kaldı; devam eden üretim emirlerindeki **7** uyumsuz satır sonraki aşamaya bırakıldı.
+
+### Satılıp Üretilmemiş Ürünler Raporu (`tools/satilip_uretilmemis.py`, 2026-09-14)
+
+Bağımsız script — UI'da buton yok, `python tools/satilip_uretilmemis.py [--bas GG.AA.YYYY] [--bit GG.AA.YYYY] [--dosya DOSYA.xlsx]` ile çalıştırılır (varsayılan aralık `01.01.2026` → bugün). Kullanım amacı: kullanıcı bu raporla eksik kalan mamulleri CEO ERP'nin "Üretim Emri Hareketi" ekranından üretime alarak kapatıyor.
+
+- **"Ürün" tanımı:** `mamul_agaci_listesi()`'nin döndürdüğü küme — aktif reçetesi (`UretimRecete`) olan StokKarti'ler. StokKarti'de Mamul/Yarımamül/Hammadde ayrımı için ayrı bir DB alanı **yok**; bu, reçete ilişkisinden türetilen tek DB-tabanlı tanım.
+- **⚠ `mamul_agaci_listesi()` düzeltmesi (2026-09-14):** Fonksiyon eskiden `UretimReceteHatPlani.KartId = StokKarti.Id` eşleşmesine bakıyordu — bu YANLIŞ'tı. `UretimReceteHatPlani.KartId`, ürünün kendisini değil, o reçetenin bir **alt-montaj/bileşen GRUBUNU** temsil eder (bkz. `UretimRecete → UretimReceteHatPlani → UretimReceteHatPlaniGirdi` hiyerarşisi altında, "Stok Hazırlık Sekmesi" bölümü). Tek-hatlı "basit" reçetelerde bu hat tesadüfen ürünün kendi kartına eşitti (self-reference), ama çok-hatlı montaj reçetelerinde (ör. `GMP-101-230022` — 5 ayrı hat grubu, "OKÜLER LENS GRUBU" / "BORESİGHTER SP AKSESUAR" vb., hiçbiri kendi kartına referans vermiyor) ürün tamamen listeden düşüyordu — canlı kullanımda 12,4M ₺'lik bir satışın kaçırılmasına yol açtı. Doğrusu (artık uygulanan): `UretimRecete.Kodu = StokKarti.Kodu` eşleşmesi — `uretim_emir_bom_patlat()`'ın zaten kullandığı doğru desenle aynı. Düzeltme sonrası mamul sayısı 261 → **217** (eskiden bazı "bileşen grubu" kartları yanlışlıkla ürün sayılıyordu). Bu fonksiyon aynı zamanda `ui/eslestirme.py`'nin (Mamül Ağacı → Eşleştirme sayfası) mamul dropdown'ını besliyor — düzeltme orayı da iyileştirdi.
+- **"Üretilmedi" tespiti:** CEO ERP'de `UretimEmri` ile üretilen ürün/miktar arasında sorgulanabilir bir bağlantı (JOIN/FK) kod tabanında yok. Bunun yerine mevcut bakiye formülü (`stok_guncel_bakiyeleri()`) kullanılır — IslemKodu=16 (Üretimden Giriş) bu formülün giriş tarafında zaten hesaba katılı; bir ürünün bugünkü ERP bakiyesi negatifse, satışın üretim + mevcut stokla karşılanamadığı anlamına gelir (Üretim Eksik Stok sekmesindeki "eksik" mantığıyla birebir aynı).
+- **Kapsam:** yalnızca bakiyesi negatif (gerçekten eksik) ürünler rapora girer; stoktan karşılanmış satışlar listelenmez.
+- Mevcut hiçbir bakiye/depo sorgu fonksiyonu değiştirilmedi (`satis_faturalari`, `stok_guncel_bakiyeleri` olduğu gibi kullanıldı) — bu rapor bakiye/depo mantığına dokunmuyor, `tools/mutabakat.py` gerektirmiyor. (`mamul_agaci_listesi()` düzeltildi ama bu bir bakiye/depo formülü değil, "hangi StokKarti mamul sayılır" tanımıdır.)
+- **Sayfa 1 — "Üretilmesi Gereken":** Stok Kodu / Stok Adı / Satılan Miktar / Satış Tutarı / Güncel ERP Bakiyesi / Üretilmesi Gereken Miktar / İlk-Son Satış Tarihi / Belge Sayısı, eksik miktara göre azalan sıralı, toplam satırlı.
+- **Sayfa 2 — "Alt Parça İhtiyacı" (`db/sorgular.py::ihtiyac_bom_patlat()`):** Sayfa 1'deki her ürünün eksik miktarını `bom_listesi()` reçetesiyle en alt kademeye kadar (max 8 seviye) recursive patlatır — Üretim Eksik Stok sekmesindeki `_patlat()` ile aynı net/mahsuplu mantık (bir alt montajın kendi bakiyesi ihtiyacı karşılıyorsa onun altına inilmez). Stok kodları (yalnızca eksik > 0 olanlar, azalan sıralı) + masraf/operasyon kalemleri (`:XX` kodlar dahil, bilgi amaçlı — stok bakiyesi kavramı yok) tek sayfada, "Hangi Ürün(ler) İçin" sütunuyla kaynağı gösterilir.
+- **Son Alım Fiyatı sütunu (`db/sorgular.py::son_alis_fiyati_toplu()`):** Hem stok hem masraf kodları için, **tarih sınırı olmadan** (kaydın bulunduğu en eski tarihe kadar) geriye giderek en son alım fiyatını bulur — `stok_fiyat_gecmisi()`/`masraf_fiyat_gecmisi()`'nin aksine `bas` parametresi almaz. Aynı faturalaşan-irsaliye mükerrer sayım düzeltmesini kullanır (`IslemKodu=1 OR (IslemKodu=5 AND FaturaId IS NULL)`). Hiç alım bulunamayan kodlar sonuç sözlüğünde yer almaz → Excel'de hücre boş bırakılır (canlı DB'de doğrulandı: `GMP-200-240570` örneğinde gerçekten sıfır hareket satırı var, "veri boşluğu" iddiası tahmini değil).
+- **Açık Üretim Emri İhtiyacı sütunu (`db/sorgular.py::acik_uretim_emri_ihtiyaclari()`):** `DurumId=3` (Devam Ediyor) durumundaki üretim emirlerinde, `UretimEmriHatPlaniGirdi.TalepMiktar` değerleri stok kodu bazında toplanır. `HatTipi IN (1,2)` kapsamı kullanılır. Bu değer reçetedeki birimlik `Miktar` alanından farklıdır; açık üretim emirlerinin ilgili stoktan talep ettiği toplam miktarı gösterir. Masraf/operasyon satırlarında boş bırakılır.
+- **Reçeteli (yarı mamül) alt parçalar için hesaplanan maliyet (2026-09-14):** Bir alt parça (ör. `GMP-200-240506`) CEO ERP'de hiç satın alınmamışsa (sadece üretiliyorsa) "Son Alım Fiyatı" doğal olarak boştu. Artık böyle kodlar için (`kod in bom`) kendi bileşenlerinin (miktar × bileşen fiyatı, gerektiğinde özyinelemeli) toplamı hesaplanıp aynı sütuna yazılıyor — `logic/maliyet.py::mamul_maliyet_hesapla()` ile aynı mantık, farkı tarih aralığı sınırı olmaması (`son_alis_fiyati_toplu()`'nun tarihsiz arama mantığını kullanır). Excel'de "Son Alım Tarihi" sütununda **"Hesaplanan (alt bileşenlerden)"** notuyla ve mavi italik yazı tipiyle gerçek alım fiyatlarından ayrıştırılır. Fiyatı hiç bulunamayan alt bileşenler 0 katkı yapar (Maliyet sekmesinde zaten dokümante edilmiş "veri boşluğu" davranışıyla tutarlı); hiçbir bileşeninde veri yoksa hücre yine boş kalır. Fonksiyon: `tools/satilip_uretilmemis.py::_hesapla_maliyet()` (rapora özel, `db/sorgular.py`'ye taşınmadı — sadece bu script tarafından kullanılıyor).
+- **⚠ Operasyon kodu StokKarti tarafında girilmişse `:XX` sonekiyle yakalanır (2026-09-14 düzeltmesi):** `ihtiyac_bom_patlat()` bir bileşeni `tip='masraf'` olarak `UretimReceteHatPlaniGirdi.Tipi` alanından belirliyordu — ama Maliyet sekmesinde zaten belgelenen alışkanlık burada da geçerli: bazı operasyonlar (ör. `GMP-200-230609:110` ÇAPAK ALMA, `:20` FREZE, `:60` KAPLAMA) `StokMasrafKarti` yerine `StokKarti` tarafına `Tipi=1` ile girilmiş. Düzeltme öncesi bunlar "gerçek stok" sayılıp eksik-filtresine giriyor, bakiyeleri yeterli göründüğü için raporda **sessizce kayboluyordu** — reçeteli bir alt parçanın (`GMP-200-230609`) kendi bileşenleri hiç görünmüyordu. Artık `kod.count(':') == 1` kontrolüyle (Tipi alanından bağımsız) StokKarti tarafındaki operasyon kodları da masraf/operasyon olarak sınıflandırılıp eksik-filtresi dışında, kaynak ürünüyle birlikte gösteriliyor.
 
 ---
 
@@ -226,7 +309,7 @@ yapıldığından (varsayılan Inno Setup davranışı), normal kullanıcı bu k
 main.py / config.py / config.json / build.bat / setup.iss / create_installer.bat
 db/      baglanti.py, sorgular.py
 logic/   maliyet.py, excel.py, excel_is_emri.py, pdf_is_emri.py, mamul_agaci_excel_oku.py
-tools/   fatura_eslestir.py, mutabakat.py
+tools/   fatura_eslestir.py, mutabakat.py, satilip_uretilmemis.py
 ui/      ana_pencere.py, maliyet.py, mamul_agaci_tab.py, tarama.py, eslestirme.py, rapor.py
          tab_satis_faturalari.py, tab_erp_aktar.py, tab_sw.py, tab_uretim_raporu.py
          tab_fatura_eslestir.py, tab_recete_sorgula.py, tab_stok_hazirla.py
@@ -314,7 +397,7 @@ Tip seçenekleri: `Hammadde / Yarımamül / Mamül / Reçete / Masraf`
 
 **Excel'e Aktar** → 7 sütun (Seviye / Tip / Stok Kodu / Stok Adı / Stok Adı-2 / Miktar / Birim), derinlik bazlı renkler, native +/- satır grupları.
 
-**Excel'den Yükle** — 4 format tanır:
+**Excel'den Yükle** — 5 format tanır:
 
 | Format | Tespit | Davranış |
 |---|---|---|
@@ -322,6 +405,16 @@ Tip seçenekleri: `Hammadde / Yarımamül / Mamül / Reçete / Masraf`
 | Eski 6-kolon | A sütunu tip metni | Girintili stok kodu ile hiyerarşi |
 | Çok eski | Diğer durum | Flat yükleme |
 | **ADLASMKE** | A1 = "Stok Kodu" | CEO ERP dışa aktarımı — özel işleme ↓ |
+| **Başlıklı rapor** | `Kod` / `Stok Kodu` başlığı | Sütunlar başlık adına göre okunur; `Kod/Ad/Adet` yapılı proje fark Excel'i de desteklenir |
+
+Başlıklı veya pozisyonel Excel yüklemesinden sonra kodlar toplu ve salt-okunur
+olarak CEO ERP'de `StokKarti`, `StokMasrafKarti` ve aktif `UretimRecete`
+başlıklarıyla eşleştirilir. ERP'deki `Adi`, `Adi2` ve birim bilgileri doluysa
+Excel değerlerine önceliklidir; ERP'de kayıt veya ilgili alan yoksa Excel değeri
+korunur. ERP'de doğrudan Mamül/Yarımamül/Hammadde alanı bulunmadığı için stok
+tipi aktif reçete ve ağaç konumundan türetilir; masraf kartı `Masraf` olarak
+işaretlenir. Aynı kod iki kart tablosunda bulunursa Excel tip ipucu kullanılır
+ve belirsizlik loga yazılır. Bu tarama canlı aktarım yapmaz.
 
 **ADLASMKE formatı** (`_excel_yukle_adlasmke`):
 - Header: `Stok Kodu | Stok Adı | Stok Adı-2 | Gerçek Bakiye | Ölçü Birimi | Depo Raf Adedi`
@@ -371,7 +464,7 @@ UretimRecete
 
 **Kritik:** `UretimReceteHatPlaniGirdi.Tipi` NOT NULL — INSERT'te `Tipi=1/2` zorunlu; `SabitMiktar=0`, `GarantiKapsaminda=0` da gerekli.
 
-**Kritik:** `UretimReceteHatPlaniGirdi.BirimId` ve `DepoId` NULL bırakılamaz — CEO ERP iş emri oluştururken bu alanları okur; NULL olursa `.NET NullReferenceException` fırlatır. Değerler: `BirimId=ADET_BIRIM_GUID`, `DepoId=2` (Merkez).
+**Kritik:** `UretimReceteHatPlaniGirdi.BirimId` ve `DepoId` NULL bırakılamaz — CEO ERP iş emri oluştururken bu alanları okur; NULL olursa `.NET NullReferenceException` fırlatır. Değerler: `BirimId` = **bileşen kartının kendi birimi** (`StokKarti.StokBirim` / `StokMasrafKarti.StokBirimId`; kart birimi boşsa `ADET_BIRIM_GUID`), `DepoId=2` (Merkez). Native CEO kayıtlarında Girdi birimi kart birimiyle aynıdır (KG→KG, METRE→METRE); 2026-10-07 öncesi `recete_bagla()` / `recete_masraf_bagla()` her satıra sabit ADET yazıyordu.
 
 **Kritik:** `UretimReceteHatPlani.Miktar`, `BirimId`, `DepoId` de NULL bırakılamaz — CEO ERP `Nullable<T>.Value` ile okur; NULL olursa `InvalidOperationException` fırlatır. Değerler: `Miktar=1`, `BirimId=ADET_BIRIM_GUID`, `DepoId=2` (Merkez).
 
@@ -399,3 +492,4 @@ UretimRecete
 
 1. **PDF gömme** — teknik resim PDF'lerini `StokKarti.DokumanPath`'e bağlama
 2. **Canlı SW testi** — SW Kodlama sekmesini iş makinesinde SolidWorks 2019 ile doğrulama
+3. ~~**Faturalaşan irsaliye mükerrer sayım riski (fiyat geçmişi genelinde)**~~ — **Düzeltildi (2026-09-14).** Proje Fark Raporu doğrulaması sırasında bulundu: `IslemKodu IN (1, 5)` / `IN (2, 6)` deseni, `FaturaId` dolu (faturaya dönüşmüş) irsaliye satırlarını faturasıyla birlikte iki kez sayıyordu. Düzeltme (`sh.IslemKodu = 1 OR (sh.IslemKodu = 5 AND sh.FaturaId IS NULL)` deseni, alış tarafı; satışta 2/6) artık şu 6 fonksiyonun hepsinde uygulanıyor: `proje_satinalma_hareketleri()`, `satis_faturalari()`, `stok_fiyat_gecmisi()`, `masraf_fiyat_gecmisi()`, `recetesiz_stok_hareketleri()`, `stok_fiyatlari_toplu()` (bu sonuncusu Maliyet sekmesinin asıl FIFO/LIFO/WA fiyat kaynağı). **Not:** Bu, Maliyet sekmesinin FIFO/LIFO/WA sonuçlarını değiştirebilir (artık daha az/doğru satır fiyat hesabına giriyor) — canlı kullanımda maliyet raporlarını gözle kontrol edin; `python tools\mutabakat.py` bu fonksiyonları kapsamıyor (yalnızca Üretim Eksik Stok bakiye/depo mutabakatını kontrol ediyor), o yüzden ayrı bir otomatik doğrulama aracı yok.

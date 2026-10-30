@@ -1,14 +1,17 @@
 """Excel raporu üretme iş mantığı. UI'dan bağımsızdır."""
 from datetime import datetime
+from math import isfinite
 from pathlib import Path
 import openpyxl
 from openpyxl.styles import PatternFill, Font as XFont, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 
-from logic.maliyet import mamul_maliyet_hesapla
+from logic.maliyet import (
+    mamul_maliyet_hesapla, proje_fiili_maliyet, proje_fark_raporu,
+)
 from db.sorgular import (
     bom_listesi, stok_fiyatlari_toplu, stok_guncel_bakiyeleri,
-    bom_operasyon_kodlarini_tamamla,
+    bom_operasyon_kodlarini_tamamla, proje_satinalma_hareketleri,
 )
 
 # ── Stil sabitleri ────────────────────────────────────────────────────────────
@@ -30,6 +33,9 @@ _FILL = {
     "toplam":   PatternFill("solid", fgColor="E8F5E9"),
     "baglandi": PatternFill("solid", fgColor="E8F5E9"),
     "atlandi":  PatternFill("solid", fgColor="FFF8E1"),
+    "fark_yok": PatternFill("solid", fgColor="FFCDD2"),   # sadece bir tarafta var
+    "fark_var": PatternFill("solid", fgColor="FFF3E0"),   # miktar farkı
+    "fark_ok":  PatternFill("solid", fgColor="E8F5E9"),   # eşleşiyor
 }
 _FONT = {
     "baslik":   XFont(bold=True, color="FFFFFF", name="Segoe UI", size=11),
@@ -39,6 +45,9 @@ _FONT = {
     "toplam":   XFont(bold=True, name="Segoe UI", size=11, color="1B5E20"),
     "bilgi":    XFont(name="Segoe UI", size=10, color="555555"),
     "veri":     XFont(name="Segoe UI", size=10),
+    "fark_yok": XFont(name="Segoe UI", size=10, color="B71C1C"),
+    "fark_var": XFont(name="Segoe UI", size=10, color="E65100"),
+    "fark_ok":  XFont(name="Segoe UI", size=10, color="1B5E20"),
 }
 
 # ── Sayı format sabitleri ─────────────────────────────────────────────────────
@@ -62,6 +71,7 @@ _MALIYET_SUTUNLAR = [
 
 # (alan_adı, sayısal?, number_format)
 _BAGLAMA_ALAN = [
+    ("kart_tipi",     False, None),
     ("stok_kodu",     False, None),
     ("stok_adi",      False, None),
     ("birim",         False, None),
@@ -74,9 +84,12 @@ _BAGLAMA_ALAN = [
     ("mamul_kodu",    False, None),
     ("mamul_adi",     False, None),
     ("islem",         False, None),
+    ("hat_kodu",      False, None),
+    ("hat_plani_id",   True, _FMT_ADET),
+    ("recete_miktari", True, _FMT_MIKTAR),
 ]
 
-_BAGLAMA_GENISLIK = [14, 32, 10, 16, 14, 20, 14, 14, 30, 14, 30, 13]
+_BAGLAMA_GENISLIK = [12, 14, 32, 10, 16, 14, 20, 14, 14, 30, 14, 30, 13, 18, 15, 18]
 
 # ── Yardımcı fonksiyonlar ─────────────────────────────────────────────────────
 
@@ -420,16 +433,260 @@ def maliyet_excel_kaydet_excel_bom(
     return uyarilar
 
 
+# ── Proje Fiili Satınalma & Fark Raporu ───────────────────────────────────────
+
+_PROJE_FARK_SUTUNLAR = [
+    ("Tip", 12), ("Kod", 16), ("Ad", 32),
+    ("BOM Miktarı", 14), ("BOM Tutarı ₺", 16),
+    ("Satınalma Miktarı", 16), ("Satınalma Tutarı ₺", 18),
+    ("Fark Miktarı", 14), ("Fark Tutarı ₺", 16), ("Durum", 20),
+]
+
+_PROJE_SATINALMA_SUTUNLAR = [
+    ("Tip", 10), ("Kod", 16), ("Ad", 32), ("Belge Türü", 16),
+    ("Belge No", 14), ("Tarih", 12), ("Miktar", 12),
+    ("Birim Fiyat ₺", 16), ("Tutar ₺", 16), ("Tedarikçi", 32),
+]
+
+_DURUM_STIL = {
+    "Sadece Satınalmada": "fark_yok",
+    "Sadece BOM'da":      "fark_yok",
+    "Miktar Farkı":       "fark_var",
+    "Eşleşiyor":          "fark_ok",
+}
+
+
+def proje_fark_excel_kaydet(
+    dosya: str, conn,
+    secili_mamul_kodlari: list[str],
+    proje_kodu: str,
+    metod: str, bas: str, bit: str, bas_g: str, bit_g: str,
+    ilerleme_cb=None,   # callable(str) | None
+) -> tuple[float, float]:
+    """
+    Seçilen, CEO ERP'ye zaten işlenmiş mamül(ler)in BOM'dan hesaplanan
+    TEORİK maliyetini, verilen proje koduna fiilen kesilmiş alış faturası/
+    irsaliyesi satırlarıyla (FİİLİ) karşılaştırır ve kalem bazında farkı
+    raporlar. Alış iadeleri fiili toplamdan düşülmüş olarak hesaplanır.
+    Taslak/Excel kaynaklı BOM için proje_fark_excel_bom_kaydet()
+    kullanılır — workbook yazımı _proje_fark_workbook_yaz() ile ortaktır.
+
+    Not: Her mamül 1 birim üretim varsayılır — uygulamanın geri kalanındaki
+    BOM hesaplama mantığıyla (maliyet_excel_kaydet) tutarlıdır. Birden fazla
+    üretim adedi söz konusuysa teorik tarafı buna göre yorumlayın.
+
+    Excel çıktısı 3 sayfa:
+      - Özet             : proje kodu, dönem, teorik/fiili toplam ve fark
+      - Fark Detayı       : proje_fark_raporu() sonucu, kod bazında
+      - Satınalma Detayı  : proje_satinalma_hareketleri() ham satırları
+
+    Döner: (teorik_toplam, fiili_toplam)
+    """
+    metod_ad = {"WA": "Ağırlıklı Ortalama", "FIFO": "FIFO", "LIFO": "LIFO"}[metod]
+    bom = bom_listesi(conn)
+
+    cache: dict = {}
+    bom_satirlari_toplam: list[dict] = []
+    teorik_toplam = 0.0
+    mamul_adlari: list[str] = []
+    for mamul_kodu in secili_mamul_kodlari:
+        mamul = bom.get(mamul_kodu)
+        if not mamul:
+            continue
+        if ilerleme_cb:
+            ilerleme_cb(f"{mamul_kodu} — {mamul['ad']} teorik maliyeti hesaplanıyor...")
+        bilesenleri, top = mamul_maliyet_hesapla(
+            conn, mamul_kodu, metod, bas, bit, _cache=cache, bom=bom
+        )
+        bom_satirlari_toplam.extend(bilesenleri)
+        teorik_toplam += top
+        mamul_adlari.append(f"{mamul_kodu} — {mamul['ad']}")
+
+    return _proje_fark_workbook_yaz(
+        dosya, conn, bom_satirlari_toplam, teorik_toplam, mamul_adlari,
+        proje_kodu, metod_ad, bas, bit, bas_g, bit_g, ilerleme_cb=ilerleme_cb,
+    )
+
+
+def proje_fark_excel_bom_kaydet(
+    dosya: str, conn,
+    excel_bom_dosyasi: str,
+    proje_kodu: str,
+    metod: str, bas: str, bit: str, bas_g: str, bit_g: str,
+    ilerleme_cb=None,   # callable(str) | None
+) -> tuple[float, float, list[str]]:
+    """
+    CEO ERP'ye henüz işlenmemiş (reçetesi yüklenmemiş), Excel'de hazırlanmış
+    taslak bir mamül ağacının TEORİK maliyetini, verilen proje koduna fiilen
+    kesilmiş alış faturası/irsaliyesi satırlarıyla (FİİLİ) karşılaştırır.
+    BOM kaynağı maliyet_excel_kaydet_excel_bom ile aynıdır
+    (excel_dosyasindan_bom_oku + bom_operasyon_kodlarini_tamamla).
+
+    İşçilik SORULMAZ — bu rapor sadece malzeme/masraf karşılaştırmasıdır,
+    satınalma tarafının işçilik kalemi yoktur.
+
+    Döner: (teorik_toplam, fiili_toplam, uyarilar)
+    """
+    from logic.mamul_agaci_excel_oku import excel_dosyasindan_bom_oku
+
+    metod_ad = {"WA": "Ağırlıklı Ortalama", "FIFO": "FIFO", "LIFO": "LIFO"}[metod]
+    bom, kok_kodlari, uyarilar = excel_dosyasindan_bom_oku(excel_bom_dosyasi)
+    uyarilar.extend(bom_operasyon_kodlarini_tamamla(conn, bom))
+
+    cache: dict = {}
+    bom_satirlari_toplam: list[dict] = []
+    teorik_toplam = 0.0
+    mamul_adlari: list[str] = []
+    for mamul_kodu in kok_kodlari:
+        mamul = bom.get(mamul_kodu)
+        if not mamul:
+            continue
+        if ilerleme_cb:
+            ilerleme_cb(f"{mamul_kodu} — {mamul['ad']} teorik maliyeti hesaplanıyor...")
+        bilesenleri, top = mamul_maliyet_hesapla(
+            conn, mamul_kodu, metod, bas, bit, _cache=cache, bom=bom
+        )
+        bom_satirlari_toplam.extend(bilesenleri)
+        teorik_toplam += top
+        mamul_adlari.append(f"{mamul_kodu} — {mamul['ad']}")
+
+    teorik_toplam_sonuc, fiili_toplam = _proje_fark_workbook_yaz(
+        dosya, conn, bom_satirlari_toplam, teorik_toplam, mamul_adlari,
+        proje_kodu, metod_ad, bas, bit, bas_g, bit_g,
+        uyarilar=uyarilar, ilerleme_cb=ilerleme_cb,
+    )
+    return teorik_toplam_sonuc, fiili_toplam, uyarilar
+
+
+def _proje_fark_workbook_yaz(
+    dosya: str, conn,
+    bom_satirlari_toplam: list[dict], teorik_toplam: float, mamul_adlari: list[str],
+    proje_kodu: str, metod_ad: str, bas: str, bit: str, bas_g: str, bit_g: str,
+    uyarilar: list[str] | None = None,
+    ilerleme_cb=None,
+) -> tuple[float, float]:
+    """
+    proje_fark_excel_kaydet() ve proje_fark_excel_bom_kaydet() tarafından
+    paylaşılan ortak adım: fiili satınalmayı çeker, farkı hesaplar, 3 (veya
+    uyarı varsa 4) sayfalık Excel workbook'unu yazar. Döner: (teorik_toplam, fiili_toplam)
+    """
+    if ilerleme_cb:
+        ilerleme_cb(f"Proje '{proje_kodu}' satınalma hareketleri çekiliyor...")
+    sat_satirlari, fiili_toplam = proje_fiili_maliyet(conn, proje_kodu, bas, bit)
+    ham_hareketler = proje_satinalma_hareketleri(conn, proje_kodu, bas, bit)
+
+    fark = proje_fark_raporu(bom_satirlari_toplam, sat_satirlari)
+    fark_toplam = fiili_toplam - teorik_toplam
+    fark_yuzde = (fark_toplam / teorik_toplam * 100) if teorik_toplam else None
+
+    wb = openpyxl.Workbook()
+
+    # ── Özet sayfası ──────────────────────────────────────────────────────────
+    ws1 = wb.active
+    ws1.title = "Özet"
+    ws1.column_dimensions["A"].width = 28
+    ws1.column_dimensions["B"].width = 40
+    satirlar_ozet = [
+        ("Proje Kodu", proje_kodu),
+        ("Dönem", f"{bas_g} – {bit_g}"),
+        ("Maliyet Yöntemi", metod_ad),
+        ("Seçilen Mamüller", ", ".join(mamul_adlari) if mamul_adlari else "—"),
+        ("", ""),
+        ("Teorik Maliyet (BOM) ₺", round(teorik_toplam, 2)),
+        ("Fiili Satınalma ₺", round(fiili_toplam, 2)),
+        ("Fark ₺", round(fark_toplam, 2)),
+        ("Fark %", round(fark_yuzde, 1) if fark_yuzde is not None else "—"),
+        ("", ""),
+        ("Oluşturma", datetime.now().strftime("%d.%m.%Y %H:%M")),
+    ]
+    if uyarilar:
+        satirlar_ozet.append(("Uyarı Sayısı (bkz. Uyarılar sayfası)", len(uyarilar)))
+    for i, (etiket_, deger) in enumerate(satirlar_ozet, 1):
+        e = ws1.cell(row=i, column=1, value=etiket_)
+        e.font = _FONT["iscilik"] if etiket_ else _FONT["veri"]
+        d = ws1.cell(row=i, column=2, value=deger)
+        if isinstance(deger, (int, float)):
+            d.number_format = _FMT_PARA if "₺" in etiket_ else _FMT_MIKTAR
+            d.font = _FONT["toplam"]
+
+    # ── Fark Detayı sayfası ──────────────────────────────────────────────────
+    ws2 = wb.create_sheet("Fark Detayı")
+    n2 = len(_PROJE_FARK_SUTUNLAR)
+    ws2.row_dimensions[1].height = 26
+    for col, (ad, gen) in enumerate(_PROJE_FARK_SUTUNLAR, 1):
+        _hucre(ws2, 1, col, ad, "baslik", "baslik")
+        ws2.column_dimensions[get_column_letter(col)].width = gen
+    satir = 2
+    for f in fark:
+        stil = _DURUM_STIL.get(f["durum"], "veri")
+        fill_key = stil if stil in _FILL else "bileseni"
+        font_key = stil if stil in _FONT else "veri"
+        for col, (val, aln, fmt) in enumerate([
+            (f["tip"],              _ORTA, None),
+            (f["bil_kod"],          _ORTA, None),
+            (f["bil_ad"],           _SOL,  None),
+            (_miktar(f["bom_miktar"]),        _SAG, _FMT_MIKTAR),
+            (round(f["bom_tutar"], 2),        _SAG, _FMT_PARA),
+            (_miktar(f["satinalma_miktar"]),  _SAG, _FMT_MIKTAR),
+            (round(f["satinalma_tutar"], 2),  _SAG, _FMT_PARA),
+            (_miktar(f["fark_miktar"]),       _SAG, _FMT_MIKTAR),
+            (round(f["fark_tutar"], 2),       _SAG, _FMT_PARA),
+            (f["durum"],            _ORTA, None),
+        ], 1):
+            _hucre(ws2, satir, col, val, fill_key, font_key, aln, fmt)
+        satir += 1
+    ws2.auto_filter.ref = f"A1:{get_column_letter(n2)}{satir - 1}"
+    ws2.freeze_panes = "A2"
+
+    # ── Satınalma Detayı sayfası ─────────────────────────────────────────────
+    ws3 = wb.create_sheet("Satınalma Detayı")
+    n3 = len(_PROJE_SATINALMA_SUTUNLAR)
+    ws3.row_dimensions[1].height = 26
+    for col, (ad, gen) in enumerate(_PROJE_SATINALMA_SUTUNLAR, 1):
+        _hucre(ws3, 1, col, ad, "baslik", "baslik")
+        ws3.column_dimensions[get_column_letter(col)].width = gen
+    satir = 2
+    for h in ham_hareketler:
+        for col, (val, aln, fmt) in enumerate([
+            (h["tip"],              _ORTA, None),
+            (h["bil_kod"],          _ORTA, None),
+            (h["bil_ad"],           _SOL,  None),
+            (h["islem_turu"],       _ORTA, None),
+            (h["belge_no"],         _ORTA, None),
+            (h["tarih"],            _ORTA, None),
+            (_miktar(h["miktar"]),  _SAG,  _FMT_MIKTAR),
+            (round(h["birim_fiyat"], 4), _SAG, _FMT_BIRIM),
+            (round(h["tutar"], 2),  _SAG,  _FMT_PARA),
+            (h["tedarikci"],        _SOL,  None),
+        ], 1):
+            _hucre(ws3, satir, col, val, "bileseni", "veri", aln, fmt)
+        satir += 1
+    ws3.auto_filter.ref = f"A1:{get_column_letter(n3)}{satir - 1}"
+    ws3.freeze_panes = "A2"
+
+    # ── Uyarılar sayfası (yalnızca taslak Excel BOM kaynağında olabilir) ────
+    if uyarilar:
+        ws4 = wb.create_sheet("Uyarılar")
+        ws4.column_dimensions["A"].width = 100
+        ws4.cell(row=1, column=1, value=f"{len(uyarilar)} uyarı").font = _FONT["iscilik"]
+        for i, u in enumerate(uyarilar, 2):
+            ws4.cell(row=i, column=1, value=f"• {u}").font = _FONT["bilgi"]
+
+    wb.save(dosya)
+    return teorik_toplam, fiili_toplam
+
+
 # ── Kesişim Kümesi Raporu ─────────────────────────────────────────────────────
 
 _KESISIM_SUTUNLAR = [
-    ("Stok Kodu", 16), ("Stok Adı", 36), ("Stok Adı-2", 36),
+    ("Kart Türü", 12), ("Kart Kodu", 16), ("Kart Adı", 36), ("Kart Adı-2", 36),
     ("Birim", 10), ("Güncel Miktar", 16),
     ("Fatura Sayısı", 14), ("Birim Fiyat ₺", 20),
     ("İlk Fatura", 14), ("Son Fatura", 14), ("Tedarikçi", 34),
 ]
 
 _KESISIM_ALAN = [
+    ("kart_tipi",     False, None),
     ("stok_kodu",     False, None),
     ("stok_adi",      False, None),
     ("stok_adi2",     False, None),
@@ -443,12 +700,13 @@ _KESISIM_ALAN = [
 ]
 
 _DETAY_SUTUNLAR = [
-    ("Stok Kodu", 16), ("Stok Adı", 36), ("İşlem Türü", 20),
+    ("Kart Türü", 12), ("Kart Kodu", 16), ("Kart Adı", 36), ("İşlem Türü", 20),
     ("Belge No", 16), ("Tarih", 14), ("Miktar", 12),
     ("Birim Fiyat ₺", 20), ("Tutar ₺", 18), ("Tedarikçi", 34),
 ]
 
 _DETAY_ALAN = [
+    ("kart_tipi",   False, None),
     ("stok_kodu",   False, None),
     ("stok_adi",    False, None),
     ("islem_turu",  False, None),
@@ -498,7 +756,7 @@ def kesisim_excel_kaydet(dosya: str, stoklar: list[dict], detaylar: list[dict],
                 val = _miktar(ham) if fmt in (_FMT_MIKTAR, _FMT_BIRIM) else _adet(ham)
                 aln = _SAG
             else:
-                val = str(ham).strip() if ham is not None else ""
+                val = ("Masraf" if ham == "masraf" else "Stok") if key == "kart_tipi" else (str(ham).strip() if ham is not None else "")
                 aln = _SOL
             h = ws.cell(row=satir, column=col, value=val)
             h.fill = _FILL["bileseni"]; h.font = _FONT["veri"]
@@ -536,7 +794,7 @@ def kesisim_excel_kaydet(dosya: str, stoklar: list[dict], detaylar: list[dict],
                 val = _miktar(ham)
                 aln = _SAG
             else:
-                val = str(ham).strip() if ham is not None else ""
+                val = ("Masraf" if ham == "masraf" else "Stok") if key == "kart_tipi" else (str(ham).strip() if ham is not None else "")
                 aln = _SOL
             hc = wd.cell(row=satir, column=col, value=val)
             hc.fill = _FILL["bileseni"]; hc.font = _FONT["veri"]
@@ -551,6 +809,79 @@ def kesisim_excel_kaydet(dosya: str, stoklar: list[dict], detaylar: list[dict],
 
 
 # ── Bağlama Raporu ────────────────────────────────────────────────────────────
+
+_ESLESTIRME_SUTUNLAR = [
+    ("Seçili", "secili", 9, None),
+    ("Kart Türü", "kart_tipi", 12, None),
+    ("Kart Kodu", "stok_kodu", 19, None),
+    ("Kart Adı", "stok_adi", 36, None),
+    ("Birim", "birim", 11, None),
+    ("Güncel Stok", "guncel_miktar", 17, _FMT_MIKTAR),
+    ("Fatura Sayısı", "fatura_sayisi", 15, _FMT_ADET),
+    ("Birim Fiyat", "birim_fiyat", 18, _FMT_BIRIM),
+    ("Reçete Miktarı", "recete_miktari", 18, _FMT_MIKTAR),
+    ("Durum", "islem", 13, None),
+    ("İlk Fatura", "ilk_fatura", 15, None),
+    ("Son Fatura", "son_fatura", 15, None),
+    ("Tedarikçi", "tedarikci", 32, None),
+    ("Mamül Kodu", "mamul_kodu", 19, None),
+    ("Mamül Adı", "mamul_adi", 36, None),
+    ("Reçete Grubu", "hat_kodu", 20, None),
+    ("Grup ID", "hat_plani_id", 13, _FMT_ADET),
+]
+
+
+def eslestirme_listesi_excel_kaydet(
+    dosya: str, gorunen: list[dict], tumu: list[dict],
+) -> None:
+    """Eşleştirme tablosunun görünür sırasını ve tüm taramayı iki sayfaya yazar."""
+    wb = openpyxl.Workbook()
+    for sira, (ad, satirlar) in enumerate((
+        ("Görünen Liste", gorunen), ("Tüm Tarama", tumu),
+    )):
+        ws = wb.active if sira == 0 else wb.create_sheet()
+        ws.title = ad
+        ws.row_dimensions[1].height = 28
+        for sutun, (baslik, _, genislik, _) in enumerate(_ESLESTIRME_SUTUNLAR, 1):
+            _hucre(ws, 1, sutun, baslik, "baslik", "baslik")
+            ws.column_dimensions[get_column_letter(sutun)].width = genislik
+
+        for satir_no, kayit in enumerate(satirlar, 2):
+            ws.row_dimensions[satir_no].height = 20
+            renk = "baglandi" if kayit.get("islem") == "Bağlandı" else "atlandi"
+            for sutun, (_, alan, _, fmt) in enumerate(_ESLESTIRME_SUTUNLAR, 1):
+                ham = kayit.get(alan)
+                if alan == "secili":
+                    deger = "Evet" if ham else ""
+                elif alan == "kart_tipi":
+                    deger = "Masraf" if ham == "masraf" else "Stok"
+                elif alan == "guncel_miktar" and kayit.get("kart_tipi") == "masraf":
+                    deger = None
+                elif fmt is not None:
+                    try:
+                        deger = float(str(ham).strip().replace(",", "."))
+                        if not isfinite(deger):
+                            raise ValueError("Geçersiz sayı")
+                        if fmt == _FMT_ADET:
+                            deger = int(deger)
+                    except (ValueError, TypeError):
+                        deger = None if ham in (None, "", "—") else str(ham)
+                        if isinstance(deger, str) and deger.startswith("="):
+                            deger = "'" + deger
+                else:
+                    deger = str(ham).strip() if ham is not None else ""
+                    if deger.startswith("="):
+                        deger = "'" + deger
+                hizalama = _SAG if fmt and isinstance(deger, (int, float)) else _SOL
+                _hucre(
+                    ws, satir_no, sutun, deger, renk, "veri", hizalama,
+                    fmt if fmt and isinstance(deger, (int, float)) else None,
+                )
+        son_sutun = get_column_letter(len(_ESLESTIRME_SUTUNLAR))
+        ws.auto_filter.ref = f"A1:{son_sutun}{max(len(satirlar) + 1, 1)}"
+        ws.freeze_panes = "A2"
+    wb.save(dosya)
+
 
 def baglama_excel_kaydet(dosya: str, sonuclar: list[dict]) -> None:
     wb = openpyxl.Workbook()
@@ -567,9 +898,10 @@ def baglama_excel_kaydet(dosya: str, sonuclar: list[dict]) -> None:
 
     # Başlık etiketlerini tekrar doğru adlarla yaz
     basliklar = [
-        "Stok Kodu", "Stok Adı", "Birim", "Güncel Miktar",
+        "Kart Türü", "Kart Kodu", "Kart Adı", "Birim", "Güncel Miktar",
         "Fatura Sayısı", "Birim Fiyat", "İlk Fatura", "Son Fatura",
         "Tedarikçi", "Mamül Kodu", "Mamül Adı", "İşlem",
+        "Reçete Grubu", "Grup ID", "Reçete Miktarı",
     ]
     for col, (baslik, gen) in enumerate(zip(basliklar, _BAGLAMA_GENISLIK), 1):
         _hucre(ws, 1, col, baslik, "baslik", "baslik")
@@ -591,7 +923,7 @@ def baglama_excel_kaydet(dosya: str, sonuclar: list[dict]) -> None:
                     val = _miktar(ham)
                 aln = _SAG
             else:
-                val = str(ham).strip() if ham is not None else ""
+                val = ("Masraf" if ham == "masraf" else "Stok") if key == "kart_tipi" else (str(ham).strip() if ham is not None else "")
                 aln = _SOL
 
             h = ws.cell(row=satir, column=col, value=val)

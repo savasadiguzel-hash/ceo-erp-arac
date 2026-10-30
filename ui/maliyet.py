@@ -1,19 +1,30 @@
+import json
 import logging
+import os
 from datetime import datetime, date as bugun_tipi
+from pathlib import Path
 
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QGroupBox, QGridLayout,
     QLineEdit, QPushButton, QRadioButton, QButtonGroup,
     QDoubleSpinBox, QScrollArea, QFrame, QCheckBox, QSizePolicy,
-    QMessageBox, QFileDialog, QProgressBar, QInputDialog,
+    QMessageBox, QFileDialog, QProgressBar, QInputDialog, QCompleter,
+    QDialog, QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView,
 )
 from PyQt5.QtCore import Qt, QEvent, QThread, QTimer, pyqtSignal
 from PyQt5.QtGui import QFont
 
 from config import DB_DEFAULTS
 from db.baglanti import get_connection
-from db.sorgular import bom_listesi
-from logic.excel import maliyet_excel_kaydet, maliyet_excel_kaydet_excel_bom
+from db.sorgular import (
+    bom_listesi, proje_kodlari_listele,
+    uretim_emri_masraf_maliyet_onizle,
+    uretim_emri_masraf_maliyet_uygula,
+)
+from logic.excel import (
+    maliyet_excel_kaydet, maliyet_excel_kaydet_excel_bom,
+    proje_fark_excel_kaydet, proje_fark_excel_bom_kaydet,
+)
 from ui.stil import etiket, buton, ayrac
 
 _BTN_AKTIF = (
@@ -93,6 +104,78 @@ class MaliyetHesaplamaThread(QThread):
             self.hata.emit(str(e))
 
 
+# ── Proje Fiili Satınalma Fark Raporu Thread'i ───────────────────────────────
+
+class ProjeFarkThread(QThread):
+    """
+    Seçilen mamül(ler)in teorik BOM maliyetini, verilen proje koduna fiilen
+    kesilmiş alış faturalarıyla karşılaştırıp Excel'e döker. Aynı sinyal
+    deseni: ilerleme(str) / bitti(str, float, float) / hata(str).
+    """
+    ilerleme = pyqtSignal(str)
+    bitti    = pyqtSignal(str, float, float)   # (dosya, teorik_toplam, fiili_toplam)
+    hata     = pyqtSignal(str)
+
+    def __init__(self, dosya: str, conn, secili_mamul_kodlari: list[str],
+                 proje_kodu: str, metod: str, bas: str, bit: str,
+                 bas_g: str, bit_g: str):
+        super().__init__()
+        self.dosya                = dosya
+        self.conn                 = conn
+        self.secili_mamul_kodlari = secili_mamul_kodlari
+        self.proje_kodu           = proje_kodu
+        self.metod                = metod
+        self.bas, self.bit, self.bas_g, self.bit_g = bas, bit, bas_g, bit_g
+
+    def run(self):
+        try:
+            teorik, fiili = proje_fark_excel_kaydet(
+                self.dosya, self.conn, self.secili_mamul_kodlari, self.proje_kodu,
+                self.metod, self.bas, self.bit, self.bas_g, self.bit_g,
+                ilerleme_cb=self.ilerleme.emit,
+            )
+            self.bitti.emit(self.dosya, teorik, fiili)
+        except Exception as e:
+            logging.error("ProjeFarkThread hatasi: %s", e)
+            self.hata.emit(str(e))
+
+
+# ── Proje Fiili Satınalma Fark Raporu (Excel Taslak BOM) Thread'i ───────────
+
+class ProjeFarkExcelBomThread(QThread):
+    """
+    CEO ERP'ye henüz işlenmemiş, Excel'de hazırlanmış taslak bir mamül ağacının
+    teorik maliyetini bir proje koduna fiilen kesilmiş alış faturalarıyla
+    karşılaştırıp Excel'e döker. Sinyal deseni: ilerleme(str) /
+    bitti(str, float, float, list) / hata(str).
+    """
+    ilerleme = pyqtSignal(str)
+    bitti    = pyqtSignal(str, float, float, list)   # (dosya, teorik, fiili, uyarilar)
+    hata     = pyqtSignal(str)
+
+    def __init__(self, dosya: str, conn, excel_bom_dosyasi: str, proje_kodu: str,
+                 metod: str, bas: str, bit: str, bas_g: str, bit_g: str):
+        super().__init__()
+        self.dosya              = dosya
+        self.conn                = conn
+        self.excel_bom_dosyasi   = excel_bom_dosyasi
+        self.proje_kodu          = proje_kodu
+        self.metod               = metod
+        self.bas, self.bit, self.bas_g, self.bit_g = bas, bit, bas_g, bit_g
+
+    def run(self):
+        try:
+            teorik, fiili, uyarilar = proje_fark_excel_bom_kaydet(
+                self.dosya, self.conn, self.excel_bom_dosyasi, self.proje_kodu,
+                self.metod, self.bas, self.bit, self.bas_g, self.bit_g,
+                ilerleme_cb=self.ilerleme.emit,
+            )
+            self.bitti.emit(self.dosya, teorik, fiili, uyarilar)
+        except Exception as e:
+            logging.error("ProjeFarkExcelBomThread hatasi: %s", e)
+            self.hata.emit(str(e))
+
+
 # ── Excel Taslak BOM Hesaplama Thread'i ──────────────────────────────────────
 
 class ExcelBomMaliyetThread(QThread):
@@ -134,6 +217,164 @@ class ExcelBomMaliyetThread(QThread):
             self.hata.emit(str(e))
 
 
+# ── Üretim emri masraf maliyeti ──────────────────────────────────────────────
+
+def _masraf_maliyet_yedekle(veri: dict) -> Path:
+    """Uygulama öncesi masraf ön izlemesini kullanıcı verisine yedekler."""
+    kok = Path(os.environ.get("LOCALAPPDATA", str(Path.home())))
+    klasor = kok / "CEO ERP Araclar" / "yedekler"
+    klasor.mkdir(parents=True, exist_ok=True)
+    kod = (
+        veri["emir"]["kodu"]
+        .replace("\\", "_")
+        .replace("/", "_")
+        .replace(":", "_")
+    )
+    yol = klasor / (
+        f"masraf_maliyet_yedek_{kod}_"
+        f"{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+    )
+    icerik = {
+        "olusturma": datetime.now().isoformat(timespec="seconds"),
+        "emir": veri["emir"],
+        "satirlar": veri["satirlar"],
+    }
+    yol.write_text(json.dumps(icerik, ensure_ascii=False, indent=2), encoding="utf-8")
+    return yol
+
+
+class UretimMasrafMaliyetThread(QThread):
+    """Üretim emri masraf maliyeti ön izleme/uygulama iş parçacığı."""
+
+    bitti = pyqtSignal(object)
+    hata = pyqtSignal(str)
+
+    def __init__(self, conn, emir_kodu: str, uygula: bool = False):
+        super().__init__()
+        self.conn = conn
+        self.emir_kodu = emir_kodu
+        self.uygula = uygula
+
+    def run(self):
+        try:
+            if not self.uygula:
+                self.bitti.emit(
+                    uretim_emri_masraf_maliyet_onizle(self.conn, self.emir_kodu)
+                )
+                return
+
+            onizleme = uretim_emri_masraf_maliyet_onizle(self.conn, self.emir_kodu)
+            uygun = [
+                satir for satir in onizleme["satirlar"]
+                if satir["durum"] == "uygulanabilir"
+            ]
+            yedek = str(_masraf_maliyet_yedekle(onizleme)) if uygun else None
+            sonuc = uretim_emri_masraf_maliyet_uygula(self.conn, self.emir_kodu)
+            sonuc["yedek"] = yedek
+            self.bitti.emit(sonuc)
+        except Exception as e:
+            logging.error("Üretim emri masraf maliyet işlemi hatası: %s", e)
+            self.hata.emit(str(e))
+
+
+class UretimMasrafMaliyetDialog(QDialog):
+    """Masraf maliyetlerini uygulamadan önce satır bazında gösterir."""
+
+    uygula_istendi = pyqtSignal()
+
+    def __init__(self, veri: dict, parent=None):
+        super().__init__(parent)
+        self.veri = veri
+        self.setWindowTitle("Üretim Emri Masraf Maliyetleri")
+        self.resize(940, 470)
+        self._kur()
+
+    @staticmethod
+    def _sayi(deger, ondalik=6):
+        return "-" if deger is None else f"{deger:,.{ondalik}f}"
+
+    def _kur(self):
+        ana = QVBoxLayout(self)
+        bilgi = self.veri["emir"]
+        baslik = QLabel(
+            f"{bilgi['kodu']}  —  {bilgi['aciklama']}\n"
+            f"Üretim emri tarihi: {bilgi['tarih']} | "
+            "Fiyat kaynağı: bu tarihe kadar olan son masraf alış hareketi"
+        )
+        baslik.setStyleSheet("color:#37474f;font-size:12px;padding:4px;")
+        baslik.setWordWrap(True)
+        ana.addWidget(baslik)
+
+        self.tablo = QTableWidget(0, 7)
+        self.tablo.setHorizontalHeaderLabels([
+            "Masraf Kodu", "İhtiyaç", "Mevcut Tutar", "Son Alış Tarihi",
+            "Birim Fiyat", "Yeni Tutar", "Durum",
+        ])
+        self.tablo.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.tablo.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.tablo.setAlternatingRowColors(True)
+        self.tablo.verticalHeader().setVisible(False)
+        basliklar = self.tablo.horizontalHeader()
+        basliklar.setSectionResizeMode(0, QHeaderView.Stretch)
+        basliklar.setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        basliklar.setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        basliklar.setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        basliklar.setSectionResizeMode(4, QHeaderView.ResizeToContents)
+        basliklar.setSectionResizeMode(5, QHeaderView.ResizeToContents)
+        basliklar.setSectionResizeMode(6, QHeaderView.ResizeToContents)
+
+        uygulanabilir = 0
+        toplam = 0.0
+        for satir in self.veri["satirlar"]:
+            row = self.tablo.rowCount()
+            self.tablo.insertRow(row)
+            degerler = [
+                f"{satir['kod']} — {satir['ad']}",
+                self._sayi(satir["talep_miktari"]),
+                self._sayi(satir["eski_tutar"]),
+                satir["kaynak_tarihi"] or "-",
+                self._sayi(satir["birim_fiyat"]),
+                self._sayi(satir["yeni_tutar"]),
+                {
+                    "uygulanabilir": "Uygulanacak",
+                    "fiyat_yok": "Fiyat bulunamadı — değiştirilmez",
+                    "zaten_dolu": "Zaten dolu — değiştirilmez",
+                }.get(satir["durum"], satir["durum"]),
+            ]
+            for col, deger in enumerate(degerler):
+                self.tablo.setItem(row, col, QTableWidgetItem(str(deger)))
+            if satir["durum"] == "uygulanabilir":
+                uygulanabilir += 1
+                toplam += satir["yeni_tutar"] or 0.0
+        ana.addWidget(self.tablo, stretch=1)
+
+        self.durum = QLabel(
+            f"{uygulanabilir} satır uygulanabilir | "
+            f"Yeni toplam: {toplam:,.6f} ₺"
+        )
+        self.durum.setStyleSheet("color:#455a64;font-size:11px;padding:4px;")
+        ana.addWidget(self.durum)
+
+        butonlar = QHBoxLayout()
+        butonlar.addStretch()
+        self.uygula_btn = QPushButton(
+            f"💾  Fiyatı bulunanları uygula ({uygulanabilir})"
+        )
+        self.uygula_btn.setEnabled(uygulanabilir > 0)
+        self.uygula_btn.setStyleSheet(_BTN_AKTIF if uygulanabilir else _BTN_PASIF)
+        self.uygula_btn.clicked.connect(self.uygula_istendi.emit)
+        kapat = QPushButton("Kapat")
+        kapat.clicked.connect(self.reject)
+        butonlar.addWidget(self.uygula_btn)
+        butonlar.addWidget(kapat)
+        ana.addLayout(butonlar)
+
+    def uygulama_basladi(self):
+        self.uygula_btn.setEnabled(False)
+        self.uygula_btn.setText("⏳  Uygulanıyor…")
+        self.durum.setText("Masraf tutarları üretim emrine yazılıyor…")
+
+
 # ── Maliyet Sayfası ───────────────────────────────────────────────────────────
 
 class MaliyetSayfasi(QWidget):
@@ -143,6 +384,10 @@ class MaliyetSayfasi(QWidget):
         self._mamul_satirlari: dict[str, tuple] = {}
         self._thread: MaliyetHesaplamaThread | None = None
         self._excel_thread: ExcelBomMaliyetThread | None = None
+        self._proje_fark_thread: ProjeFarkThread | None = None
+        self._proje_fark_excel_thread: ProjeFarkExcelBomThread | None = None
+        self._masraf_maliyet_thread: UretimMasrafMaliyetThread | None = None
+        self._masraf_maliyet_dialog: UretimMasrafMaliyetDialog | None = None
         self._spinner_timer: QTimer | None = None
         self._spinner_sayac = 0
         self._kur()
@@ -226,6 +471,67 @@ class MaliyetSayfasi(QWidget):
             self.metod_grup.addButton(rb)
             yg.addWidget(rb)
         lay.addWidget(yontem_grup)
+
+        # Proje fiili satınalma karşılaştırması
+        proje_grup = QGroupBox("Proje Fiili Satınalma Karşılaştırması")
+        pg = QVBoxLayout(proje_grup)
+        pg.setSpacing(8)
+        self.proje_kodu_kutusu = QLineEdit()
+        self.proje_kodu_kutusu.setPlaceholderText("Proje Kodu (CEO ERP)")
+        pg.addWidget(self.proje_kodu_kutusu)
+        proje_hint = QLabel(
+            "Soldaki mamül listesinden karşılaştırılacak mamül(ler)i işaretleyin "
+            "(1 birim üretim varsayılır). Teorik BOM maliyeti ile bu proje "
+            "koduna kesilmiş alış faturaları kalem bazında karşılaştırılıp "
+            "Excel'e dökülür."
+        )
+        proje_hint.setStyleSheet("color:#9e9e9e;font-size:10px;")
+        proje_hint.setWordWrap(True)
+        pg.addWidget(proje_hint)
+        self.proje_fark_btn = QPushButton("📊  Proje Fark Raporu (Excel)")
+        self.proje_fark_btn.setStyleSheet(_BTN_EXCEL_AKTIF)
+        self.proje_fark_btn.setToolTip(
+            "Soldaki mamül listesinden CEO ERP'ye zaten işlenmiş (reçetesi "
+            "yüklü) mamülleri seçip karşılaştırır."
+        )
+        self.proje_fark_btn.clicked.connect(self._proje_fark_hesapla)
+        pg.addWidget(self.proje_fark_btn)
+
+        self.proje_fark_excel_btn = QPushButton("📄  Excel BOM ile Fark Raporu")
+        self.proje_fark_excel_btn.setStyleSheet(_BTN_EXCEL_AKTIF)
+        self.proje_fark_excel_btn.setToolTip(
+            "CEO ERP'ye henüz işlenmemiş, Excel'de hazırlanmış taslak bir "
+            "mamül ağacı seçip aynı proje koduyla karşılaştırır."
+        )
+        self.proje_fark_excel_btn.clicked.connect(self._proje_fark_excelden_hesapla)
+        pg.addWidget(self.proje_fark_excel_btn)
+
+        lay.addWidget(proje_grup)
+
+        # Üretim emri masraf maliyetleri
+        masraf_grup = QGroupBox("Üretim Emri Masraf Maliyetleri")
+        masraf_lay = QVBoxLayout(masraf_grup)
+        masraf_lay.setSpacing(8)
+        self.masraf_emir_kodu = QLineEdit()
+        self.masraf_emir_kodu.setPlaceholderText("Üretim emri kodu (örn. ŞİRKET.1862026-8)")
+        masraf_lay.addWidget(self.masraf_emir_kodu)
+        masraf_hint = QLabel(
+            "Masraf kartlarının üretim emri tarihine kadar bulunan son alış fiyatlarını "
+            "ön izleyip, fiyatı bulunan ve mevcut tutarı sıfır olan satırlara aktarır."
+        )
+        masraf_hint.setStyleSheet("color:#9e9e9e;font-size:10px;")
+        masraf_hint.setWordWrap(True)
+        masraf_lay.addWidget(masraf_hint)
+        self.masraf_maliyet_btn = QPushButton("🔧  Üretim Emri Masraflarını Doldur")
+        self.masraf_maliyet_btn.setStyleSheet(_BTN_EXCEL_AKTIF)
+        self.masraf_maliyet_btn.setToolTip(
+            "Masraf maliyetlerini satır bazında ön izler; onaydan sonra yalnızca "
+            "üretim emri Tutar alanlarını günceller."
+        )
+        self.masraf_maliyet_btn.clicked.connect(self._masraf_maliyet_hesapla)
+        masraf_lay.addWidget(self.masraf_maliyet_btn)
+        lay.addWidget(masraf_grup)
+
         lay.addStretch()
 
         self.excelden_hesapla_btn = QPushButton("📄  Excel'den Maliyet Hesapla")
@@ -404,6 +710,18 @@ class MaliyetSayfasi(QWidget):
             "padding:8px 16px;font-weight:bold;font-size:12px;"
         )
 
+        # Proje kodu serbest metin olarak girildiğinden ufak bir yazım farkı
+        # (ör. "ADLAS MKE" yerine gerçek kod "ADLAS-MKE") sessizce 0 satırla
+        # sonuçlanabilir. Gerçek kodlardan otomatik tamamlama listesi kurar.
+        try:
+            proje_kodlari = proje_kodlari_listele(conn)
+            tamamlayici = QCompleter(proje_kodlari, self.proje_kodu_kutusu)
+            tamamlayici.setCaseSensitivity(Qt.CaseInsensitive)
+            tamamlayici.setFilterMode(Qt.MatchContains)
+            self.proje_kodu_kutusu.setCompleter(tamamlayici)
+        except Exception as e:
+            logging.warning("Proje kodlari listelenemedi (otomatik tamamlama devre disi): %s", e)
+
     def _bom_hatasi(self, mesaj: str):
         logging.error("Maliyet baglanti hatasi: %s", mesaj)
         self.yukleme_bar.setVisible(False)
@@ -460,6 +778,113 @@ class MaliyetSayfasi(QWidget):
             if btn_w.isChecked():
                 return btn_w.property("metod")
         return "WA"
+
+    # ── Üretim emri masraf maliyeti akışı ────────────────────────────────────
+    def _masraf_maliyet_hesapla(self):
+        if self.conn is None:
+            QMessageBox.warning(
+                self, "Bağlantı Yok",
+                "Önce 'Bağlan ve Mamülleri Yükle' butonuna basın.",
+            )
+            return
+
+        emir_kodu = self.masraf_emir_kodu.text().strip()
+        if not emir_kodu:
+            QMessageBox.warning(self, "Eksik Bilgi", "Lütfen bir üretim emri kodu girin.")
+            return
+
+        self.masraf_maliyet_btn.setEnabled(False)
+        self.masraf_maliyet_btn.setStyleSheet(_BTN_PASIF)
+        self.masraf_maliyet_btn.setText("⏳  Masraflar taranıyor…")
+        self.durum_lbl.setText("Üretim emri masraf fiyatları sorgulanıyor…")
+        self.durum_lbl.setStyleSheet("color:#1565c0;font-size:11px;padding:4px;")
+
+        self._masraf_maliyet_thread = UretimMasrafMaliyetThread(
+            self.conn, emir_kodu, uygula=False
+        )
+        self._masraf_maliyet_thread.bitti.connect(self._masraf_onizleme_bitti)
+        self._masraf_maliyet_thread.hata.connect(self._masraf_maliyet_hatasi)
+        self._masraf_maliyet_thread.start()
+
+    def _masraf_butonunu_serbest_birak(self):
+        self.masraf_maliyet_btn.setEnabled(True)
+        self.masraf_maliyet_btn.setText("🔧  Üretim Emri Masraflarını Doldur")
+        self.masraf_maliyet_btn.setStyleSheet(_BTN_EXCEL_AKTIF)
+
+    def _masraf_onizleme_bitti(self, veri: dict):
+        self._masraf_butonunu_serbest_birak()
+        satirlar = veri.get("satirlar", [])
+        if not satirlar:
+            QMessageBox.information(
+                self, "Masraf Satırı Yok",
+                f"{veri['emir']['kodu']} üretim emrinde masraf satırı bulunamadı.",
+            )
+            return
+
+        self._masraf_maliyet_dialog = UretimMasrafMaliyetDialog(veri, self)
+        self._masraf_maliyet_dialog.uygula_istendi.connect(
+            self._masraf_maliyet_uygula
+        )
+        self._masraf_maliyet_dialog.exec_()
+        self._masraf_maliyet_dialog = None
+
+    def _masraf_maliyet_uygula(self):
+        dialog = self._masraf_maliyet_dialog
+        if dialog is None:
+            return
+        cevap = QMessageBox.question(
+            dialog,
+            "Masraf Tutarlarını Uygula",
+            "Fiyatı bulunan masraf satırlarının toplam tutarları üretim emrine yazılsın mı?\n\n"
+            "Fatura, irsaliye ve stok hareketleri değiştirilmeyecek.",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if cevap != QMessageBox.Yes:
+            return
+
+        dialog.uygulama_basladi()
+        self.masraf_maliyet_btn.setEnabled(False)
+        self.masraf_maliyet_btn.setStyleSheet(_BTN_PASIF)
+        self._masraf_maliyet_thread = UretimMasrafMaliyetThread(
+            self.conn, dialog.veri["emir"]["kodu"], uygula=True
+        )
+        self._masraf_maliyet_thread.bitti.connect(self._masraf_uygulama_bitti)
+        self._masraf_maliyet_thread.hata.connect(self._masraf_maliyet_hatasi)
+        self._masraf_maliyet_thread.start()
+
+    def _masraf_uygulama_bitti(self, sonuc: dict):
+        guncellenen = sonuc.get("guncellenen", [])
+        atlanan = sonuc.get("atlanan", [])
+        yedek = sonuc.get("yedek")
+        if self._masraf_maliyet_dialog is not None:
+            self._masraf_maliyet_dialog.accept()
+        self._masraf_butonunu_serbest_birak()
+        self.durum_lbl.setText(
+            f"Masraf maliyeti uygulandı: {len(guncellenen)} satır güncellendi."
+        )
+        self.durum_lbl.setStyleSheet("color:#2e7d32;font-size:11px;padding:4px;")
+
+        mesaj = f"{len(guncellenen)} masraf satırı üretim emrine yazıldı."
+        if atlanan:
+            mesaj += f"\n{len(atlanan)} satır başka bir işlem nedeniyle atlandı."
+        if yedek:
+            mesaj += f"\n\nYedek dosyası:\n{yedek}"
+        QMessageBox.information(self, "Başarılı", mesaj)
+
+    def _masraf_maliyet_hatasi(self, mesaj: str):
+        self._masraf_butonunu_serbest_birak()
+        if self._masraf_maliyet_dialog is not None:
+            self._masraf_maliyet_dialog.uygula_btn.setEnabled(True)
+            self._masraf_maliyet_dialog.uygula_btn.setText(
+                "💾  Fiyatı bulunanları uygula"
+            )
+            self._masraf_maliyet_dialog.durum.setText(
+                "İşlem başarısız oldu; değişiklik yapılmadı."
+            )
+        self.durum_lbl.setText("Masraf maliyeti işlemi başarısız.")
+        self.durum_lbl.setStyleSheet("color:#c62828;font-size:11px;padding:4px;")
+        QMessageBox.critical(self, "Hata", f"Masraf maliyeti işlemi başarısız:\n{mesaj}")
 
     # ── Hesaplama akışı ──────────────────────────────────────────────────────
     def _hesapla(self):
@@ -569,6 +994,148 @@ class MaliyetSayfasi(QWidget):
             mesaj += f"\n\n⚠ {len(uyarilar)} uyarı:\n{ornekler}{fazla}"
         QMessageBox.information(self, "Basarili", mesaj)
 
+    # ── Proje fiili satınalma fark raporu akışı ──────────────────────────────
+    def _proje_fark_hesapla(self):
+        if self.conn is None:
+            QMessageBox.warning(self, "Bağlantı Yok",
+                                "Önce 'Bağlan ve Mamülleri Yükle' butonuna basın.")
+            return
+
+        proje_kodu = self.proje_kodu_kutusu.text().strip()
+        if not proje_kodu:
+            QMessageBox.warning(self, "Eksik Bilgi", "Lütfen bir Proje Kodu girin.")
+            return
+
+        secili_kodlar = [kod for kod, (cb, spin, *_) in self._mamul_satirlari.items()
+                         if cb.isChecked()]
+        if not secili_kodlar:
+            QMessageBox.warning(self, "Uyarı",
+                                "Lütfen karşılaştırılacak en az bir mamül seçin "
+                                "(soldaki mamül listesinden işaretleyin).")
+            return
+
+        bas_dt = self._parse(self.tarih_bas.text())
+        bit_dt = self._parse(self.tarih_bit.text())
+        if bas_dt is None or bit_dt is None:
+            QMessageBox.warning(self, "Eksik Bilgi",
+                                "Lütfen geçerli bir başlangıç ve bitiş tarihi girin.\n\n"
+                                "Format: GG.AA.YYYY  (örn: 01.01.2025)")
+            return
+
+        dosya, _ = QFileDialog.getSaveFileName(
+            self, "Excel Kaydet",
+            f"proje_fark_{proje_kodu}_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
+            "Excel Dosyası (*.xlsx)")
+        if not dosya:
+            return
+
+        metod = self._secili_metod()
+        bas   = bas_dt.strftime("%Y-%m-%d")
+        bit   = bit_dt.strftime("%Y-%m-%d")
+        bas_g = bas_dt.strftime("%d.%m.%Y")
+        bit_g = bit_dt.strftime("%d.%m.%Y")
+
+        self._ui_kilitle()
+        self._proje_fark_thread = ProjeFarkThread(
+            dosya, self.conn, secili_kodlar, proje_kodu, metod, bas, bit, bas_g, bit_g
+        )
+        self._proje_fark_thread.ilerleme.connect(self._ilerleme_guncelle)
+        self._proje_fark_thread.bitti.connect(self._proje_fark_bitti)
+        self._proje_fark_thread.hata.connect(self._hesaplama_hatasi)
+        self._proje_fark_thread.finished.connect(self._ui_serbest_birak)
+        self._proje_fark_thread.start()
+
+    def _proje_fark_bitti(self, dosya: str, teorik: float, fiili: float):
+        fark = fiili - teorik
+        self.durum_lbl.setText(f"Proje fark raporu olusturuldu: {dosya}")
+        self.durum_lbl.setStyleSheet("color:#2e7d32;font-size:11px;padding:4px;")
+        mesaj = (
+            f"Proje fark raporu kaydedildi:\n{dosya}\n\n"
+            f"Teorik (BOM): {teorik:,.2f} ₺\n"
+            f"Fiili (Satınalma): {fiili:,.2f} ₺\n"
+            f"Fark: {fark:,.2f} ₺"
+        )
+        if fiili == 0.0:
+            mesaj += (
+                "\n\n⚠ Bu proje kodu için CEO ERP'de hiç satınalma hareketi "
+                "bulunamadı. Proje kodunu kontrol edin — kutuya yazarken "
+                "açılan otomatik tamamlama listesinden seçmeniz önerilir "
+                "(ör. 'ADLAS MKE' değil, gerçek kod 'ADLAS-MKE' olabilir)."
+            )
+        QMessageBox.information(self, "Basarili", mesaj)
+
+    # ── Proje fiili satınalma fark raporu akışı (Excel taslak BOM) ───────────
+    def _proje_fark_excelden_hesapla(self):
+        if self.conn is None:
+            QMessageBox.warning(self, "Bağlantı Yok",
+                                "Önce 'Bağlan ve Mamülleri Yükle' butonuna basın.")
+            return
+
+        proje_kodu = self.proje_kodu_kutusu.text().strip()
+        if not proje_kodu:
+            QMessageBox.warning(self, "Eksik Bilgi", "Lütfen bir Proje Kodu girin.")
+            return
+
+        kaynak, _ = QFileDialog.getOpenFileName(
+            self, "Taslak Mamül Ağacı Excel'i Seç", "",
+            "Excel Dosyası (*.xlsx *.xls)")
+        if not kaynak:
+            return
+
+        bas_dt = self._parse(self.tarih_bas.text())
+        bit_dt = self._parse(self.tarih_bit.text())
+        if bas_dt is None or bit_dt is None:
+            QMessageBox.warning(self, "Eksik Bilgi",
+                                "Lütfen geçerli bir başlangıç ve bitiş tarihi girin.\n\n"
+                                "Format: GG.AA.YYYY  (örn: 01.01.2025)")
+            return
+
+        dosya, _ = QFileDialog.getSaveFileName(
+            self, "Excel Kaydet",
+            f"proje_fark_excelbom_{proje_kodu}_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
+            "Excel Dosyası (*.xlsx)")
+        if not dosya:
+            return
+
+        metod = self._secili_metod()
+        bas   = bas_dt.strftime("%Y-%m-%d")
+        bit   = bit_dt.strftime("%Y-%m-%d")
+        bas_g = bas_dt.strftime("%d.%m.%Y")
+        bit_g = bit_dt.strftime("%d.%m.%Y")
+
+        self._ui_kilitle()
+        self._proje_fark_excel_thread = ProjeFarkExcelBomThread(
+            dosya, self.conn, kaynak, proje_kodu, metod, bas, bit, bas_g, bit_g
+        )
+        self._proje_fark_excel_thread.ilerleme.connect(self._ilerleme_guncelle)
+        self._proje_fark_excel_thread.bitti.connect(self._proje_fark_excelden_bitti)
+        self._proje_fark_excel_thread.hata.connect(self._hesaplama_hatasi)
+        self._proje_fark_excel_thread.finished.connect(self._ui_serbest_birak)
+        self._proje_fark_excel_thread.start()
+
+    def _proje_fark_excelden_bitti(self, dosya: str, teorik: float, fiili: float,
+                                    uyarilar: list):
+        fark = fiili - teorik
+        self.durum_lbl.setText(f"Proje fark raporu olusturuldu: {dosya}")
+        self.durum_lbl.setStyleSheet("color:#2e7d32;font-size:11px;padding:4px;")
+        mesaj = (
+            f"Proje fark raporu kaydedildi:\n{dosya}\n\n"
+            f"Teorik (BOM): {teorik:,.2f} ₺\n"
+            f"Fiili (Satınalma): {fiili:,.2f} ₺\n"
+            f"Fark: {fark:,.2f} ₺"
+        )
+        if fiili == 0.0:
+            mesaj += (
+                "\n\n⚠ Bu proje kodu için CEO ERP'de hiç satınalma hareketi "
+                "bulunamadı. Proje kodunu kontrol edin — kutuya yazarken "
+                "açılan otomatik tamamlama listesinden seçmeniz önerilir."
+            )
+        if uyarilar:
+            ornekler = "\n".join(f"• {u}" for u in uyarilar[:10])
+            fazla = f"\n… ve {len(uyarilar) - 10} uyarı daha" if len(uyarilar) > 10 else ""
+            mesaj += f"\n\n⚠ {len(uyarilar)} uyarı (rapordaki 'Uyarılar' sayfasına bakın):\n{ornekler}{fazla}"
+        QMessageBox.information(self, "Basarili", mesaj)
+
     # ── UI durum yönetimi ────────────────────────────────────────────────────
     def _ui_kilitle(self):
         """Hesaplama süresince butonları devre dışı bırakır, spinner başlatır."""
@@ -577,6 +1144,12 @@ class MaliyetSayfasi(QWidget):
         self.hesapla_btn.setText("⏳  Hesaplanıyor.")
         self.excelden_hesapla_btn.setEnabled(False)
         self.excelden_hesapla_btn.setStyleSheet(_BTN_PASIF)
+        self.proje_fark_btn.setEnabled(False)
+        self.proje_fark_btn.setStyleSheet(_BTN_PASIF)
+        self.proje_fark_excel_btn.setEnabled(False)
+        self.proje_fark_excel_btn.setStyleSheet(_BTN_PASIF)
+        self.masraf_maliyet_btn.setEnabled(False)
+        self.masraf_maliyet_btn.setStyleSheet(_BTN_PASIF)
         self.durum_lbl.setText("Hesaplama başlatıldı, lütfen bekleyin...")
         self.durum_lbl.setStyleSheet("color:#1565c0;font-size:11px;padding:4px;")
         self._spinner_sayac = 0
@@ -603,6 +1176,11 @@ class MaliyetSayfasi(QWidget):
         self.hesapla_btn.setStyleSheet(_BTN_AKTIF)
         self.excelden_hesapla_btn.setEnabled(True)
         self.excelden_hesapla_btn.setStyleSheet(_BTN_EXCEL_AKTIF)
+        self.proje_fark_btn.setEnabled(True)
+        self.proje_fark_btn.setStyleSheet(_BTN_EXCEL_AKTIF)
+        self.proje_fark_excel_btn.setEnabled(True)
+        self.proje_fark_excel_btn.setStyleSheet(_BTN_EXCEL_AKTIF)
+        self._masraf_butonunu_serbest_birak()
 
     def _hesaplama_bitti(self, dosya: str):
         self.durum_lbl.setText(f"Rapor olusturuldu: {dosya}")

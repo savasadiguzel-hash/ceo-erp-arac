@@ -2,12 +2,15 @@ from datetime import datetime
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QGroupBox, QLabel, QPushButton, QFileDialog, QMessageBox,
 )
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, pyqtSignal
 from logic.excel import baglama_excel_kaydet
 from ui.stil import etiket
 
 
 class RaporSayfasi(QWidget):
+    geri = pyqtSignal()
+    eslestirmeye_don = pyqtSignal()
+
     def __init__(self):
         super().__init__()
         self.sonuclar = []
@@ -28,8 +31,8 @@ class RaporSayfasi(QWidget):
         excel_grup = QGroupBox("Excel Raporu (.xlsx)")
         excel_grup.setMaximumWidth(540)
         el = QVBoxLayout(excel_grup)
-        bilgi = QLabel("Tek sayfa: stok kodu, fatura sayısı, birim fiyat, tedarikçi, atanan mamül.\n"
-                       "Bağlananlar yeşil — atlandılar sarı renkte gösterilir.")
+        bilgi = QLabel("Tek sayfa: kart ve alış bilgileri, atanan mamül, reçete grubu ve miktarı.\n"
+                       "Bağlananlar yeşil, henüz bağlanmayanlar sarı renkte gösterilir.")
         bilgi.setStyleSheet("color:#555;font-size:11px;")
         self.excel_btn = QPushButton("📥  Excel Olarak Kaydet (.xlsx)")
         self.excel_btn.setStyleSheet("background:#2e7d32;color:white;border-radius:6px;"
@@ -42,24 +45,32 @@ class RaporSayfasi(QWidget):
         geri_btn = QPushButton("← Ana Menü")
         geri_btn.setStyleSheet("background:#eceff1;color:#37474f;border:1px solid #cfd8dc;"
                                "border-radius:6px;padding:8px 20px;font-weight:bold;")
-        geri_btn.clicked.connect(lambda: self.window().sayfa_gec(0))
+        geri_btn.clicked.connect(self.geri.emit)
+
+        eslestir_btn = QPushButton("← Eşleştirmeye Dön")
+        eslestir_btn.setStyleSheet("background:#e8eaf6;color:#3949ab;border-radius:6px;"
+                                    "padding:8px 20px;font-weight:bold;")
+        eslestir_btn.clicked.connect(self.eslestirmeye_don.emit)
 
         ana.addStretch()
-        ana.addWidget(etiket("İşlem Tamamlandı ✓", "#1a237e", size=15), alignment=Qt.AlignCenter)
+        ana.addWidget(etiket("Tarama Raporu", "#1a237e", size=15), alignment=Qt.AlignCenter)
         ana.addWidget(self.ozet_grup,  alignment=Qt.AlignCenter)
         ana.addWidget(excel_grup,      alignment=Qt.AlignCenter)
+        ana.addWidget(eslestir_btn,    alignment=Qt.AlignCenter)
         ana.addWidget(geri_btn,        alignment=Qt.AlignCenter)
         ana.addStretch()
 
     def goster(self, sonuclar: list):
         self.sonuclar = sonuclar
         baglandi = sum(1 for s in sonuclar if s["islem"] == "Bağlandı")
+        bekleyen = sum(1 for s in sonuclar if s["islem"] == "Bekliyor")
         atlandi  = sum(1 for s in sonuclar if s["islem"] == "Atlandı")
         self.ozet_lbl.setText(
-            f"<b>İşlenen stok:</b>  {len(sonuclar)}<br>"
+            f"<b>Taranan kart:</b>  {len(sonuclar)}<br>"
             f"<b>Mamül ağacına bağlanan:</b>  "
             f"<span style='color:#2e7d32;font-weight:bold;'>{baglandi}</span><br>"
-            f"<b>Atlanan / bekleyen:</b>  <span style='color:#e65100;'>{atlandi}</span>"
+            f"<b>Bekleyen:</b>  <span style='color:#e65100;'>{bekleyen}</span><br>"
+            f"<b>Atlanan:</b>  {atlandi}"
         )
 
     def _excel_kaydet(self):

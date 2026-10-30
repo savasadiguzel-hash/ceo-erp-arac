@@ -6,8 +6,9 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from db.sorgular import (tarama_istatistikleri,
-                         recetesiz_stok_hareketleri, recetesiz_faturali_ozet,
-                         stok_birimleri_getir, stok_guncel_bakiyeleri)
+                         recetesiz_stok_hareketleri, recetesiz_masraf_hareketleri,
+                         recetesiz_faturali_ozet, stok_birimleri_getir,
+                         masraf_birimleri_getir, stok_guncel_bakiyeleri)
 from logic.excel import kesisim_excel_kaydet
 from ui.stil import etiket, buton
 
@@ -34,14 +35,24 @@ class TaramaThread(QThread):
                     time.sleep(0.016)
                 self.adim.emit(mesaj, toplam, toplam)
                 time.sleep(0.15)
-            hareketler = recetesiz_stok_hareketleri(self.conn, self.bas_tarih, self.bit_tarih)
+            hareketler = (
+                recetesiz_stok_hareketleri(self.conn, self.bas_tarih, self.bit_tarih)
+                + recetesiz_masraf_hareketleri(self.conn, self.bas_tarih, self.bit_tarih)
+            )
             ozet = recetesiz_faturali_ozet(hareketler, self.yontem)
-            stok_kodlari = [s['stok_kodu'] for s in ozet]
-            birimler  = stok_birimleri_getir(self.conn, stok_kodlari)
+            stok_kodlari = [s['stok_kodu'] for s in ozet if s['kart_tipi'] == 'stok']
+            masraf_kodlari = [s['stok_kodu'] for s in ozet if s['kart_tipi'] == 'masraf']
+            birimler = stok_birimleri_getir(self.conn, stok_kodlari)
+            masraf_birimler = masraf_birimleri_getir(self.conn, masraf_kodlari)
             bakiyeler = stok_guncel_bakiyeleri(self.conn, stok_kodlari)
             for s in ozet:
-                s['birim']        = birimler.get(s['stok_kodu'], 'ADET')
-                s['guncel_miktar'] = bakiyeler.get(s['stok_kodu'], 0.0)
+                kod = s['stok_kodu']
+                if s['kart_tipi'] == 'stok':
+                    s['birim'] = birimler.get(kod, 'Bilinmiyor')
+                    s['guncel_miktar'] = bakiyeler.get(kod, 0.0)
+                else:
+                    s['birim'] = masraf_birimler.get(kod, 'Bilinmiyor')
+                    s['guncel_miktar'] = None
             self.bitti.emit(ozet, hareketler)
         except Exception as e:
             import traceback
@@ -49,7 +60,7 @@ class TaramaThread(QThread):
 
 
 class TaramaSayfasi(QWidget):
-    bitti = pyqtSignal(list)   # kesişim stokları
+    bitti = pyqtSignal(list)   # kesişim kartları
 
     def __init__(self):
         super().__init__()
@@ -92,6 +103,7 @@ class TaramaSayfasi(QWidget):
 
         self.devam_btn = buton("Eşleştirmeye Geç  →", "#3f51b5", min_w=210, h=42)
         self.devam_btn.hide()
+        self.devam_btn.clicked.connect(lambda: self.bitti.emit(self._stoklar))
 
         self.excel_btn = buton("📥  Excel'e Aktar (.xlsx)", "#2e7d32", min_w=210, h=42)
         self.excel_btn.hide()
@@ -141,16 +153,18 @@ class TaramaSayfasi(QWidget):
         self.bar.setValue(100)
         self.adim_lbl.setText("Analiz tamamlandı.")
         self.sayac.setText("")
+        stok_adet = sum(s.get('kart_tipi') == 'stok' for s in stoklar)
+        masraf_adet = len(stoklar) - stok_adet
         self.ozet_lbl.setText(
-            f"<b>Reçete/mamül ağacında olmayan stoklar:</b>  {len(stoklar):,}<br>"
-            f"<b>Bunlardan alış faturası olanlar (kesişim):</b>  "
-            f"<span style='color:#c62828;font-weight:bold;'>{len(stoklar)}</span>"
+            f"<b>Alış belgeli, reçeteye bağlanmamış kart:</b> "
+            f"<span style='color:#c62828;font-weight:bold;'>{len(stoklar):,}</span><br>"
+            f"<b>Stok kartı:</b> {stok_adet:,} &nbsp; "
+            f"<b>Masraf kartı:</b> {masraf_adet:,}"
         )
         self.ozet_grup.show()
         self.buton_satiri.show()
         self.devam_btn.show()
         self.excel_btn.show()
-        self.devam_btn.clicked.connect(lambda: self.bitti.emit(stoklar))
 
     def _hata(self, mesaj: str):
         self.adim_lbl.setText("Hata oluştu.")

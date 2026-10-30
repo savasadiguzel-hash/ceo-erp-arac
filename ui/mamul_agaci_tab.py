@@ -35,6 +35,9 @@ class MamulAgaciTab(QWidget):
         self.s1.devam.connect(self._tarama_baslat)
         self.s2.bitti.connect(self._eslestirme_baslat)
         self.s3.rapor_signal.connect(self._rapor_goster)
+        self.s3.geri_signal.connect(lambda: self.stack.setCurrentIndex(1))
+        self.s4.eslestirmeye_don.connect(lambda: self.stack.setCurrentIndex(2))
+        self.s4.geri.connect(self.sifirla)
 
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
@@ -75,8 +78,9 @@ class MamulAgaciTab(QWidget):
     def _eslestirme_baslat(self, stoklar: list):
         conn = self._baglanti_al()
         self.stack.setCurrentIndex(2)
-        self.s3.baslat(conn, stoklar)
-        self.durum_guncelle.emit(f"{len(stoklar)} bağlantısız stok bulundu.")
+        if self.s3.conn is not conn or self.s3.stoklar is not stoklar:
+            self.s3.baslat(conn, stoklar)
+        self.durum_guncelle.emit(f"{len(stoklar)} bağlantısız kart bulundu.")
 
     def _rapor_goster(self, sonuclar: list):
         self.s4.goster(sonuclar)

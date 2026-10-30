@@ -1,7 +1,9 @@
 """tab_stok_hazirla.py — Stok Hazırlık sekmesi (9. sekme).
 
 Hammadde / Yarımamül / Mamül / Reçete kodlarını QTreeWidget ağacında
-organize eder; CEO ERP'de kontrol eder, eksik kartları açar, BOM bağlantılarını yazar.
+organize eder; Excel yüklemesinde kart bilgilerini önce CEO ERP'den doldurur,
+eksik bilgileri Excel'den tamamlar; CEO ERP'de kontrol eder, eksik kartları açar,
+BOM bağlantılarını yazar.
 """
 from __future__ import annotations
 
@@ -24,6 +26,7 @@ from PyQt5.QtCore import Qt, QThread, QTimer, pyqtSignal, QRectF
 from PyQt5.QtGui import QColor, QTextCursor, QPen, QBrush, QPainterPath, QPainter
 
 from config import DB_DEFAULTS
+from db.sorgular import stok_hazirlik_kod_bilgileri
 
 try:
     from sw import erp_handler as _erp
@@ -85,6 +88,14 @@ _ROLE_ORG_MIKTAR = Qt.UserRole + 2   # float: yüklendiğindeki orijinal Miktar
 _BASLIK_ATLA    = {"tip", "kod", "stok kodu", "stok adi", "stok adı",
                    "ad", "adi", "adı", "type", "code", "name", "seviye"}
 
+_EXCEL_BASLIK_KOD    = {"stok kodu", "kod", "code", "stok code"}
+_EXCEL_BASLIK_AD     = {"stok adi", "stok adı", "ad", "adi", "adı", "name"}
+_EXCEL_BASLIK_ADI2   = {"stok adi-2", "stok adı-2", "adi2", "adı2", "name 2"}
+_EXCEL_BASLIK_TIP    = {"tip", "type"}
+_EXCEL_BASLIK_SEVIYE = {"seviye", "level", "derinlik", "depth"}
+_EXCEL_BASLIK_MIKTAR = {"miktar", "adet", "quantity", "qty"}
+_EXCEL_BASLIK_BIRIM  = {"birim", "unit"}
+
 _C_MEVCUT = QColor("#c8e6c9")
 _C_YENI   = QColor("#ffe0b2")
 _C_TAMAM  = QColor("#a5d6a7")
@@ -100,6 +111,63 @@ _COL_ADI2   = 3
 _COL_MIKTAR = 4
 _COL_BIRIM  = 5
 _COL_DURUM  = 6
+
+
+def _excel_baslik_norm(v) -> str:
+    """Excel başlıklarını Türkçe karakter ve boşluk farklarından arındırır."""
+    if v is None:
+        return ""
+    return str(v).strip().translate(str.maketrans({
+        "İ": "i", "I": "i", "ı": "i", "Ş": "s", "ş": "s",
+        "Ğ": "g", "ğ": "g", "Ü": "u", "ü": "u", "Ö": "o",
+        "ö": "o", "Ç": "c", "ç": "c",
+    })).casefold()
+
+
+def _excel_baslik_haritasi(header_row) -> dict:
+    """Başlık adına göre Excel sütunlarını bulur."""
+    harita = {}
+    for i, value in enumerate(header_row or []):
+        baslik = _excel_baslik_norm(value)
+        if not baslik:
+            continue
+        if "kod_col" not in harita and baslik in _EXCEL_BASLIK_KOD:
+            harita["kod_col"] = i
+        elif "ad_col" not in harita and baslik in _EXCEL_BASLIK_AD:
+            harita["ad_col"] = i
+        elif "adi2_col" not in harita and baslik in _EXCEL_BASLIK_ADI2:
+            harita["adi2_col"] = i
+        elif "tip_col" not in harita and baslik in _EXCEL_BASLIK_TIP:
+            harita["tip_col"] = i
+        elif "seviye_col" not in harita and baslik in _EXCEL_BASLIK_SEVIYE:
+            harita["seviye_col"] = i
+        elif "miktar_col" not in harita and baslik in _EXCEL_BASLIK_MIKTAR:
+            harita["miktar_col"] = i
+        elif "birim_col" not in harita and baslik in _EXCEL_BASLIK_BIRIM:
+            harita["birim_col"] = i
+    return harita
+
+
+def _excel_tip_ipucu(tip: str) -> str | None:
+    """Excel tipini kart kaynağı ipucuna çevirir: 'stok'/'masraf'/None."""
+    n = _excel_baslik_norm(tip)
+    if n in {"masraf", "gider", "expense"}:
+        return "masraf"
+    if n in {"stok", "stok karti", "stok kartı", "bilesen", "bileşen",
+             "hammadde", "yarimamül", "yarimamul", "mamul", "reçete",
+             "recete", "component"}:
+        return "stok"
+    return None
+
+
+def _excel_tip_uygula(tip: str, varsayilan: str = "Hammadde") -> str:
+    """ERP kartı bulunamadığında Excel tipini UI tiplerinden birine eşler."""
+    if tip in _TIP_SECENEKLER:
+        return tip
+    ipucu = _excel_tip_ipucu(tip)
+    if ipucu == "masraf":
+        return "Masraf"
+    return varsayilan
 
 
 # ── Delegate'ler ──────────────────────────────────────────────────────────────
@@ -184,8 +252,13 @@ class _BirimleriYukleThread(QThread):
         try:
             conn = _baglan()
             cur  = conn.cursor()
-            cur.execute("SELECT Id, Adi FROM StokBirim WHERE Aktif = 1 ORDER BY Adi")
-            birimler = {str(r[1]): str(r[0]) for r in cur.fetchall()}
+            cur.execute("""
+                SELECT StokBirimAciklama, StokBirimID
+                FROM [CeoCommon].dbo.StokBirim
+                WHERE Aktif = 1
+                ORDER BY StokBirimAciklama
+            """)
+            birimler = {str(r[0]): str(r[1]) for r in cur.fetchall()}
             conn.close()
             self.bitti.emit(birimler or {"ADET": _ADET_GUID})
         except Exception:
@@ -1283,6 +1356,186 @@ class StokHazirlaTab(QWidget):
 
     # ── Excel yükleme ─────────────────────────────────────────────────────────
 
+    def _excel_parentleri_isaretle(self, satirlar: list[dict]):
+        """Seviye bilgisine göre hangi Excel satırlarının ebeveyn olduğunu işaretler."""
+        yigin: list[tuple[int, dict]] = []
+        for satir in satirlar:
+            satir["is_parent"] = False
+            try:
+                derinlik = int(satir.get("depth", 0))
+            except (TypeError, ValueError):
+                derinlik = 0
+            while yigin and yigin[-1][0] >= derinlik:
+                yigin.pop()
+            if yigin:
+                yigin[-1][1]["is_parent"] = True
+            yigin.append((derinlik, satir))
+
+    def _excel_erp_zenginlestir(self, satirlar: list[dict]) -> dict:
+        """Excel satırlarının kart bilgilerini CEO ERP'den öncelikli doldurur."""
+        kodlar = [str(s.get("kod") or "").strip() for s in satirlar]
+        kodlar = [k for k in kodlar if k]
+        bilgiler = {}
+        sorgu_hatasi = ""
+        conn = None
+        try:
+            conn = _baglan()
+            bilgiler = stok_hazirlik_kod_bilgileri(conn, kodlar)
+        except Exception as e:
+            sorgu_hatasi = str(e)
+        finally:
+            if conn is not None:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+
+        # StokBirim sorgusu {adi: guid} döndürür; ERP kartından gelen GUID'i
+        # kullanıcıya gösterilecek birim adına çevirmek için ters harita kur.
+        birim_adlari = {
+            str(guid).strip().casefold(): str(adi)
+            for adi, guid in self._birimler.items()
+        }
+        ozet = {
+            "erp": 0, "excel": 0, "belirsiz": 0,
+            "tip_farki": 0, "sorgu_hatasi": sorgu_hatasi,
+        }
+
+        for satir in satirlar:
+            kod = str(satir.get("kod") or "").strip()
+            bilgi = bilgiler.get(kod) or bilgiler.get(kod.casefold())
+            excel_tip = str(satir.get("tip") or "").strip()
+            ipucu = _excel_tip_ipucu(excel_tip)
+            stok = bilgi.get("stok") if bilgi else None
+            masraf = bilgi.get("masraf") if bilgi else None
+
+            kaynak = None
+            kaynak_tipi = None
+            if stok and masraf:
+                kaynak_tipi = "masraf" if ipucu == "masraf" else "stok"
+                kaynak = masraf if kaynak_tipi == "masraf" else stok
+                ozet["belirsiz"] += 1
+            elif stok:
+                kaynak = stok
+                kaynak_tipi = "stok"
+            elif masraf:
+                kaynak = masraf
+                kaynak_tipi = "masraf"
+
+            if kaynak is None:
+                yeni_tip = _excel_tip_uygula(excel_tip)
+                # ERP'de kart yoksa, Excel ağacındaki ebeveynlik bilgisi
+                # hazırlanan yeni reçetenin tipini belirler.
+                if yeni_tip != "Masraf" and satir.get("is_parent"):
+                    yeni_tip = "Mamül" if int(satir.get("depth", 0) or 0) == 0 else "Reçete"
+                satir["tip"] = yeni_tip
+                ozet["excel"] += 1
+                continue
+
+            ozet["erp"] += 1
+            # ERP'deki alan doluysa ERP, boşsa aynı alanın Excel karşılığı.
+            satir["adi"] = (kaynak.get("adi") or satir.get("adi") or kod).strip()
+            satir["adi2"] = (kaynak.get("adi2") or satir.get("adi2") or "").strip()
+            guid = str(kaynak.get("birim_guid") or "").strip()
+            if guid and guid.casefold() in birim_adlari:
+                satir["birim"] = birim_adlari[guid.casefold()]
+            elif not str(satir.get("birim") or "").strip():
+                satir["birim"] = "ADET"
+
+            if kaynak_tipi == "masraf":
+                yeni_tip = "Masraf"
+            else:
+                # ERP'de doğrudan Mamül/Yarımamül alanı yoktur. Aktif reçete
+                # ve Excel ağacındaki konum, Stok Hazırlık tipine çevrilir.
+                receteli = bool(bilgi and bilgi.get("receteli"))
+                if receteli or satir.get("is_parent"):
+                    yeni_tip = "Mamül" if int(satir.get("depth", 0) or 0) == 0 else "Reçete"
+                else:
+                    yeni_tip = _excel_tip_uygula(excel_tip)
+            if yeni_tip != _excel_tip_uygula(excel_tip):
+                ozet["tip_farki"] += 1
+            satir["tip"] = yeni_tip
+
+        if sorgu_hatasi:
+            self._log_yaz("[Excel/ERP] Kart taraması yapılamadı; Excel değerleri kullanıldı: "
+                          + sorgu_hatasi)
+        else:
+            self._log_yaz(
+                "[Excel/ERP] %d satır ERP'den zenginleştirildi · %d satır Excel'den kaldı"
+                " · %d tip dönüştürüldü · %d çift kart belirsizliği" % (
+                    ozet["erp"], ozet["excel"], ozet["tip_farki"], ozet["belirsiz"]))
+        return ozet
+
+    def _excel_kayitlarini_agaca_ekle(self, satirlar: list[dict]) -> int:
+        """Normalize edilmiş Excel satırlarını QTreeWidget ağacına ekler."""
+        parent_stack: list[tuple[int, QTreeWidgetItem]] = []
+        eklendi = 0
+        for satir in satirlar:
+            try:
+                depth = int(satir.get("depth", 0) or 0)
+            except (TypeError, ValueError):
+                depth = 0
+            item = self._item_olustur(
+                tip=satir.get("tip", "Hammadde"),
+                kod=satir.get("kod", ""),
+                adi=satir.get("adi", ""),
+                adi2=satir.get("adi2", ""),
+                miktar=satir.get("miktar", "1"),
+                birim=satir.get("birim", "ADET"),
+            )
+            while parent_stack and parent_stack[-1][0] >= depth:
+                parent_stack.pop()
+            if parent_stack:
+                parent_stack[-1][1].addChild(item)
+                parent_stack[-1][1].setExpanded(True)
+            else:
+                self._agac.addTopLevelItem(item)
+            parent_stack.append((depth, item))
+            eklendi += 1
+        return eklendi
+
+    def _excel_yukle_baslikli(self, all_rows: list, harita: dict) -> int:
+        """Başlıkları bilinen Excel tablolarını (örn. Fark Detayı) okur."""
+        ilk_index = next((i for i, row in enumerate(all_rows)
+                          if row and any(v is not None and str(v).strip() for v in row)), None)
+        if ilk_index is None:
+            return 0
+
+        def _metin(row, key, varsayilan=""):
+            col = harita.get(key)
+            if col is None or col >= len(row) or row[col] is None:
+                return varsayilan
+            return str(row[col]).strip()
+
+        satirlar = []
+        for row in all_rows[ilk_index + 1:]:
+            if not row or not any(v is not None and str(v).strip() for v in row):
+                continue
+            kod = _metin(row, "kod_col")
+            if not kod:
+                continue
+            tip = _metin(row, "tip_col", "Hammadde")
+            miktar = _metin(row, "miktar_col", "1") or "1"
+            try:
+                depth = int(float(_metin(row, "seviye_col", "0") or "0"))
+            except (TypeError, ValueError):
+                depth = 0
+            satirlar.append({
+                "depth": depth,
+                "tip": tip,
+                "kod": kod,
+                "adi": _metin(row, "ad_col", kod) or kod,
+                "adi2": _metin(row, "adi2_col"),
+                "miktar": miktar,
+                "birim": _metin(row, "birim_col", "ADET") or "ADET",
+            })
+
+        self._excel_parentleri_isaretle(satirlar)
+        self._excel_erp_zenginlestir(satirlar)
+        eklendi = self._excel_kayitlarini_agaca_ekle(satirlar)
+        self._log_yaz("Excel: %d satır eklendi (başlıklı format)" % eklendi)
+        return eklendi
+
     def _excel_yukle(self):
         path, _ = QFileDialog.getOpenFileName(
             self, "Excel Dosyası Seç", str(BASE),
@@ -1297,9 +1550,10 @@ class StokHazirlaTab(QWidget):
             all_rows = list(ws.iter_rows(values_only=True))
             wb.close()
 
-            # ── ADLASMKE format tespiti (Stok Kodu başlıklı flat liste) ────
+            # ── Başlıkla tanınan formatlar ──────────────────────────────────
             _ilk = next((r for r in all_rows if any(v for v in r)), None)
-            if _ilk and str(_ilk[0] or "").strip().lower() == "stok kodu":
+            harita = _excel_baslik_haritasi(_ilk) if _ilk else {}
+            if (_ilk and _excel_baslik_norm(_ilk[0]) == "stok kodu"):
                 eklendi = self._excel_yukle_adlasmke(all_rows)
                 self._log_yaz("Excel: %d satır eklendi (%s)" % (eklendi, Path(path).name))
                 self.durum_guncelle.emit("Stok Hazırlık: %d satır yüklendi." % eklendi)
@@ -1307,8 +1561,15 @@ class StokHazirlaTab(QWidget):
                 self._bom_btn.setEnabled(bool(self._bom_nodes))
                 return
 
-            eklendi = 0
-            parent_stack: list = []   # [(depth, QTreeWidgetItem)]
+            if "kod_col" in harita:
+                eklendi = self._excel_yukle_baslikli(all_rows, harita)
+                self._log_yaz("Excel: %d satır eklendi (%s)" % (eklendi, Path(path).name))
+                self.durum_guncelle.emit("Stok Hazırlık: %d satır yüklendi." % eklendi)
+                self._bom_nodes = self._agac_verisi_al()
+                self._bom_btn.setEnabled(bool(self._bom_nodes))
+                return
+
+            satirlar = []
 
             for row in all_rows:
                 if not row:
@@ -1365,22 +1626,15 @@ class StokHazirlaTab(QWidget):
                 if not kod_val:
                     continue
 
-                item = self._item_olustur(
-                    tip=tip_val, kod=kod_val, adi=adi_val,
-                    adi2=adi2_val, miktar=miktar_val, birim=birim_val)
+                satirlar.append({
+                    "depth": depth, "tip": tip_val, "kod": kod_val,
+                    "adi": adi_val, "adi2": adi2_val,
+                    "miktar": miktar_val, "birim": birim_val,
+                })
 
-                while parent_stack and parent_stack[-1][0] >= depth:
-                    parent_stack.pop()
-
-                if parent_stack:
-                    parent_item = parent_stack[-1][1]
-                    parent_item.addChild(item)
-                    parent_item.setExpanded(True)
-                else:
-                    self._agac.addTopLevelItem(item)
-
-                parent_stack.append((depth, item))
-                eklendi += 1
+            self._excel_parentleri_isaretle(satirlar)
+            self._excel_erp_zenginlestir(satirlar)
+            eklendi = self._excel_kayitlarini_agaca_ekle(satirlar)
 
             self._log_yaz("Excel: %d satır eklendi (%s)" % (eklendi, Path(path).name))
             self.durum_guncelle.emit("Stok Hazırlık: %d satır yüklendi." % eklendi)
@@ -1397,8 +1651,7 @@ class StokHazirlaTab(QWidget):
         Baz kodu olan kodlar 'Reçete' tipiyle işaretlenir.
         Sütun: A=Stok Kodu, B=Stok Adı, C=Stok Adı-2, D=Gerçek Bakiye (görmezden gel), E=Birim.
         """
-        rows: list = []
-        all_codes: set = set()
+        rows: list[dict] = []
 
         for row in all_rows:
             if not row:
@@ -1409,26 +1662,39 @@ class StokHazirlaTab(QWidget):
             adi   = str(row[1] if len(row) > 1 and row[1] is not None else "").strip()
             adi2  = str(row[2] if len(row) > 2 and row[2] is not None else "").strip()
             birim = str(row[4] if len(row) > 4 and row[4] is not None else "").strip() or "ADET"
-            rows.append((col_a, adi, adi2, birim))
-            all_codes.add(col_a)
+            rows.append({
+                "kod": col_a, "adi": adi, "adi2": adi2,
+                "birim": birim, "miktar": "1", "tip": "Hammadde",
+                "depth": 0,
+            })
 
         # ':XX' sonek taşıyan HER kod → baz kodunun çocuğu (baz listede olsa da olmasa da)
         parent_of: dict = {}
-        for kod, *_ in rows:
+        for row in rows:
+            kod = row["kod"]
             if ":" in kod:
                 parent_of[kod] = kod.rsplit(":", 1)[0]
 
         has_children: set = set(parent_of.values())
+        for row in rows:
+            row["is_parent"] = row["kod"] in has_children
+            row["depth"] = 1 if row["kod"] in parent_of else 0
+
+        # ADLASMKE dosyasındaki isim/tip/birim bilgileri de önce ERP kartıyla
+        # zenginleştirilir; yalnızca ERP'de bulunmayan alanlar Excel'de kalır.
+        self._excel_erp_zenginlestir(rows)
         item_map: dict = {}
         eklendi = 0
 
         # Geçiş 1 — üst-düzey öğeler (çocuk OLMAYAN kodlar, dosya sırasıyla)
-        for kod, adi, adi2, birim in rows:
+        for row in rows:
+            kod, adi, adi2, birim = (row["kod"], row["adi"],
+                                     row["adi2"], row["birim"])
             if kod in parent_of:
                 continue
-            tip = "Reçete" if kod in has_children else "Hammadde"
             item = self._item_olustur(
-                tip=tip, kod=kod, adi=adi, adi2=adi2, miktar="1", birim=birim,
+                tip=row.get("tip", "Hammadde"), kod=kod, adi=adi, adi2=adi2,
+                miktar=row.get("miktar", "1"), birim=birim,
             )
             self._agac.addTopLevelItem(item)
             if kod in has_children:
@@ -1437,7 +1703,9 @@ class StokHazirlaTab(QWidget):
             eklendi += 1
 
         # Geçiş 2 — çocuk öğeler; baz kodu listede yoksa sanal Reçete ebeveyni oluştur
-        for kod, adi, adi2, birim in rows:
+        for row in rows:
+            kod, adi, adi2, birim = (row["kod"], row["adi"],
+                                     row["adi2"], row["birim"])
             if kod not in parent_of:
                 continue
             base = parent_of[kod]
@@ -1450,7 +1718,8 @@ class StokHazirlaTab(QWidget):
                 item_map[base] = vitem
                 eklendi += 1
             child = self._item_olustur(
-                tip="Hammadde", kod=kod, adi=adi, adi2=adi2, miktar="1", birim=birim,
+                tip=row.get("tip", "Hammadde"), kod=kod, adi=adi, adi2=adi2,
+                miktar=row.get("miktar", "1"), birim=birim,
             )
             item_map[base].addChild(child)
             item_map[kod] = child

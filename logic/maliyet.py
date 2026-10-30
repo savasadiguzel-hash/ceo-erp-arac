@@ -16,7 +16,10 @@ Performans notu
 `excel.py` gibi çok mamül hesaplayan üst katmanlar BOM'u bir kez çekip
 tüm çağrılara aynı dict'i geçerek gereksiz DB round-trip'lerini önler.
 """
-from db.sorgular import stok_fiyat_gecmisi, masraf_fiyat_gecmisi, bom_listesi
+from db.sorgular import (
+    stok_fiyat_gecmisi, masraf_fiyat_gecmisi, bom_listesi,
+    proje_satinalma_hareketleri,
+)
 
 
 def _metod_uygula(fiyatlar: list[dict], metod: str, bas: str, bit: str) -> float:
@@ -182,4 +185,128 @@ def mamul_maliyet_hesapla(
 
     sonuc = (satirlar, toplam)
     _cache[mamul_key] = sonuc
+    return sonuc
+
+
+def proje_fiili_maliyet(
+    conn, proje_kodu: str, bas: str, bit: str,
+) -> tuple[list[dict], float]:
+    """
+    Bir projeye fiilen kesilmiş alış faturası/irsaliyesi satırlarını ve alış
+    iadelerini bileşen kodu (bil_kod) bazında gruplayıp net toplam harcamayı
+    döner. İade satırları negatif miktar/tutar olarak gelir.
+
+    Ham satırlar proje_satinalma_hareketleri()'nden gelir (satır bazında
+    ProjeId filtresiyle); burada sadece kod bazında toplanır — aynı kalem
+    birden fazla faturada geçebilir. Alış iadeleri aynı kodun net miktar ve
+    tutarından düşülür.
+
+    Döner: tuple[list[dict], float]
+           satirlar: [{"bil_kod","bil_ad","tip","miktar","tutar",
+                       "birim_fiyat_ort","fatura_sayisi"}, ...]
+           toplam:   tüm satırların tutar toplamı
+    """
+    hareketler = proje_satinalma_hareketleri(conn, proje_kodu, bas, bit)
+
+    gruplar: dict[str, dict] = {}
+    for h in hareketler:
+        g = gruplar.setdefault(h["bil_kod"], {
+            "bil_kod": h["bil_kod"], "bil_ad": h["bil_ad"], "tip": h["tip"],
+            "miktar": 0.0, "tutar": 0.0, "hareket_idler": set(),
+        })
+        g["miktar"] += h["miktar"]
+        g["tutar"]  += h["tutar"]
+        g["hareket_idler"].add(h["hareket_id"])
+
+    satirlar = []
+    toplam = 0.0
+    for g in gruplar.values():
+        birim_fiyat_ort = g["tutar"] / g["miktar"] if g["miktar"] else 0.0
+        satirlar.append({
+            "bil_kod":         g["bil_kod"],
+            "bil_ad":          g["bil_ad"],
+            "tip":             g["tip"],
+            "miktar":          g["miktar"],
+            "tutar":           g["tutar"],
+            "birim_fiyat_ort": birim_fiyat_ort,
+            "fatura_sayisi":   len(g["hareket_idler"]),
+        })
+        toplam += g["tutar"]
+
+    satirlar.sort(key=lambda x: x["bil_kod"])
+    return satirlar, toplam
+
+
+def proje_fark_raporu(
+    bom_satirlari: list[dict], satinalma_satirlari: list[dict],
+    tolerans: float = 0.01,
+) -> list[dict]:
+    """
+    Teorik BOM satırlarını (mamul_maliyet_hesapla'dan, birden fazla mamül
+    seçildiyse önceden bil_kod bazında toplanmış olmalı) fiili satınalma
+    satırlarıyla (proje_fiili_maliyet'ten) bil_kod üzerinden birleştirir.
+
+    Sadece ortak kodlar değil, iki tarafın kod kümesinin BİRLEŞİMİ (union)
+    üzerinden gidilir — bir tarafta olup diğerinde olmayan kalemler de
+    (fazladan satın alınan / BOM'da olup faturası bu projeye işlenmemiş
+    kalemler) rapora düşer.
+
+    Not: BOM satırlarındaki "tip" alanı görüntü etiketidir (BİLEŞEN/MASRAF/
+    MASRAF (OTO)); satınalma satırlarındaki "tip" ise 'stok'/'masraf'
+    kaynak ayrımıdır — burada sadece görüntüleme amaçlı taşınır, eşleştirme
+    anahtarı her koşulda bil_kod'dur.
+
+    Her eleman:
+      bil_kod, bil_ad, tip,
+      bom_miktar, bom_tutar,
+      satinalma_miktar, satinalma_tutar,
+      fark_miktar, fark_tutar,
+      durum: "Sadece Satınalmada" | "Sadece BOM'da" | "Miktar Farkı" | "Eşleşiyor"
+    """
+    bom_map: dict[str, dict] = {}
+    for b in bom_satirlari:
+        g = bom_map.setdefault(b["bil_kod"], {
+            "bil_ad": b["bil_ad"], "tip": b["tip"], "miktar": 0.0, "tutar": 0.0,
+        })
+        g["miktar"] += b["bom_miktar"]
+        g["tutar"]  += b["satir_top"]
+
+    sat_map = {s["bil_kod"]: s for s in satinalma_satirlari}
+
+    tum_kodlar = set(bom_map) | set(sat_map)
+    sonuc = []
+    for kod in tum_kodlar:
+        b = bom_map.get(kod)
+        s = sat_map.get(kod)
+
+        bil_ad     = (b["bil_ad"] if b else None) or (s["bil_ad"] if s else "")
+        tip        = (b["tip"] if b else None) or (s["tip"] if s else "")
+        bom_miktar = b["miktar"] if b else 0.0
+        bom_tutar  = b["tutar"]  if b else 0.0
+        sat_miktar = s["miktar"] if s else 0.0
+        sat_tutar  = s["tutar"]  if s else 0.0
+
+        fark_miktar = sat_miktar - bom_miktar
+        fark_tutar  = sat_tutar  - bom_tutar
+
+        if b is None:
+            durum = "Sadece Satınalmada"
+        elif s is None:
+            durum = "Sadece BOM'da"
+        elif abs(fark_miktar) > tolerans:
+            durum = "Miktar Farkı"
+        else:
+            durum = "Eşleşiyor"
+
+        sonuc.append({
+            "bil_kod": kod, "bil_ad": bil_ad, "tip": tip,
+            "bom_miktar": bom_miktar, "bom_tutar": bom_tutar,
+            "satinalma_miktar": sat_miktar, "satinalma_tutar": sat_tutar,
+            "fark_miktar": fark_miktar, "fark_tutar": fark_tutar,
+            "durum": durum,
+        })
+
+    # Görünürlük için önce farklı/eşleşmeyen kalemler, sonra koda göre
+    _oncelik = {"Sadece Satınalmada": 0, "Sadece BOM'da": 1, "Miktar Farkı": 2, "Eşleşiyor": 3}
+    sonuc.sort(key=lambda x: (_oncelik[x["durum"]], x["bil_kod"]))
     return sonuc

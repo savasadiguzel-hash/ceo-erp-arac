@@ -3,6 +3,7 @@ Tüm veri erişimi bu modülden yapılır. SQL Server ile çalışır.
 Kural: her sorgu cursor_ctx(conn) ile açılır; finally bloğu cursor'ı kesinlikle kapatır.
 """
 import logging
+from decimal import Decimal, ROUND_HALF_UP
 from db.baglanti import cursor_ctx
 
 
@@ -46,20 +47,58 @@ def tarama_istatistikleri(conn) -> list[tuple[str, int]]:
         cur.execute("SELECT COUNT(*) FROM UretimReceteHatPlani")
         n = cur.fetchone()[0] or 0
         adimlar.append(("Reçeteler inceleniyor…", max(n, 1)))
+    with cursor_ctx(conn) as cur:
+        cur.execute("SELECT COUNT(*) FROM StokMasrafKarti WHERE Aktif=1")
+        n = cur.fetchone()[0] or 0
+        adimlar.append(("Masraf kartları taranıyor…", max(n, 1)))
     return adimlar
 
 
 def mamul_agaci_listesi(conn) -> list[tuple[str, str]]:
-    """[(kod, ad), ...] döner. Aktif reçete/mamülleri listeler."""
+    """
+    [(kod, ad), ...] döner. Aktif reçetesi olan (bizim ürettiğimiz) mamülleri listeler.
+
+    DÜZELTME (2026-09-14): Eskiden `UretimReceteHatPlani.KartId = sk.Id` eşleşmesine
+    bakıyordu. Bu YANLIŞ — HatPlani.KartId, ürünün kendisini değil, o reçetenin
+    alt-montaj/bileşen GRUBUNU temsil eder (bkz. UretimRecete→UretimReceteHatPlani→
+    UretimReceteHatPlaniGirdi hiyerarşisi, ERP-OKUMA.md). Tek-hatlı "basit" reçetelerde
+    HatPlani.KartId tesadüfen ürünün kendi kartına eşitti (self-reference) ama çok-hatlı
+    montaj reçetelerinde (ör. GMP-101-230022 — 5 ayrı hat grubu, hiçbiri kendi kartına
+    referans vermiyor) bu eşleşme hiç oluşmuyor ve ürün tamamen kayboluyordu.
+
+    Doğrusu, `uretim_emir_bom_patlat()`'ın da kullandığı desen: bir StokKarti'nin
+    "mamul" sayılması için `UretimRecete.Kodu = StokKarti.Kodu` eşleşen aktif bir
+    reçete başlığının var olması yeterli ve gerekli — hat planının kaç gruba
+    bölündüğü önemli değil.
+    """
     with cursor_ctx(conn) as cur:
         cur.execute("""
             SELECT DISTINCT sk.Kodu, sk.Adi
             FROM StokKarti sk
-            INNER JOIN UretimReceteHatPlani urhp ON urhp.KartId = sk.Id
+            INNER JOIN UretimRecete ur ON ur.Kodu = sk.Kodu
             WHERE sk.Aktif = 1
+              AND (ur.KullanimDisi IS NULL OR ur.KullanimDisi = 0)
             ORDER BY sk.Kodu
         """)
         return [(r[0], r[1]) for r in cur.fetchall()]
+
+
+def mamul_hat_planlari(conn, mamul_kodu: str) -> list[dict]:
+    """Aktif mamül reçetesindeki seçilebilir hat planlarını döner."""
+    with cursor_ctx(conn) as cur:
+        cur.execute("""
+            SELECT hp.Id, ISNULL(sk.Kodu, ''), ISNULL(sk.Adi, ''), hp.Tipi
+            FROM UretimRecete ur
+            JOIN UretimReceteHatPlani hp ON hp.UretimReceteId = ur.Id
+            LEFT JOIN StokKarti sk ON sk.Id = hp.KartId
+            WHERE ur.Kodu = ?
+              AND (ur.KullanimDisi IS NULL OR ur.KullanimDisi = 0)
+            ORDER BY ur.Id, hp.Id
+        """, mamul_kodu)
+        return [
+            {"id": int(r[0]), "kod": str(r[1]), "ad": str(r[2]), "tip": int(r[3])}
+            for r in cur.fetchall()
+        ]
 
 
 def recetesiz_stok_hareketleri(conn, bas_tarih: str, bit_tarih: str) -> list[dict]:
@@ -69,6 +108,11 @@ def recetesiz_stok_hareketleri(conn, bas_tarih: str, bit_tarih: str) -> list[dic
     Her eleman: stok_kodu, stok_adi, hareket_id, islem_turu, belge_no,
                 tarih (DD.MM.YYYY), tarih_iso (YYYY-MM-DD),
                 miktar, birim_fiyat, tutar, tedarikci
+
+    Faturalaşan irsaliye — mükerrer sayım düzeltmesi: bkz. satis_faturalari()
+    ve proje_satinalma_hareketleri() docstring'leri. Sadece IslemKodu=1
+    (Alış Faturası) VE FaturaId'si BOŞ olan IslemKodu=5 (henüz faturalaşmamış
+    irsaliye) satırları toplanır — aksi hâlde aynı alım iki kez sayılır.
     """
     bas_parts = bas_tarih.split('.')
     bit_parts = bit_tarih.split('.')
@@ -104,7 +148,7 @@ def recetesiz_stok_hareketleri(conn, bas_tarih: str, bit_tarih: str) -> list[dic
                 SELECT DISTINCT KartId FROM UrunAgaciDetay WHERE KartId IS NOT NULL
               )
               AND sk.Aktif = 1
-              AND sh.IslemKodu IN (1, 5)
+              AND (sh.IslemKodu = 1 OR (sh.IslemKodu = 5 AND sh.FaturaId IS NULL))
               AND shd.Turu = 1
               AND shd.BirimFiyat > 0
               AND shd.Miktar > 0
@@ -115,6 +159,7 @@ def recetesiz_stok_hareketleri(conn, bas_tarih: str, bit_tarih: str) -> list[dic
         return [
             {
                 'stok_kodu':   row[0],
+                'kart_tipi':   'stok',
                 'stok_adi':    row[1],
                 'stok_adi2':   row[2],
                 'hareket_id':  int(row[3]),
@@ -131,20 +176,65 @@ def recetesiz_stok_hareketleri(conn, bas_tarih: str, bit_tarih: str) -> list[dic
         ]
 
 
+def recetesiz_masraf_hareketleri(conn, bas_tarih: str, bit_tarih: str) -> list[dict]:
+    """Alış belgesi olan ve hiçbir reçetede girdi olmayan masraf kartları."""
+    bas_g, bas_a, bas_y = bas_tarih.split('.')
+    bit_g, bit_a, bit_y = bit_tarih.split('.')
+    bas_sql = f"{bas_y}-{bas_a}-{bas_g}"
+    bit_sql = f"{bit_y}-{bit_a}-{bit_g}"
+    with cursor_ctx(conn) as cur:
+        cur.execute(f"""
+            SELECT smk.Kodu, smk.Adi, sh.Id,
+                   CASE sh.IslemKodu WHEN 1 THEN 'Alış Faturası'
+                        ELSE 'Alış İrsaliyesi' END,
+                   ISNULL(sh.BelgeSeriNo, '') + ISNULL(CAST(sh.BelgeSiraNo AS VARCHAR(20)), ''),
+                   CONVERT(VARCHAR(10), sh.BelgeTarihi, 104),
+                   CONVERT(VARCHAR(10), sh.BelgeTarihi, 120),
+                   ISNULL(shd.Miktar, 0), ISNULL(shd.BirimFiyat, 0),
+                   ISNULL(shd.Tutar, 0), ISNULL(cmk.Unvani, '')
+            FROM StokMasrafKarti smk
+            JOIN StokHareketDetay shd ON shd.IslemKartId = smk.Id
+            JOIN StokHareket sh ON sh.Id = shd.HareketId
+            LEFT JOIN CariMusteriKarti cmk ON cmk.Id = sh.MusteriKartId
+            WHERE smk.Aktif = 1
+              AND NOT EXISTS (
+                  SELECT 1 FROM UretimReceteHatPlaniGirdi gi
+                  WHERE gi.KartId = smk.Id AND gi.Tipi = 2
+              )
+              AND (sh.IslemKodu = 1 OR (sh.IslemKodu = 5 AND sh.FaturaId IS NULL))
+              AND shd.Turu = 3
+              AND shd.BirimFiyat > 0 AND shd.Miktar > 0
+              AND CAST(sh.BelgeTarihi AS DATE) >= CAST('{bas_sql}' AS DATE)
+              AND CAST(sh.BelgeTarihi AS DATE) <= CAST('{bit_sql}' AS DATE)
+            ORDER BY smk.Kodu, sh.BelgeTarihi, sh.Id
+        """)
+        return [
+            {
+                'kart_tipi': 'masraf', 'stok_kodu': row[0], 'stok_adi': row[1],
+                'stok_adi2': '', 'hareket_id': int(row[2]),
+                'islem_turu': row[3], 'belge_no': row[4],
+                'tarih': row[5], 'tarih_iso': row[6],
+                'miktar': float(row[7]), 'birim_fiyat': float(row[8]),
+                'tutar': float(row[9]), 'tedarikci': row[10],
+            }
+            for row in cur.fetchall()
+        ]
+
+
 def recetesiz_faturali_ozet(hareketler: list[dict], yontem: str) -> list[dict]:
     """
-    Ham hareket listesini stok bazında özetler.
+    Ham hareket listesini kart türü ve koduna göre özetler.
     yontem: 'FIFO' → ilk alış fiyatı, 'LIFO' → son alış fiyatı,
             'WA'   → ağırlıklı ortalama (toplam tutar / toplam miktar)
     """
     from collections import defaultdict
-    gruplar: dict[str, list] = defaultdict(list)
+    gruplar: dict[tuple[str, str], list] = defaultdict(list)
     for h in hareketler:
-        gruplar[h['stok_kodu']].append(h)
+        gruplar[(h.get('kart_tipi', 'stok'), h['stok_kodu'])].append(h)
 
     ozet = []
-    for stok_kodu in sorted(gruplar):
-        grup = gruplar[stok_kodu]
+    for kart_tipi, stok_kodu in sorted(gruplar):
+        grup = gruplar[(kart_tipi, stok_kodu)]
         sirali = sorted(grup, key=lambda x: (x['tarih_iso'], x['hareket_id']))
 
         if yontem == 'FIFO':
@@ -161,6 +251,7 @@ def recetesiz_faturali_ozet(hareketler: list[dict], yontem: str) -> list[dict]:
 
         ozet.append({
             'stok_kodu':   stok_kodu,
+            'kart_tipi':   kart_tipi,
             'stok_adi':    grup[0]['stok_adi'],
             'stok_adi2':   grup[0].get('stok_adi2', ''),
             'fatura_sayisi': len(set(h['hareket_id'] for h in grup)),
@@ -175,7 +266,12 @@ def recetesiz_faturali_ozet(hareketler: list[dict], yontem: str) -> list[dict]:
 def stok_birimleri_getir(conn, stok_kodlari: list) -> dict:
     """
     Stok kodları için birim adlarını döner: {stok_kodu: birim_adi}.
-    StokBirim tablosu yoksa 'ADET' fallback kullanılır.
+
+    CEO ERP'de birim ana tablosu şirket veritabanında değil, ortak
+    ``CeoCommon`` veritabanında tutulur. Şirket veritabanında tablo yoksa
+    eskiden her bilinmeyen GUID'i ADET gösteriyorduk; bu, KG/METRE gibi
+    birimlerin raporda yanlış görünmesine yol açıyordu. Çözülemeyen birimi
+    artık ADET diye etiketlemeyip ``Bilinmiyor`` döndürüyoruz.
     """
     if not stok_kodlari:
         return {}
@@ -193,11 +289,42 @@ def stok_birimleri_getir(conn, stok_kodlari: list) -> dict:
             )
             for row in cur.fetchall():
                 guid_map[row[0]] = str(row[1])
-    # GUID → birim adı çözümlemesi (StokBirim tablosu yoksa fallback ADET)
+    # GUID → birim adı çözümlemesi. Birim ana tablosu CeoCommon'dadır.
     birimler = birimleri_getir(conn)          # {Adi: guid_str}
-    guid_to_adi = {v: k for k, v in birimler.items()}
+    guid_to_adi = {
+        str(v).casefold().strip('{}'): k
+        for k, v in birimler.items()
+    }
     return {
-        kod: (guid_to_adi.get(guid, 'ADET') if guid else 'ADET')
+        kod: (guid_to_adi.get(guid.casefold().strip('{}'), 'Bilinmiyor')
+              if guid else 'Bilinmiyor')
+        for kod, guid in guid_map.items()
+    }
+
+
+def masraf_birimleri_getir(conn, masraf_kodlari: list) -> dict:
+    """Masraf kartlarının birimlerini CeoCommon sözlüğünden çözer."""
+    if not masraf_kodlari:
+        return {}
+    guid_map = {}
+    for i in range(0, len(masraf_kodlari), 500):
+        parca = masraf_kodlari[i:i + 500]
+        yer = ','.join('?' for _ in parca)
+        with cursor_ctx(conn) as cur:
+            cur.execute(
+                f"SELECT Kodu, ISNULL(CONVERT(NVARCHAR(50), StokBirimId), '') "
+                f"FROM StokMasrafKarti WHERE Aktif = 1 AND Kodu IN ({yer})",
+                *parca,
+            )
+            for kod, guid in cur.fetchall():
+                guid_map[kod] = str(guid)
+    guid_to_adi = {
+        str(guid).casefold().strip('{}'): adi
+        for adi, guid in birimleri_getir(conn).items()
+    }
+    return {
+        kod: (guid_to_adi.get(guid.casefold().strip('{}'), 'Bilinmiyor')
+              if guid else 'Bilinmiyor')
         for kod, guid in guid_map.items()
     }
 
@@ -245,51 +372,116 @@ def stok_guncel_bakiyeleri(conn, stok_kodlari: list, tarih: str | None = None) -
     return sonuc
 
 
-def stoku_mamule_bagla(conn, stok_kodu: str, mamul_kodu: str) -> None:
-    """Stoku reçete bileşenlerine ekler (DB güncelleme)."""
-    with cursor_ctx(conn) as cur:
-        # Stok ve mamülün ID'sini bul
-        cur.execute("SELECT Id FROM StokKarti WHERE Kodu = ?", stok_kodu)
-        stok_id_result = cur.fetchone()
-        if not stok_id_result:
-            raise ValueError(f"Stok bulunamadı: {stok_kodu}")
-        stok_id = stok_id_result[0]
+def karti_receteye_bagla(
+    conn, kart_kodu: str, kart_tipi: str, mamul_kodu: str,
+    hat_plani_id: int, miktar: float,
+) -> int:
+    """Tek kart bağlama çağrıları için toplu işlemin bir kartlık sürümü."""
+    return kartlari_receteye_toplu_bagla(
+        conn, [{"kart_kodu": kart_kodu, "kart_tipi": kart_tipi, "miktar": miktar}],
+        mamul_kodu, hat_plani_id,
+    )[0]
 
-        cur.execute("SELECT Id FROM StokKarti WHERE Kodu = ?", mamul_kodu)
-        mamul_id_result = cur.fetchone()
-        if not mamul_id_result:
-            raise ValueError(f"Mamül bulunamadı: {mamul_kodu}")
-        mamul_id = mamul_id_result[0]
 
-        # Mamüle karşılık gelen reçeteyi bul (StokKarti.Id -> UretimReceteHatPlani.KartId)
-        cur.execute(
-            "SELECT DISTINCT ur.Id FROM UretimRecete ur "
-            "JOIN UretimReceteHatPlani urhp ON urhp.UretimReceteId = ur.Id "
-            "WHERE urhp.KartId = ?",
-            mamul_id
-        )
-        recete_result = cur.fetchone()
-        if not recete_result:
-            raise ValueError(f"Mamüle karşılık reçete bulunamadı: {mamul_kodu}")
-        recete_id = recete_result[0]
+def kartlari_receteye_toplu_bagla(
+    conn, kartlar: list[dict], mamul_kodu: str, hat_plani_id: int,
+    ilerleme=None,
+) -> list[int]:
+    """Seçilen kartları mevcut reçete grubuna tek transaction içinde ekler."""
+    kart_tablolari = {
+        'stok': ('StokKarti', 'StokBirim', 1),
+        'masraf': ('StokMasrafKarti', 'StokBirimId', 2),
+    }
+    if not kartlar:
+        raise ValueError("Bağlanacak kart seçilmedi.")
+    if hat_plani_id is None:
+        raise ValueError("Reçete grubu seçilmedi.")
 
-        # Stoku reçete bileşenlerine ekle (UretimReceteHatPlani tablosuna)
-        # Tabloda KartId (bileşen stok), Miktar ve BirimId gerekli
-        cur.execute("""
-            INSERT INTO UretimReceteHatPlani
-            (UretimReceteId, Tipi, KartId, Miktar, BirimId, DepoId, Aciklama)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        """,
-            recete_id,  # UretimReceteId
-            1,          # Tipi = 1 (Stok bileşeni)
-            stok_id,    # KartId = Stok ID'si
-            1.0,        # Miktar = 1 (varsayılan)
-            None,       # BirimId (NULL - sistem birimi kullanacak)
-            None,       # DepoId (NULL - herhangi depo)
-            f"Sistem tarafından {stok_kodu} eklendi"  # Aciklama
-        )
+    hazir = []
+    gorulen = set()
+    for kart in kartlar:
+        kod = str(kart.get('kart_kodu') or '').strip()
+        tip = kart.get('kart_tipi')
+        if not kod or tip not in kart_tablolari:
+            raise ValueError(f"Geçersiz kart kodu veya türü: {kod}")
+        anahtar = (tip, kod.casefold())
+        if anahtar in gorulen:
+            raise ValueError(f"Seçimde yinelenen kart var: {kod}")
+        gorulen.add(anahtar)
+        try:
+            miktar = Decimal(str(kart.get('miktar')))
+        except Exception as exc:
+            raise ValueError(f"Geçerli bir reçete miktarı girin: {kod}") from exc
+        if not miktar.is_finite() or miktar <= 0:
+            raise ValueError(f"Reçete miktarı sıfırdan büyük olmalı: {kod}")
+        hazir.append((kod, tip, miktar))
+
+    girdi_ids = []
+    try:
+        with cursor_ctx(conn) as cur:
+            # Mevcut grubun seçili aktif reçeteye ait olduğunu doğrula ve aynı
+            # reçeteye eşzamanlı toplu bağlamaları transaction boyunca sırala.
+            cur.execute("""
+                SELECT TOP 1 hp.DepoId
+                FROM UretimRecete ur WITH (UPDLOCK, HOLDLOCK)
+                JOIN UretimReceteHatPlani hp ON hp.UretimReceteId = ur.Id
+                WHERE ur.Kodu = ?
+                  AND (ur.KullanimDisi IS NULL OR ur.KullanimDisi = 0)
+                  AND hp.Id = ?
+            """, mamul_kodu, hat_plani_id)
+            hat = cur.fetchone()
+            if not hat:
+                raise ValueError(f"Seçilen hat planı aktif mamüle ait değil: {mamul_kodu}")
+            depo_id = hat[0]
+            if depo_id is None:
+                raise ValueError("Seçilen hat planında depo tanımlı değil.")
+
+            for sira, (kart_kodu, kart_tipi, miktar_deger) in enumerate(hazir, 1):
+                tablo, birim_alani, girdi_tipi = kart_tablolari[kart_tipi]
+                cur.execute(
+                    f"SELECT TOP 1 Id, {birim_alani} FROM {tablo} "
+                    "WHERE Kodu = ? AND Aktif = 1 ORDER BY Id", kart_kodu
+                )
+                kart = cur.fetchone()
+                if not kart:
+                    raise ValueError(f"Aktif {kart_tipi} kartı bulunamadı: {kart_kodu}")
+                kart_id, birim_id = kart
+                if birim_id is None:
+                    raise ValueError(f"Kartta birim tanımlı değil: {kart_kodu}")
+
+                cur.execute("""
+                    SELECT TOP 1 gi.Id
+                    FROM UretimRecete ur
+                    JOIN UretimReceteHatPlani hp ON hp.UretimReceteId = ur.Id
+                    JOIN UretimReceteHatPlaniGirdi gi
+                      ON gi.UretimReceteHatPlaniId = hp.Id
+                    WHERE ur.Kodu = ?
+                      AND (ur.KullanimDisi IS NULL OR ur.KullanimDisi = 0)
+                      AND gi.Tipi = ? AND gi.KartId = ?
+                """, mamul_kodu, girdi_tipi, kart_id)
+                if cur.fetchone():
+                    raise ValueError(f"Kart bu mamülün reçetesinde zaten var: {kart_kodu}")
+
+                cur.execute("""
+                    INSERT INTO UretimReceteHatPlaniGirdi
+                        (UretimReceteHatPlaniId, Tipi, KartId, Miktar,
+                         SabitMiktar, GarantiKapsaminda, BirimId, DepoId)
+                    OUTPUT INSERTED.Id
+                    VALUES (?, ?, ?, ?, 0, 0, ?, ?)
+                """, hat_plani_id, girdi_tipi, kart_id, miktar_deger, birim_id, depo_id)
+                girdi_ids.append(int(cur.fetchone()[0]))
+                if ilerleme is not None:
+                    ilerleme(sira, len(hazir))
         conn.commit()
-        logging.info(f"Stok {stok_kodu} mamül {mamul_kodu} ({recete_id}) bileşenlerine eklendi.")
+    except Exception:
+        conn.rollback()
+        raise
+
+    logging.info(
+        "%s kart mamül %s reçete grubu %s içine bağlandı.",
+        len(girdi_ids), mamul_kodu, hat_plani_id,
+    )
+    return girdi_ids
 
 
 # ── Araç 2: Maliyet Hesaplama ─────────────────────────────────────────────────
@@ -300,6 +492,15 @@ def bom_listesi(conn) -> dict:
     Gerçek bileşenler UretimReceteHatPlaniGirdi tablosunda saklanır.
     UretimReceteHatPlani üst satırdır; Girdi alt tablosu hammadde/parça girdilerini içerir.
     """
+    birim_adlari = {
+        str(guid).casefold().strip('{}'): adi
+        for adi, guid in birimleri_getir(conn).items()
+    }
+
+    def _birim_adi(guid) -> str:
+        temiz = str(guid or '').casefold().strip('{}')
+        return birim_adlari.get(temiz, 'Bilinmiyor') if temiz else 'Bilinmiyor'
+
     with cursor_ctx(conn) as cur:
         cur.execute("""
             SELECT DISTINCT
@@ -307,7 +508,9 @@ def bom_listesi(conn) -> dict:
                 ur.Tanim AS MamulAdi,
                 sk.Kodu  AS BilesenKodu,
                 sk.Adi   AS BilesenAdi,
-                urhpg.Miktar
+                urhpg.Miktar,
+                ISNULL(urhpg.BirimId, sk.StokBirim) AS BilesenBirimId,
+                mamul_sk.StokBirim AS MamulBirimId
             FROM UretimRecete ur
             INNER JOIN UretimReceteHatPlani urhp
                     ON urhp.UretimReceteId = ur.Id
@@ -315,6 +518,8 @@ def bom_listesi(conn) -> dict:
                     ON urhpg.UretimReceteHatPlaniId = urhp.Id
             INNER JOIN StokKarti sk
                     ON sk.Id = urhpg.KartId
+            LEFT JOIN StokKarti mamul_sk
+                    ON mamul_sk.Kodu = ur.Kodu
             WHERE urhpg.KartId IS NOT NULL
               AND sk.Aktif = 1
             ORDER BY ur.Kodu, sk.Kodu
@@ -323,15 +528,20 @@ def bom_listesi(conn) -> dict:
         # Sonuçları organize et; gerçek reçetesi olan mamülleri işaretle
         bom = {}
         gercek_receteli = set()   # UretimReceteHatPlaniGirdi'den gelen mamüller
-        for mamul_kodu, mamul_adi, bilesen_kodu, bilesen_adi, miktar in cur.fetchall():
+        for (mamul_kodu, mamul_adi, bilesen_kodu, bilesen_adi, miktar,
+             bilesen_birim_guid, mamul_birim_guid) in cur.fetchall():
             if mamul_kodu not in bom:
-                bom[mamul_kodu] = {"ad": mamul_adi, "birim": "ADET", "bilesenleri": []}
+                bom[mamul_kodu] = {
+                    "ad": mamul_adi,
+                    "birim": _birim_adi(mamul_birim_guid),
+                    "bilesenleri": [],
+                }
             if not any(b["kod"] == bilesen_kodu for b in bom[mamul_kodu]["bilesenleri"]):
                 bom[mamul_kodu]["bilesenleri"].append({
                     "kod":    bilesen_kodu,
                     "ad":     bilesen_adi,
                     "miktar": float(miktar) if miktar is not None else 1.0,
-                    "birim":  "ADET",
+                    "birim":  _birim_adi(bilesen_birim_guid),
                     "tip":    "stok",
                 })
             gercek_receteli.add(mamul_kodu)
@@ -344,7 +554,9 @@ def bom_listesi(conn) -> dict:
                 ur.Tanim AS MamulAdi,
                 smk.Kodu AS BilesenKodu,
                 smk.Adi  AS BilesenAdi,
-                urhpg.Miktar
+                urhpg.Miktar,
+                ISNULL(urhpg.BirimId, smk.StokBirimId) AS BilesenBirimId,
+                mamul_sk.StokBirim AS MamulBirimId
             FROM UretimRecete ur
             INNER JOIN UretimReceteHatPlani urhp
                     ON urhp.UretimReceteId = ur.Id
@@ -352,20 +564,27 @@ def bom_listesi(conn) -> dict:
                     ON urhpg.UretimReceteHatPlaniId = urhp.Id
             INNER JOIN StokMasrafKarti smk
                     ON smk.Id = urhpg.KartId
+            LEFT JOIN StokKarti mamul_sk
+                    ON mamul_sk.Kodu = ur.Kodu
             WHERE urhpg.KartId IS NOT NULL
               AND urhpg.Tipi = 2
               AND (ur.KullanimDisi IS NULL OR ur.KullanimDisi = 0)
             ORDER BY ur.Kodu, smk.Kodu
         """)
-        for mamul_kodu, mamul_adi, bilesen_kodu, bilesen_adi, miktar in cur.fetchall():
+        for (mamul_kodu, mamul_adi, bilesen_kodu, bilesen_adi, miktar,
+             bilesen_birim_guid, mamul_birim_guid) in cur.fetchall():
             if mamul_kodu not in bom:
-                bom[mamul_kodu] = {"ad": mamul_adi, "birim": "ADET", "bilesenleri": []}
+                bom[mamul_kodu] = {
+                    "ad": mamul_adi,
+                    "birim": _birim_adi(mamul_birim_guid),
+                    "bilesenleri": [],
+                }
             if not any(b["kod"] == bilesen_kodu for b in bom[mamul_kodu]["bilesenleri"]):
                 bom[mamul_kodu]["bilesenleri"].append({
                     "kod":    bilesen_kodu,
                     "ad":     bilesen_adi,
                     "miktar": float(miktar) if miktar is not None else 1.0,
-                    "birim":  "ADET",
+                    "birim":  _birim_adi(bilesen_birim_guid),
                     "tip":    "masraf",
                 })
 
@@ -392,17 +611,251 @@ def bom_listesi(conn) -> dict:
             if p_kod in gercek_receteli:
                 continue
             if p_kod not in bom:
-                bom[p_kod] = {"ad": p_adi, "birim": "ADET", "bilesenleri": []}
+                bom[p_kod] = {"ad": p_adi, "birim": "Bilinmiyor", "bilesenleri": []}
             if not any(b["kod"] == c_kod for b in bom[p_kod]["bilesenleri"]):
                 bom[p_kod]["bilesenleri"].append({
                     "kod":    c_kod,
                     "ad":     c_adi,
                     "miktar": 1.0,
-                    "birim":  "ADET",
+                    "birim":  "Bilinmiyor",
                     "tip":    "stok",
                 })
 
     return bom
+
+
+def ihtiyac_bom_patlat(conn, ihtiyaclar: dict, bom: dict | None = None) -> list[dict]:
+    """
+    Verilen {stok_kodu: uretim_ihtiyaci} sözlüğünü (örn. satılıp üretilmemiş
+    ürünlerin eksik miktarları) kaynak alarak, bom_listesi() reçetesini en alt
+    kademeye kadar (max 8 seviye) recursive patlatır; her bileşen kod için
+    toplam ihtiyaç, güncel bakiye ve eksik miktarı döner.
+
+    `ihtiyaclar`'daki miktarlar zaten "net üretim ihtiyacı" (bakiye mahsup
+    edilmiş) kabul edilir — seed seviyesinde tekrar bakiye düşülmez; yalnızca
+    alt bileşenlere inerken (bir alt montajın kendi bakiyesi varsa) mahsup
+    uygulanır. `uretim_emir_bom_patlat()`'taki `_patlat()` ile aynı net/mahsuplu
+    mantık — bir alt montajın stoğu yetiyorsa onun kendi bileşenlerine inilmez.
+
+    Masraf/operasyon bileşenleri (StokMasrafKarti, `:XX` kodlar dahil) de
+    listeye dahil edilir; bunların stok bakiyesi kavramı olmadığından
+    bakiye/eksik alanları None döner ve filtrelenmeden (miktarları > 0 olan
+    tüm satırlar) gösterilir.
+
+    `bom`: dışarıdan geçilirse DB'ye tekrar gidilmez (bom_listesi() pahalı —
+    `logic/maliyet.py::mamul_maliyet_hesapla()` ile aynı performans deseni).
+    None ise lazy-load yapılır.
+
+    Döner: [{kodu, adi, tip ('stok'|'masraf'), toplam_ihtiyac, bakiye, eksik,
+             kaynaklar (bu bileşene ihtiyaç duyan seed ürün kodları)}, ...]
+    — stok tipinde yalnızca eksik > 0 olanlar, masraf tipinde tüm satırlar;
+    stok satırları eksik miktara göre azalan sıralı, masraf satırları sonda.
+    """
+    from collections import defaultdict
+
+    if bom is None:
+        bom = bom_listesi(conn)
+
+    # ── 1. BFS: recursive taranacak tüm stok bileşenlerini bul (bakiye için) ──
+    stok_kodlari: set[str] = set()
+    kuyruk = [k for k in ihtiyaclar if k in bom]
+    gorulen: set[str] = set(kuyruk)
+    while kuyruk:
+        kod = kuyruk.pop()
+        for bil in bom.get(kod, {}).get('bilesenleri', []):
+            if bil['tip'] != 'stok' or bil['kod'] in gorulen:
+                continue
+            gorulen.add(bil['kod'])
+            stok_kodlari.add(bil['kod'])
+            if bil['kod'] in bom:
+                kuyruk.append(bil['kod'])
+
+    # ── 2. Bakiyeler (toplu) ────────────────────────────────────────────────
+    bakiyeler = stok_guncel_bakiyeleri(conn, list(stok_kodlari)) if stok_kodlari else {}
+
+    # ── 3. Recursive patlatma ───────────────────────────────────────────────
+    toplam_talep: dict[str, float] = defaultdict(float)
+    kaynaklar: dict[str, set] = defaultdict(set)
+    ad_map: dict[str, str] = {}
+    tip_map: dict[str, str] = {}
+
+    def _explode(kod: str, uretim_gerekli: float, seed: str, depth: int) -> None:
+        if depth > 8:
+            return
+        for bil in bom.get(kod, {}).get('bilesenleri', []):
+            bkod = bil['kod']
+            bil_ihtiyac = bil['miktar'] * uretim_gerekli
+            toplam_talep[bkod] += bil_ihtiyac
+            kaynaklar[bkod].add(seed)
+            ad_map[bkod] = bil['ad']
+            tip_map[bkod] = bil['tip']
+            if bil['tip'] != 'stok' or bkod not in bom:
+                continue
+            bakiye = bakiyeler.get(bkod, 0.0)
+            alt_uretim_gerekli = max(0.0, bil_ihtiyac - bakiye)
+            if alt_uretim_gerekli > 0:
+                _explode(bkod, alt_uretim_gerekli, seed, depth + 1)
+
+    for seed_kod, eksik in ihtiyaclar.items():
+        if eksik and eksik > 0:
+            _explode(seed_kod, eksik, seed_kod, 0)
+
+    # ── 4. Sonuç listesi ─────────────────────────────────────────────────────
+    # NOT: Operasyon kodları (`:XX` sonekli) çoğunlukla StokMasrafKarti'de
+    # tutulur (Tipi=2 → tip_map='masraf'), ama bazı reçetelerde aynı operasyon
+    # StokKarti tarafına da girilmiş olabilir (Tipi=1 → tip_map='stok') —
+    # bkz. "Masraf / Operasyon Kartları" bölümü, ERP-OKUMA.md. Böyle bir kod
+    # gerçek fiziksel stok değildir; bakiye/eksik hesabı anlamsız olur ve
+    # eksik-filtresine tabi tutulmamalı — `:` sonekine göre yakalanır.
+    sonuc: list[dict] = []
+    for kod, ihtiyac in toplam_talep.items():
+        tip = tip_map.get(kod, 'stok')
+        if tip == 'masraf' or kod.count(':') == 1:
+            sonuc.append({
+                'kodu': kod, 'adi': ad_map.get(kod, ''), 'tip': 'masraf',
+                'toplam_ihtiyac': round(ihtiyac, 2),
+                'bakiye': None, 'eksik': None,
+                'kaynaklar': sorted(kaynaklar[kod]),
+            })
+        else:
+            bakiye  = bakiyeler.get(kod, 0.0)
+            eksik_m = bakiye - ihtiyac
+            if eksik_m >= 0:
+                continue
+            sonuc.append({
+                'kodu': kod, 'adi': ad_map.get(kod, ''), 'tip': 'stok',
+                'toplam_ihtiyac': round(ihtiyac, 2),
+                'bakiye': round(bakiye, 2), 'eksik': round(-eksik_m, 2),
+                'kaynaklar': sorted(kaynaklar[kod]),
+            })
+
+    sonuc.sort(key=lambda r: (r['tip'] == 'masraf', -(r['eksik'] or 0)))
+    return sonuc
+
+
+def acik_uretim_emri_ihtiyaclari(conn, stok_kodlari: list) -> dict:
+    """
+    Açık üretim emirlerindeki malzeme taleplerini stok kodu bazında toplar.
+
+    CEO ERP'de DurumId=3, "Devam Ediyor" durumudur. TalepMiktar, üretim
+    emrinin ilgili malzemeden fiilen talep ettiği miktardır; reçetedeki
+    birimlik Miktar alanından farklıdır. HatTipi=1 ve 2, Üretim Eksik Stok
+    raporundaki ana hat ve aksesuar grubu kapsamıyla aynıdır.
+
+    Döner: {stok_kodu: açık_üretim_emri_talep_toplamı}. Masraf/operasyon
+    kartları StokKarti üzerinden takip edilmediği için bu sorguya alınmaz.
+    """
+    if not stok_kodlari:
+        return {}
+
+    sonuc = {k: 0.0 for k in stok_kodlari}
+    _YIGIN = 500
+    for i in range(0, len(stok_kodlari), _YIGIN):
+        parca = stok_kodlari[i: i + _YIGIN]
+        yer = ",".join("?" * len(parca))
+        with cursor_ctx(conn) as cur:
+            cur.execute(f"""
+                SELECT sk.Kodu, SUM(ISNULL(uehpg.TalepMiktar, 0))
+                FROM UretimEmri ue
+                JOIN UretimEmriHatPlani uehp
+                    ON uehp.UretimEmriId = ue.Id
+                JOIN UretimEmriHatPlaniGirdi uehpg
+                    ON uehpg.UretimEmriHatPlaniId = uehp.Id
+                JOIN StokKarti sk ON sk.Id = uehpg.KartId
+                WHERE ue.DurumId = 3
+                  AND uehp.HatTipi IN (1, 2)
+                  AND uehpg.KartId IS NOT NULL
+                  AND uehpg.TalepMiktar > 0
+                  AND sk.Kodu IN ({yer})
+                GROUP BY sk.Kodu
+            """, *parca)
+            for kod, toplam in cur.fetchall():
+                if kod in sonuc:
+                    sonuc[kod] = float(toplam or 0.0)
+    return sonuc
+
+
+def son_alis_fiyati_toplu(conn, stok_kodlari: list, masraf_kodlari: list) -> dict:
+    """
+    Verilen stok VE masraf kodları için, TARİH SINIRI OLMADAN geriye giderek
+    en son (en güncel tarihli) alım fiyatını bulur — `stok_fiyat_gecmisi()` /
+    `masraf_fiyat_gecmisi()`'nin aksine bir başlangıç tarihi almaz, kaydın
+    bulunduğu en eski tarihe kadar arar.
+
+    Faturalaşan irsaliye mükerrer sayım düzeltmesiyle aynı desen: yalnızca
+    IslemKodu=1 (Alış Faturası) VE FaturaId'si BOŞ olan IslemKodu=5 (henüz
+    faturalaşmamış irsaliye) satırları dikkate alınır (bkz. satis_faturalari()
+    docstring'i). Masraf tarafında `Turu` filtrelenmez (masraf faturaları
+    çoğunlukla Turu=3 kullanır — bkz. masraf_fiyat_gecmisi()).
+
+    Döner: {kod: {'fiyat': float, 'tarih': 'DD.MM.YYYY'}} — hiç alım
+    bulunamayan kodlar sözlükte YER ALMAZ (çağıran taraf `.get(kod)` ile
+    None kontrolü yapıp hücreyi boş bırakmalı; "hiç alım yok" iddiası
+    yalnızca bu sorgunun gerçekten sıfır satır döndürdüğü kodlar içindir).
+    """
+    sonuc: dict[str, dict] = {}
+    _YIGIN = 500
+
+    if stok_kodlari:
+        for i in range(0, len(stok_kodlari), _YIGIN):
+            parca = stok_kodlari[i: i + _YIGIN]
+            yer = ",".join("?" * len(parca))
+            with cursor_ctx(conn) as cur:
+                cur.execute(f"""
+                    ;WITH Siralama AS (
+                        SELECT
+                            sk.Kodu,
+                            shd.BirimFiyat,
+                            sh.BelgeTarihi,
+                            ROW_NUMBER() OVER (
+                                PARTITION BY sk.Kodu
+                                ORDER BY sh.BelgeTarihi DESC, sh.Id DESC
+                            ) AS rn
+                        FROM StokHareketDetay shd
+                        JOIN StokHareket sh ON sh.Id = shd.HareketId
+                        JOIN StokKarti sk   ON sk.Id = shd.IslemKartId
+                        WHERE sk.Kodu IN ({yer})
+                          AND (sh.IslemKodu = 1 OR (sh.IslemKodu = 5 AND sh.FaturaId IS NULL))
+                          AND shd.Turu = 1
+                          AND shd.BirimFiyat > 0
+                          AND shd.Miktar > 0
+                    )
+                    SELECT Kodu, BirimFiyat, CONVERT(VARCHAR(10), BelgeTarihi, 104)
+                    FROM Siralama WHERE rn = 1
+                """, *parca)
+                for kod, fiyat, tarih in cur.fetchall():
+                    sonuc[kod] = {'fiyat': float(fiyat), 'tarih': tarih}
+
+    if masraf_kodlari:
+        for i in range(0, len(masraf_kodlari), _YIGIN):
+            parca = masraf_kodlari[i: i + _YIGIN]
+            yer = ",".join("?" * len(parca))
+            with cursor_ctx(conn) as cur:
+                cur.execute(f"""
+                    ;WITH Siralama AS (
+                        SELECT
+                            smk.Kodu,
+                            shd.BirimFiyat,
+                            sh.BelgeTarihi,
+                            ROW_NUMBER() OVER (
+                                PARTITION BY smk.Kodu
+                                ORDER BY sh.BelgeTarihi DESC, sh.Id DESC
+                            ) AS rn
+                        FROM StokHareketDetay shd
+                        JOIN StokHareket sh      ON sh.Id = shd.HareketId
+                        JOIN StokMasrafKarti smk ON smk.Id = shd.IslemKartId
+                        WHERE smk.Kodu IN ({yer})
+                          AND (sh.IslemKodu = 1 OR (sh.IslemKodu = 5 AND sh.FaturaId IS NULL))
+                          AND shd.BirimFiyat > 0
+                          AND shd.Miktar > 0
+                    )
+                    SELECT Kodu, BirimFiyat, CONVERT(VARCHAR(10), BelgeTarihi, 104)
+                    FROM Siralama WHERE rn = 1
+                """, *parca)
+                for kod, fiyat, tarih in cur.fetchall():
+                    sonuc[kod] = {'fiyat': float(fiyat), 'tarih': tarih}
+
+    return sonuc
 
 
 def bom_operasyon_kodlarini_tamamla(conn, bom: dict) -> list[str]:
@@ -461,6 +914,12 @@ def stok_fiyat_gecmisi(conn, stok_kodu: str, bas: str, bit: str) -> list[dict]:
     """
     Verilen tarih aralığında stok için fatura fiyat geçmişi.
     Her eleman: tarih (YYYY-MM-DD), birim_fiyat, miktar, birim
+
+    Faturalaşan irsaliye — mükerrer sayım düzeltmesi: bkz. satis_faturalari()
+    ve proje_satinalma_hareketleri() docstring'leri. Sadece IslemKodu=1
+    (Alış Faturası) VE FaturaId'si BOŞ olan IslemKodu=5 (henüz faturalaşmamış
+    irsaliye) satırları toplanır — aksi hâlde aynı alım iki kez sayılır ve
+    FIFO/LIFO/WA fiyat hesabına mükerrer satır girer.
     """
     with cursor_ctx(conn) as cur:
         cur.execute(f"""
@@ -472,7 +931,7 @@ def stok_fiyat_gecmisi(conn, stok_kodu: str, bas: str, bit: str) -> list[dict]:
             JOIN StokHareket sh ON sh.Id = shd.HareketId
             JOIN StokKarti sk ON sk.Id = shd.IslemKartId
             WHERE sk.Kodu = ?
-              AND sh.IslemKodu IN (1, 5)
+              AND (sh.IslemKodu = 1 OR (sh.IslemKodu = 5 AND sh.FaturaId IS NULL))
               AND shd.Turu = 1
               AND CAST(sh.BelgeTarihi AS DATE) >= CAST('{bas}' AS DATE)
               AND CAST(sh.BelgeTarihi AS DATE) <= CAST('{bit}' AS DATE)
@@ -501,6 +960,11 @@ def masraf_fiyat_gecmisi(conn, masraf_kodu: str, bas: str, bit: str) -> list[dic
     NOT: Masraf hareketleri stok hareketlerinden farklı `Turu` değeri
     kullanır (çoğunlukla Turu=3). Bu yüzden stok sorgusundaki `Turu=1`
     filtresi burada UYGULANMAZ — aksi halde tüm masraf faturaları elenir.
+
+    Faturalaşan irsaliye — mükerrer sayım düzeltmesi: bkz. satis_faturalari()
+    ve proje_satinalma_hareketleri() docstring'leri. Sadece IslemKodu=1
+    (Alış Faturası) VE FaturaId'si BOŞ olan IslemKodu=5 (henüz faturalaşmamış
+    irsaliye) satırları toplanır.
     """
     with cursor_ctx(conn) as cur:
         cur.execute(f"""
@@ -512,7 +976,7 @@ def masraf_fiyat_gecmisi(conn, masraf_kodu: str, bas: str, bit: str) -> list[dic
             JOIN StokHareket sh ON sh.Id = shd.HareketId
             JOIN StokMasrafKarti smk ON smk.Id = shd.IslemKartId
             WHERE smk.Kodu = ?
-              AND sh.IslemKodu IN (1, 5)
+              AND (sh.IslemKodu = 1 OR (sh.IslemKodu = 5 AND sh.FaturaId IS NULL))
               AND CAST(sh.BelgeTarihi AS DATE) >= CAST('{bas}' AS DATE)
               AND CAST(sh.BelgeTarihi AS DATE) <= CAST('{bit}' AS DATE)
               AND shd.BirimFiyat > 0
@@ -531,6 +995,320 @@ def masraf_fiyat_gecmisi(conn, masraf_kodu: str, bas: str, bit: str) -> list[dic
         ]
 
 
+def uretim_emri_masraf_maliyet_onizle(conn, emir_kodu: str) -> dict:
+    """Üretim emrindeki masraf satırları için maliyet ön izlemesi döndürür.
+
+    CEO ERP, ``Tipi=2`` masraf satırlarının maliyetinde üretim emri satırındaki
+    ``Tutar`` alanını kullanır; masraf kartı alış fiyatını bu alana otomatik
+    taşımaz. Bu yardımcı üretim emri tarihine kadar olan son geçerli alış
+    fiyatını bulur ve yalnızca mevcut tutarı sıfır olan satırlar için öneri
+    hesaplar.
+    """
+    emir_kodu = (emir_kodu or "").strip()
+    if not emir_kodu:
+        raise ValueError("Üretim emri kodu boş olamaz.")
+
+    with cursor_ctx(conn) as cur:
+        cur.execute("""
+            SELECT Id, Kodu, Aciklama, UretimEmriTarihi, DurumId
+            FROM UretimEmri
+            WHERE Kodu = ?
+        """, emir_kodu)
+        emir = cur.fetchone()
+        if not emir:
+            raise ValueError(f"Üretim emri bulunamadı: {emir_kodu}")
+
+        emir_id, kodu, aciklama, emir_tarihi, durum_id = emir
+        cur.execute("""
+            SELECT
+                ueg.Id,
+                ueg.KartId,
+                smk.Kodu,
+                smk.Adi,
+                ueg.Miktar,
+                ueg.TalepMiktar,
+                ISNULL(ueg.Tutar, 0),
+                kaynak.HareketId,
+                kaynak.DetayId,
+                kaynak.BelgeTarihi,
+                kaynak.BirimFiyat
+            FROM UretimEmriHatPlaniGirdi ueg
+            INNER JOIN UretimEmriHatPlani uep
+                ON uep.Id = ueg.UretimEmriHatPlaniId
+            INNER JOIN UretimEmri ue
+                ON ue.Id = uep.UretimEmriId
+            INNER JOIN StokMasrafKarti smk
+                ON smk.Id = ueg.KartId
+            OUTER APPLY (
+                SELECT TOP 1
+                    sh.Id AS HareketId,
+                    shd.Id AS DetayId,
+                    sh.BelgeTarihi,
+                    shd.BirimFiyat
+                FROM StokHareket sh
+                INNER JOIN StokHareketDetay shd
+                    ON shd.HareketId = sh.Id
+                WHERE shd.Turu = 3
+                  AND (shd.IslemKartId = ueg.KartId
+                       OR shd.StokMasrafKartId = ueg.KartId)
+                  AND sh.Aktif = 1
+                  AND shd.Aktif = 1
+                  AND (sh.IslemKodu = 1
+                       OR (sh.IslemKodu = 5 AND sh.FaturaId IS NULL))
+                  AND shd.BirimFiyat > 0
+                  AND shd.Miktar > 0
+                  AND CAST(sh.BelgeTarihi AS DATE)
+                      <= CAST(ue.UretimEmriTarihi AS DATE)
+                ORDER BY sh.BelgeTarihi DESC, sh.Id DESC, shd.Id DESC
+            ) kaynak
+            WHERE ue.Id = ?
+              AND ueg.Tipi = 2
+            ORDER BY ueg.Id
+        """, emir_id)
+
+        satirlar = []
+        for row in cur.fetchall():
+            (girdi_id, kart_id, masraf_kodu, masraf_adi, miktar,
+             talep_miktari, eski_tutar, hareket_id, detay_id,
+             belge_tarihi, birim_fiyat) = row
+            eski = Decimal(str(eski_tutar or 0))
+            yeni = None
+            if birim_fiyat is not None and talep_miktari is not None:
+                yeni = (
+                    Decimal(str(talep_miktari)) * Decimal(str(birim_fiyat))
+                ).quantize(Decimal("0.000001"), rounding=ROUND_HALF_UP)
+
+            if eski != 0:
+                durum = "zaten_dolu"
+            elif yeni is None:
+                durum = "fiyat_yok"
+            else:
+                durum = "uygulanabilir"
+
+            satirlar.append({
+                "girdi_id": int(girdi_id),
+                "masraf_kart_id": int(kart_id),
+                "kod": str(masraf_kodu),
+                "ad": str(masraf_adi or "").strip(),
+                "miktar": float(miktar or 0),
+                "talep_miktari": float(talep_miktari or 0),
+                "eski_tutar": float(eski),
+                "kaynak_hareket_id": int(hareket_id) if hareket_id is not None else None,
+                "kaynak_detay_id": int(detay_id) if detay_id is not None else None,
+                "kaynak_tarihi": (
+                    belge_tarihi.strftime("%d.%m.%Y")
+                    if belge_tarihi is not None else None
+                ),
+                "birim_fiyat": float(birim_fiyat) if birim_fiyat is not None else None,
+                "yeni_tutar": float(yeni) if yeni is not None else None,
+                "durum": durum,
+            })
+
+    return {
+        "emir": {
+            "id": int(emir_id),
+            "kodu": str(kodu),
+            "aciklama": str(aciklama or "").strip(),
+            "tarih": emir_tarihi.strftime("%d.%m.%Y") if emir_tarihi else "",
+            "durum_id": int(durum_id) if durum_id is not None else None,
+        },
+        "satirlar": satirlar,
+    }
+
+
+def uretim_emri_masraf_maliyet_uygula(conn, emir_kodu: str) -> dict:
+    """Uygun masraf tutarlarını üretim emrine transaction ile yazar.
+
+    Yalnızca ``Tutar=0`` olan ve üretim emri tarihinden önce alış fiyatı
+    bulunan ``Tipi=2`` satırlar güncellenir. Fatura, irsaliye ve stok
+    hareketleri değiştirilmez.
+    """
+    onizleme = uretim_emri_masraf_maliyet_onizle(conn, emir_kodu)
+    adaylar = [
+        satir for satir in onizleme["satirlar"]
+        if satir["durum"] == "uygulanabilir"
+    ]
+    guncellenen = []
+    if not adaylar:
+        return {"onizleme": onizleme, "guncellenen": [], "atlanan": []}
+
+    try:
+        with cursor_ctx(conn) as cur:
+            for satir in adaylar:
+                cur.execute("""
+                    UPDATE UretimEmriHatPlaniGirdi
+                    SET Tutar = ?
+                    WHERE Id = ?
+                      AND Tipi = 2
+                      AND ISNULL(Tutar, 0) = 0
+                """, satir["yeni_tutar"], satir["girdi_id"])
+                if cur.rowcount == 1:
+                    guncellenen.append(satir)
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+
+    atlanan = [satir for satir in adaylar if satir not in guncellenen]
+    return {
+        "onizleme": onizleme,
+        "guncellenen": guncellenen,
+        "atlanan": atlanan,
+    }
+
+
+def proje_kodlari_listele(conn) -> list[str]:
+    """
+    CEO ERP'deki Proje.ProjeKodu değerlerini (trimlenmiş, tekil, sıralı) döner.
+
+    Kullanım amacı: proje kodu serbest metin olarak elle girildiğinde ufak bir
+    yazım farkı (ör. "ADLAS MKE" yerine gerçek kod "ADLAS-MKE") satır bazlı
+    ProjeId eşleşmesini sessizce sıfır satırla sonuçlandırır — kullanıcı hiç
+    fark etmeden "%100 fark" gibi yanıltıcı bir sonuç görebilir. Bu liste
+    UI'da otomatik tamamlama için kullanılır.
+    """
+    with cursor_ctx(conn) as cur:
+        cur.execute("""
+            SELECT DISTINCT LTRIM(RTRIM(ProjeKodu))
+            FROM Proje
+            WHERE ProjeKodu IS NOT NULL AND LTRIM(RTRIM(ProjeKodu)) <> ''
+            ORDER BY LTRIM(RTRIM(ProjeKodu))
+        """)
+        return [row[0] for row in cur.fetchall()]
+
+
+def proje_satinalma_hareketleri(conn, proje_kodu: str, bas: str, bit: str) -> list[dict]:
+    """
+    Bir projeye (CEO ERP'deki Proje.ProjeKodu) fiilen kesilmiş alış
+    faturası/irsaliyesi satırlarını ve alış iadelerini döner — hem stok hem
+    masraf/operasyon kartı tarafı.
+
+    Proje kodu StokHareketDetay.ProjeId üzerinden SATIR bazında tutulur
+    (belge/fatura başlığında değil) — bu yüzden aynı faturanın bazı satırları
+    bu projeye ait, bazıları başka bir projeye ait olabilir; her satır kendi
+    ProjeId'siyle filtrelenir.
+
+    Faturalaşan irsaliye tekrarına karşı koruma
+    --------------------------------------------
+    Bir irsaliye (IslemKodu=5) sonradan faturalandırıldığında CEO ERP
+    StokHareket.FaturaId alanını doldurur; hem irsaliye hem onun faturası
+    ayrı satır olarak durur ve tutarı iki kez saymamak için sadece
+    IslemKodu=1 (Alış Faturası) VE FaturaId'si BOŞ olan IslemKodu=5
+    (henüz faturalaşmamış irsaliye) satırları toplanır. Bu davranış CEO
+    ERP'nin kendi "Stok Hareketleri Raporu"ndaki (Detay İşlem Türü filtresi)
+    Stok/Masraf toplamlarıyla ADLAS-MKE projesi üzerinde satır satır
+    doğrulanmıştır (bkz. ERP-OKUMA.md).
+
+    Alış iadesi (IslemKodu=3)
+    -------------------------
+    CEO ERP'de alış iadesi miktar ve tutarı pozitif saklar. Bu fonksiyon bu
+    hareketleri de alır, ancak sonuçta miktar ve tutarı ``-ABS(...)`` olarak
+    döndürür. Böylece proje fiili maliyeti ve satınalma toplamı iadeleri
+    otomatik olarak düşer. İade satırları rapor detayında "Alış İadesi" olarak
+    görünür.
+
+    NOT: Aynı düzeltme artık satis_faturalari() (satış aynası), stok_fiyat_gecmisi(),
+    masraf_fiyat_gecmisi(), recetesiz_stok_hareketleri() ve stok_fiyatlari_toplu()
+    fonksiyonlarına da uygulanmıştır (2026-09-14) — hepsi eski `IslemKodu IN (1, 5)`
+    / `IN (2, 6)` deseninden `FaturaId IS NULL` kontrollü hâle geçirildi.
+
+    Sabit Kıymet alımları (StokHareketDetay.SabitKiymetId) bu fonksiyona
+    DAHİL DEĞİLDİR — BOM'a girmeyen demirbaş/ekipman alımları olduğundan
+    kasıtlı olarak dışarıda bırakıldı.
+
+    Her eleman: bil_kod, bil_ad, tip ('stok'|'masraf'), hareket_id,
+                islem_turu, belge_no, tarih (DD.MM.YYYY), tarih_iso,
+                miktar, birim_fiyat, tutar, tedarikci
+    """
+    with cursor_ctx(conn) as cur:
+        cur.execute(f"""
+            SELECT
+                sk.Kodu, sk.Adi, 'stok',
+                sh.Id,
+                CASE sh.IslemKodu
+                    WHEN 1 THEN 'Alış Faturası'
+                    WHEN 3 THEN 'Alış İadesi'
+                    ELSE 'Alış İrsaliyesi'
+                END,
+                ISNULL(sh.BelgeSeriNo, '') + ISNULL(CAST(sh.BelgeSiraNo AS VARCHAR(20)), ''),
+                CONVERT(VARCHAR(10), sh.BelgeTarihi, 104),
+                CONVERT(VARCHAR(10), sh.BelgeTarihi, 120),
+                CASE WHEN sh.IslemKodu = 3
+                     THEN -ABS(ISNULL(shd.Miktar, 0))
+                     ELSE ISNULL(shd.Miktar, 0) END,
+                ISNULL(shd.BirimFiyat, 0),
+                CASE WHEN sh.IslemKodu = 3
+                     THEN -ABS(ISNULL(shd.Tutar, 0))
+                     ELSE ISNULL(shd.Tutar, 0) END,
+                ISNULL(cmk.Unvani, '')
+            FROM StokHareketDetay shd
+            JOIN StokHareket sh ON sh.Id = shd.HareketId
+            JOIN StokKarti sk   ON sk.Id = shd.IslemKartId
+            JOIN Proje p        ON p.Id = shd.ProjeId
+            LEFT JOIN CariMusteriKarti cmk ON sh.MusteriKartId = cmk.Id
+            WHERE p.ProjeKodu = ?
+              AND (sh.IslemKodu = 1
+                   OR sh.IslemKodu = 3
+                   OR (sh.IslemKodu = 5 AND sh.FaturaId IS NULL))
+              AND shd.Turu = 1
+              AND CAST(sh.BelgeTarihi AS DATE) >= CAST('{bas}' AS DATE)
+              AND CAST(sh.BelgeTarihi AS DATE) <= CAST('{bit}' AS DATE)
+
+            UNION ALL
+
+            SELECT
+                smk.Kodu, smk.Adi, 'masraf',
+                sh.Id,
+                CASE sh.IslemKodu
+                    WHEN 1 THEN 'Alış Faturası'
+                    WHEN 3 THEN 'Alış İadesi'
+                    ELSE 'Alış İrsaliyesi'
+                END,
+                ISNULL(sh.BelgeSeriNo, '') + ISNULL(CAST(sh.BelgeSiraNo AS VARCHAR(20)), ''),
+                CONVERT(VARCHAR(10), sh.BelgeTarihi, 104),
+                CONVERT(VARCHAR(10), sh.BelgeTarihi, 120),
+                CASE WHEN sh.IslemKodu = 3
+                     THEN -ABS(ISNULL(shd.Miktar, 0))
+                     ELSE ISNULL(shd.Miktar, 0) END,
+                ISNULL(shd.BirimFiyat, 0),
+                CASE WHEN sh.IslemKodu = 3
+                     THEN -ABS(ISNULL(shd.Tutar, 0))
+                     ELSE ISNULL(shd.Tutar, 0) END,
+                ISNULL(cmk.Unvani, '')
+            FROM StokHareketDetay shd
+            JOIN StokHareket sh      ON sh.Id = shd.HareketId
+            JOIN StokMasrafKarti smk ON smk.Id = shd.IslemKartId
+            JOIN Proje p             ON p.Id = shd.ProjeId
+            LEFT JOIN CariMusteriKarti cmk ON sh.MusteriKartId = cmk.Id
+            WHERE p.ProjeKodu = ?
+              AND (sh.IslemKodu = 1
+                   OR sh.IslemKodu = 3
+                   OR (sh.IslemKodu = 5 AND sh.FaturaId IS NULL))
+              AND CAST(sh.BelgeTarihi AS DATE) >= CAST('{bas}' AS DATE)
+              AND CAST(sh.BelgeTarihi AS DATE) <= CAST('{bit}' AS DATE)
+
+            ORDER BY 7 ASC
+        """, proje_kodu, proje_kodu)
+
+        return [
+            {
+                "bil_kod":     row[0],
+                "bil_ad":      row[1],
+                "tip":         row[2],
+                "hareket_id":  int(row[3]),
+                "islem_turu":  row[4],
+                "belge_no":    row[5],
+                "tarih":       row[6],
+                "tarih_iso":   row[7],
+                "miktar":      float(row[8]),
+                "birim_fiyat": float(row[9]),
+                "tutar":       float(row[10]),
+                "tedarikci":   row[11],
+            }
+            for row in cur.fetchall()
+        ]
+
+
 def stok_fiyatlari_toplu(
     conn, stok_kodlari: list, bas: str, bit: str
 ) -> dict:
@@ -538,6 +1316,12 @@ def stok_fiyatlari_toplu(
     Birden fazla stok kodu için fiyat geçmişini TEK sorguda çeker.
     Döner: {stok_kodu: [{"tarih", "birim_fiyat", "miktar", "birim"}, ...]}
     IslemKodu 1=Alış Faturası, 5=Alış İrsaliyesi.
+
+    Faturalaşan irsaliye — mükerrer sayım düzeltmesi: bkz. satis_faturalari()
+    ve proje_satinalma_hareketleri() docstring'leri. Sadece IslemKodu=1
+    (Alış Faturası) VE FaturaId'si BOŞ olan IslemKodu=5 (henüz faturalaşmamış
+    irsaliye) satırları toplanır — Maliyet sekmesinin asıl FIFO/LIFO/WA fiyat
+    kaynağı olduğundan bu düzeltme burada özellikle önemli.
     """
     if not stok_kodlari:
         return {}
@@ -559,7 +1343,7 @@ def stok_fiyatlari_toplu(
                 JOIN StokHareket sh ON sh.Id = shd.HareketId
                 JOIN StokKarti sk   ON sk.Id = shd.IslemKartId
                 WHERE sk.Kodu IN ({yer})
-                  AND sh.IslemKodu IN (1, 5)
+                  AND (sh.IslemKodu = 1 OR (sh.IslemKodu = 5 AND sh.FaturaId IS NULL))
                   AND shd.Turu = 1
                   AND CAST(sh.BelgeTarihi AS DATE) >= CAST('{bas}' AS DATE)
                   AND CAST(sh.BelgeTarihi AS DATE) <= CAST('{bit}' AS DATE)
@@ -1245,6 +2029,17 @@ def satis_faturalari(conn, bas_tarih: str, bit_tarih: str) -> list[dict]:
     Belirtilen tarih aralığındaki satış fatura ve irsaliye satırlarını döner.
     bas_tarih / bit_tarih: 'DD.MM.YYYY' formatı.
     IslemKodu 2 = Satış Faturası, 6 = Satış İrsaliyesi.
+
+    Faturalaşan irsaliye — mükerrer sayım düzeltmesi
+    -------------------------------------------------
+    Bir satış irsaliyesi (IslemKodu=6) sonradan faturaya dönüştüğünde CEO ERP
+    StokHareket.FaturaId alanını doldurur; hem irsaliye hem onun faturası ayrı
+    satır olarak durur. Sadece IslemKodu=2 (Satış Faturası) VE FaturaId'si BOŞ
+    olan IslemKodu=6 (henüz faturalaşmamış irsaliye) satırları toplanır —
+    aksi hâlde aynı satış iki kez sayılır. Bakiye formülündeki
+    `sh.FaturaId IS NULL` kuralıyla aynı mantık (bkz. ERP-OKUMA.md); bu,
+    proje_satinalma_hareketleri()'ndeki alış tarafı düzeltmesinin satış
+    aynasıdır.
     """
     bas_parts = bas_tarih.split('.')
     bit_parts = bit_tarih.split('.')
@@ -1268,7 +2063,7 @@ def satis_faturalari(conn, bas_tarih: str, bit_tarih: str) -> list[dict]:
             JOIN StokHareketDetay shd ON shd.HareketId = sh.Id
             JOIN StokKarti sk ON sk.Id = shd.IslemKartId
             LEFT JOIN CariMusteriKarti cmk ON sh.MusteriKartId = cmk.Id
-            WHERE sh.IslemKodu IN (2, 6)
+            WHERE (sh.IslemKodu = 2 OR (sh.IslemKodu = 6 AND sh.FaturaId IS NULL))
               AND shd.Turu = 1
               AND shd.Miktar > 0
               AND CAST(sh.BelgeTarihi AS DATE) >= CAST('{bas_sql}' AS DATE)
@@ -1572,13 +2367,126 @@ def recete_yukle(conn, mamul_kod: str, max_derinlik: int = 8) -> dict | None:
 
 
 def birimleri_getir(conn) -> dict:
-    """StokBirim → {Adi: Id_str}; hata olursa ADET fallback."""
+    """CeoCommon.StokBirim → ``{açıklama: GUID}``.
+
+    CEO ERP'de birim sözlüğü şirket DB'sinde değil ortak DB'de tutulur.
+    Eski kurulumlarda ortak tablo erişilemiyorsa aktarım akışını tamamen
+    durdurmamak için yalnızca kesin bildiğimiz ADET GUID'i fallback olarak
+    bırakılır; rapor tarafındaki bilinmeyen GUID'ler ``Bilinmiyor`` gösterilir.
+    """
     try:
         with cursor_ctx(conn) as cur:
-            cur.execute("SELECT Id, Adi FROM StokBirim WHERE Aktif = 1 ORDER BY Adi")
-            return {r[1]: str(r[0]) for r in cur.fetchall()}
+            cur.execute("""
+                SELECT StokBirimAciklama, StokBirimID
+                FROM [CeoCommon].dbo.StokBirim
+                WHERE Aktif = 1
+                ORDER BY StokBirimAciklama
+            """)
+            return {str(r[0]): str(r[1]) for r in cur.fetchall()}
     except Exception:
         return {"ADET": "4acc21e3-3140-4863-922d-a0b3d35de8c1"}
+
+
+def stok_hazirlik_kod_bilgileri(conn, kodlar: list[str]) -> dict[str, dict]:
+    """Stok Hazırlık Excel satırlarını ERP kart bilgileriyle eşleştirir.
+
+    Sonuç, girişteki kodların boşlukları kırpılmış hâliyle anahtarlanır. Her
+    kayıtta ``stok`` ve/veya ``masraf`` anahtarı bulunabilir; ayrıca kodun aktif
+    bir reçete başlığı olup olmadığı ``receteli`` alanında verilir. Sorgular
+    toplu ve parametreli çalışır; Excel'den gelen değerleri değiştirmez.
+
+    Aynı kodun iki kart tablosunda da bulunması özellikle korunur. UI, Excel'deki
+    tip ipucunu kullanarak doğru kartı seçer ve bu durumu kullanıcıya bildirir.
+    """
+    temiz = []
+    gorulen = set()
+    for kod in kodlar or []:
+        k = str(kod or "").strip()
+        anahtar = k.casefold()
+        if k and anahtar not in gorulen:
+            gorulen.add(anahtar)
+            temiz.append(k)
+    if not temiz:
+        return {}
+
+    sonuc: dict[str, dict] = {}
+    # SQL Server'ın parametre sınırına yaklaşmamak ve uzun IN listelerinde de
+    # aynı davranışı korumak için kodları küçük gruplar hâlinde sorgula.
+    for bas in range(0, len(temiz), 500):
+        grup = temiz[bas:bas + 500]
+        yerler = ",".join("?" for _ in grup)
+
+        def _ekle(kod, kaynak, kayit):
+            key = str(kod or "").strip().casefold()
+            giris = next((x for x in grup if x.casefold() == key), None)
+            if giris is None:
+                return
+            hedef = sonuc.setdefault(giris, {"receteli": False})
+            # Aynı kaynak tablosunda kopya kod varsa ilk kaydı kullan; aktif
+            # kayıtlar SQL sıralamasıyla önce gelir.
+            hedef.setdefault(kaynak, kayit)
+
+        with cursor_ctx(conn) as cur:
+            try:
+                cur.execute(f"""
+                    SELECT Kodu, Id, ISNULL(Adi, ''), ISNULL(Adi2, ''),
+                           ISNULL(CONVERT(NVARCHAR(50), StokBirim), ''),
+                           ISNULL(Aktif, 0)
+                    FROM StokKarti
+                    WHERE Kodu IN ({yerler})
+                    ORDER BY Kodu, Aktif DESC, Id
+                """, grup)
+            except Exception:
+                # Bazı eski CEO kurulumlarında Adi2 kolonu bulunmayabilir.
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+                cur.execute(f"""
+                    SELECT Kodu, Id, ISNULL(Adi, ''), '',
+                           ISNULL(CONVERT(NVARCHAR(50), StokBirim), ''),
+                           ISNULL(Aktif, 0)
+                    FROM StokKarti
+                    WHERE Kodu IN ({yerler})
+                    ORDER BY Kodu, Aktif DESC, Id
+                """, grup)
+            for r in cur.fetchall():
+                _ekle(r[0], "stok", {
+                    "id": int(r[1]), "kod": str(r[0]).strip(),
+                    "adi": str(r[2] or ""), "adi2": str(r[3] or ""),
+                    "birim_guid": str(r[4] or ""), "aktif": bool(r[5]),
+                })
+
+        with cursor_ctx(conn) as cur:
+            cur.execute(f"""
+                SELECT Kodu, Id, ISNULL(Adi, ''),
+                       ISNULL(CONVERT(NVARCHAR(50), StokBirimId), ''),
+                       ISNULL(Aktif, 0)
+                FROM StokMasrafKarti
+                WHERE Kodu IN ({yerler})
+                ORDER BY Kodu, Aktif DESC, Id
+            """, grup)
+            for r in cur.fetchall():
+                _ekle(r[0], "masraf", {
+                    "id": int(r[1]), "kod": str(r[0]).strip(),
+                    "adi": str(r[2] or ""), "adi2": "",
+                    "birim_guid": str(r[3] or ""), "aktif": bool(r[4]),
+                })
+
+        with cursor_ctx(conn) as cur:
+            cur.execute(f"""
+                SELECT DISTINCT Kodu
+                FROM UretimRecete
+                WHERE Kodu IN ({yerler})
+                  AND (KullanimDisi IS NULL OR KullanimDisi = 0)
+            """, grup)
+            for r in cur.fetchall():
+                key = str(r[0] or "").strip().casefold()
+                giris = next((x for x in grup if x.casefold() == key), None)
+                if giris is not None:
+                    sonuc.setdefault(giris, {"receteli": False})["receteli"] = True
+
+    return sonuc
 
 
 def recete_var_mi(conn, parent_kod: str) -> tuple:
