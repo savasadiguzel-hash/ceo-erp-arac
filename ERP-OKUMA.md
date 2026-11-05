@@ -337,6 +337,7 @@ ui/      ana_pencere.py, maliyet.py, mamul_agaci_tab.py, tarama.py, eslestirme.p
 sw/      classifier, pipeline, renamer, erp_handler, vision_handler
 referans/faturalar/  test_kalemleri.json
 dist/    CEO-ERP-Araclar.exe, config.json
+kanban/  Siparis_Takip_Kartlari.pdf (ANONS · VHF ALICI stok takip kartları), yedek/
 ```
 
 ---
@@ -505,6 +506,60 @@ UretimRecete
 **Fonksiyonlar:** `db/sorgular.py:tum_is_emirleri_listesi()`, `is_emri_malzeme_listesi()`  
 **UI:** `ui/tab_is_emri_formu.py`  
 **PDF:** `logic/pdf_is_emri.py` · **Excel:** `logic/excel_is_emri.py`
+
+---
+
+## Kanban Stok Takip Kartları (`kanban/`, 2026-11-05)
+
+`kanban/Siparis_Takip_Kartlari.pdf`: ANONS · VHF ALICI için 36 adet stok takip kartı (form UR-FR-11_R00, Excel 2010'dan üretilmiş PDF; repoda üreten kod yok). Her kartta stok kodu/adı, MİN (sipariş noktası), sipariş miktarı, ürün başı kullanım, firma, termin ve elle doldurulan stok geçmişi tablosu bulunur. Satınalmaya gönderilen güncel dosya budur.
+
+**MİN formülü (kart altında yazılı):** `MİN = ürün başı kullanım × 200 ürün/ay × (termin + 2 hf emniyet)`, haftalık talep 200×12/52 ≈ 46,15; sonuç yukarı 10'a yuvarlanır. Termin sınıfları: KISA (STOK/OSTİM/1 hf → 1 hf, yeşil), ORTA (1–3 hf, turuncu), UZUN (3–8 hf, kırmızı). Sipariş miktarı kontrol kuralı: ≥ 1 aylık tüketim ve ≥ termin süresince tüketim (aksi halde mal kabulden hemen sonra kart yeniden tetiklenir).
+
+**Referans mamuller (ERP reçetesi):** GMP-101-230063 IR-610 VHF ALICI, GMP-101-230086 IR-610 B VHF ALICI, GMP-101-230101 OPAK KUTULU, GMP-101-260002 OPAK KUTULU (TELSİZSİZ).
+
+### 2026-11-05 güncellemeleri (yalnızca okuma ile ERP'den doğrulandı)
+
+1. **KODSUZ 10 kart kodlandı** (kullanıcı onayıyla):
+
+   | Kart | Stok adı | Kod |
+   |---|---|---|
+   | 27 | M4 SOMUN | HMSOMUN004 |
+   | 28 | 4X10 YSB VİDA | HMVİDA0009 |
+   | 29 | M2,5X20 YHB INOX | SARF0000026 |
+   | 30 | M3X12 YSB VİDA | HMVİDA0069 |
+   | 31 | M3X10 YSB VİDA | HMVİDA0067 |
+   | 32 | M3X6 YSB VİDA | HMVİDA0053 |
+   | 33 | M3 SOMUN | HMSOMUN003 |
+   | 34 | M12 PUL TIRTILLI-RONDELA | HMPUL00016 |
+   | 35 | M12 SOMUN | HMPUL00018 |
+   | 36 | KABLO PAPUCU (ANTEN KABLOSU İÇİN) | HMGMDDRL002 |
+
+   Kararlar: vidalarda reçetedeki grup kartları (SARF0000001 M3 VİDA GRUBU, SARF0000003 M4 VİDA GRUBU) yerine **tekil kodlar**; somunlarda inox tekil kodlar; M2,5X20 için reçetede kullanılan SARF0000026 (ERP adında "BEYAZ" yazıyor, kartta "INOX" — ad uyumsuzluğu açık).
+
+2. **MİN düzeltmeleri** (200/ay varsayımı korunarak, formüle uymayan kartlar):
+
+   | Kart | Malzeme | Eski → Yeni |
+   |---|---|---|
+   | 3 | 0,75 mm montaj kablo | 110 → 140 |
+   | 19 | Alıcı kutusu (4–5 hf) | 150 → 330 |
+   | 23 | Alıcı trafosu (4–5 hf) | 200 → 330 |
+   | 24 | HYDX VHF telsiz (6–8 hf) | 300 → 470 |
+
+3. **Termin belirsiz kartlar netleşti:**
+   - Kart 21 ANTEN DİPLİĞİ (YMGMDPK0001): termin **3 HAFTA** → ORTA TERMİN (turuncu), MİN 240 (değişmedi). Firma boş.
+   - Kart 36 KABLO PAPUCU (HMGMDDRL002): termin **STOK** → KISA TERMİN (yeşil), ürün başı kullanım "—" → **2**, MİN → **280**. Firma boş.
+
+4. Sipariş miktarlarında değişiklik gerekmedi (kart kullanım değerleriyle hepsi kuralı sağlıyor).
+
+**Yedekler (`kanban/yedek/`):** `_ORIJINAL_` (dokunulmamış) → `_KODLU_` (kodlar) → `_MINDUZELTME_` (MİN düzeltmeleri) → `_KART21_` (kart 21 sonrası); güncel dosya kart 36 dahil son haldir.
+
+**Açık konular:**
+- **Talep varsayımı:** Formül 200 ürün/ay; ERP üretimden giriş (IslemKodu=16) kayıtlarına göre VHF alıcı ailesi son 12 ayda ≈ 900 adet (≈ 75/ay; 2026'da ≈ 37/ay). Kararla 200/ay korundu; düşürülürse tüm MİN'ler yeniden hesaplanmalı.
+- **Kart kullanımı ≠ ERP reçetesi** (kartlar değiştirilmedi): kart 3 (kart 1 / reçete 0,25 m), 4 (1/2), 6 (3/5), 7 (5/6), 8 (1/3), 29 (4/2), 34 (4/1), 35 (4/1). Üretim çıkışı reçeteden yapıldığından bu kalemlerde fiziksel stok ile ERP bakiyesi ayrışır; hangisi doğruysa diğeri düzeltilmeli.
+- Kart 27–33 vida/somunları alıcı reçetelerinde tekil olarak yok (grup kartıyla geçiyor); kart 36 kablo papucu IR-610 VHF reçetelerinde hiç yok (yalnızca diğer alıcı modellerinde, 2 adet).
+- Kart 21 ve 36'da firma boş — satınalma dolduracak.
+
+**PDF düzenleme yöntemi (tekrar gerekirse):** PyMuPDF (`pymupdf`) ile; metin redaksiyonla (zemin rengiyle) silinip `C:\Windows\Fonts\arialbd.ttf` ile aynı punto/konuma yazıldı (base-14 Helvetica "İ" desteklemez). Kart renkleri içerik akışındaki dolgu operatörleri değiştirilerek çevrildi (gri `.459 g`/`.941 g` → yeşil `0.18 0.49 0.196 rg`/`0.91 0.961 0.914 rg` veya turuncu `0.949 0.663 0 rg`/`1 0.965 0.859 rg`). Dikkat: `clean_contents()` ve önceki redaksiyonlar akışı yeniden yazar (ör. `0.459` → `.459`), regex'ler buna göre yazılmalı; tüm `get_contents()` akışları taranmalı.
 
 ---
 
