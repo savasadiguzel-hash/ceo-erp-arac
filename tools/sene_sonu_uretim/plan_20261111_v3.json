@@ -1,0 +1,721 @@
+[
+ {
+  "plan_no": "PLAN-01",
+  "fatura": "GEA2025000000119",
+  "fatura_tarihi": "2025-12-25",
+  "cari": "VAN BELEDİYE BAŞKANLIĞI",
+  "emir_tarihi": "2025-12-24 09:00:00",
+  "aciklama": "TX IR-610 UHF CC VERİCİ VAN BELEDİYE BAŞKANLIĞI",
+  "surec_dipnot": "Fatura: GEA2025000000119 (25.12.2025) - VAN BELEDİYE BAŞKANLIĞI",
+  "ana": [
+   {
+    "kod": "GMP-101-230111",
+    "miktar": 1.0,
+    "eksik": 1.0
+   }
+  ],
+  "ertelenen": [],
+  "yari_mamul": [
+   {
+    "kod": "YMGMKRT0066",
+    "miktar": 1.0
+   },
+   {
+    "kod": "YMGMKRT0078",
+    "miktar": 1.0
+   }
+  ],
+  "uyari": [],
+  "bilgi": []
+ },
+ {
+  "plan_no": "PLAN-02",
+  "fatura": "GEA2026000000037",
+  "fatura_tarihi": "2026-04-08",
+  "cari": "Caracal İnternational LLC.",
+  "emir_tarihi": "2026-04-07 09:00:00",
+  "aciklama": "5,56 MM NAMLU ADAPTÖRÜ (V-SP) CARACAL İNTERNATIONAL LLC.",
+  "surec_dipnot": "Fatura: GEA2026000000037 (08.04.2026) - Caracal İnternational LLC.",
+  "ana": [
+   {
+    "kod": "GMP-101-230032",
+    "miktar": 1.0,
+    "eksik": 1.0
+   }
+  ],
+  "ertelenen": [],
+  "yari_mamul": [],
+  "uyari": [],
+  "bilgi": []
+ },
+ {
+  "plan_no": "PLAN-03",
+  "fatura": "GEF2026000000032",
+  "fatura_tarihi": "2026-06-09",
+  "cari": "TUSAŞ Türk Havacılık ve Uzay Sanayii A.Ş.",
+  "emir_tarihi": "2026-06-08 09:00:00",
+  "aciklama": "BORESIGHTER L V01 (LAZERLİ BORESİGHT) TUSAŞ TÜRK HAVACILIK",
+  "surec_dipnot": "Fatura: GEF2026000000032 (09.06.2026) - TUSAŞ Türk Havacılık ve Uzay Sanayii A.Ş.",
+  "ana": [
+   {
+    "kod": "GMP-101-230027",
+    "miktar": 1.0,
+    "eksik": 1.0
+   }
+  ],
+  "ertelenen": [],
+  "yari_mamul": [
+   {
+    "kod": "GMP-200-240505",
+    "miktar": 1.0
+   },
+   {
+    "kod": "GMP-200-240503",
+    "miktar": 1.0
+   },
+   {
+    "kod": "GMP-200-240508",
+    "miktar": 1.0
+   },
+   {
+    "kod": "GMP-200-240506",
+    "miktar": 1.0
+   },
+   {
+    "kod": "GMP-200-240507",
+    "miktar": 1.0
+   },
+   {
+    "kod": "GMP-200-240509",
+    "miktar": 1.0
+   },
+   {
+    "kod": "GMP-200-240504",
+    "miktar": 1.0
+   },
+   {
+    "kod": "GMP-200-240677",
+    "miktar": 1.0
+   }
+  ],
+  "uyari": [
+   "TUSAŞ: yeni emir açılmaz — açık emir ŞİRKET.1092026-3 düzeltilir (230013 → 230027)"
+  ],
+  "bilgi": [
+   "GMP-101-230027: çok hatlı reçete (3 hat) — girdiler tek hatta",
+   "GMP-200-240506: reçetesiz, operasyon kartlarıyla YM hattı",
+   "GMP-200-240509: reçetesiz, operasyon kartlarıyla YM hattı",
+   "GMP-200-240677: reçetesiz, operasyon kartlarıyla YM hattı"
+  ]
+ },
+ {
+  "plan_no": "PLAN-04",
+  "fatura": "GEF2026000000040",
+  "fatura_tarihi": "2026-07-02",
+  "cari": "5. ANA BAKIM FABRİKA MÜDÜRLÜĞÜ",
+  "emir_tarihi": "2026-07-01 09:00:00",
+  "aciklama": "LAZERLİ NAMLU SIFIRLAMA CİHAZI (20MM/30MM) 5. ANA BAKIM",
+  "surec_dipnot": "Fatura: GEF2026000000040 (02.07.2026) - 5. ANA BAKIM FABRİKA MÜDÜRLÜĞÜ",
+  "ana": [
+   {
+    "kod": "GMP-101-230129",
+    "miktar": 1.0,
+    "eksik": 1.0
+   }
+  ],
+  "ertelenen": [],
+  "yari_mamul": [
+   {
+    "kod": "GMP-200-240505",
+    "miktar": 1.0
+   },
+   {
+    "kod": "GMP-200-240503",
+    "miktar": 1.0
+   },
+   {
+    "kod": "GMP-200-240508",
+    "miktar": 1.0
+   },
+   {
+    "kod": "GMP-200-240507",
+    "miktar": 1.0
+   },
+   {
+    "kod": "GMP-200-240504",
+    "miktar": 1.0
+   },
+   {
+    "kod": "GMP-200-240697",
+    "miktar": 1.0
+   },
+   {
+    "kod": "GMP-200-240698",
+    "miktar": 1.0
+   },
+   {
+    "kod": "GMP-200-240699",
+    "miktar": 1.0
+   }
+  ],
+  "uyari": [],
+  "bilgi": []
+ },
+ {
+  "plan_no": "PLAN-05",
+  "fatura": "GEF2026000000042",
+  "fatura_tarihi": "2026-07-03",
+  "cari": "OTOKAR OTOMOTİV VE SAVUNMA SANAYİ A.Ş.",
+  "emir_tarihi": "2026-07-02 09:00:00",
+  "aciklama": "BORESIGHTER SP (OPTİK BORESİGHT) -7.62 MİL OTOKAR OTOMOTİV VE",
+  "surec_dipnot": "Fatura: GEF2026000000042 (03.07.2026) - OTOKAR OTOMOTİV VE SAVUNMA SANAYİ A.Ş.",
+  "ana": [
+   {
+    "kod": "GMP-101-230022",
+    "miktar": 37.0,
+    "eksik": 36.0
+   }
+  ],
+  "ertelenen": [],
+  "yari_mamul": [
+   {
+    "kod": "GMP-200-230602",
+    "miktar": 13.0
+   },
+   {
+    "kod": "GMP-200-230604",
+    "miktar": 2.0
+   },
+   {
+    "kod": "GMP-200-230605",
+    "miktar": 24.0
+   },
+   {
+    "kod": "GMP-200-230607",
+    "miktar": 4.0
+   },
+   {
+    "kod": "GMP-200-230608",
+    "miktar": 26.0
+   },
+   {
+    "kod": "GMP-200-230610",
+    "miktar": 8.0
+   },
+   {
+    "kod": "GMP-200-230611",
+    "miktar": 13.0
+   },
+   {
+    "kod": "GMP-200-230612",
+    "miktar": 15.0
+   },
+   {
+    "kod": "GMP-200-230613",
+    "miktar": 27.0
+   },
+   {
+    "kod": "GMP-200-230614",
+    "miktar": 19.0
+   },
+   {
+    "kod": "GMP-200-230615",
+    "miktar": 11.0
+   },
+   {
+    "kod": "GMP-200-230616",
+    "miktar": 5.0
+   },
+   {
+    "kod": "GMP-200-230606",
+    "miktar": 4.0
+   },
+   {
+    "kod": "GMP-200-230630",
+    "miktar": 15.0
+   }
+  ],
+  "uyari": [],
+  "bilgi": [
+   "GMP-101-230022: çok hatlı reçete (5 hat) — girdiler tek hatta"
+  ]
+ },
+ {
+  "plan_no": "PLAN-06",
+  "fatura": "GEA2026000000077",
+  "fatura_tarihi": "2026-08-03",
+  "cari": "İZNİK BELEDİYE BAŞKANLIĞI",
+  "emir_tarihi": "2026-07-31 09:00:00",
+  "aciklama": "GEMVOICE IR-610 UHF ALICI İZNİK BELEDİYE BAŞKANLIĞI",
+  "surec_dipnot": "Fatura: GEA2026000000077 (03.08.2026) - İZNİK BELEDİYE BAŞKANLIĞI",
+  "ana": [
+   {
+    "kod": "GMP-101-230064",
+    "miktar": 10.0,
+    "eksik": 8.0
+   }
+  ],
+  "ertelenen": [],
+  "yari_mamul": [],
+  "uyari": [],
+  "bilgi": []
+ },
+ {
+  "plan_no": "PLAN-07",
+  "fatura": "GEF2026000000051",
+  "fatura_tarihi": "2026-09-02",
+  "cari": "OTOKAR OTOMOTİV VE SAVUNMA SANAYİ A.Ş.",
+  "emir_tarihi": "2026-09-01 09:00:00",
+  "aciklama": "BORESIGHTER SP (OPTİK BORESİGHT) -7.62 MİL OTOKAR OTOMOTİV VE",
+  "surec_dipnot": "Fatura: GEF2026000000051 (02.09.2026) - OTOKAR OTOMOTİV VE SAVUNMA SANAYİ A.Ş.",
+  "ana": [
+   {
+    "kod": "GMP-101-230022",
+    "miktar": 32.0,
+    "eksik": 32.0
+   }
+  ],
+  "ertelenen": [],
+  "yari_mamul": [
+   {
+    "kod": "GMP-200-230602",
+    "miktar": 32.0
+   },
+   {
+    "kod": "GMP-200-230603",
+    "miktar": 17.0
+   },
+   {
+    "kod": "GMP-200-230604",
+    "miktar": 32.0
+   },
+   {
+    "kod": "GMP-200-230605",
+    "miktar": 64.0
+   },
+   {
+    "kod": "GMP-200-230607",
+    "miktar": 64.0
+   },
+   {
+    "kod": "GMP-200-230608",
+    "miktar": 64.0
+   },
+   {
+    "kod": "GMP-200-230609",
+    "miktar": 62.0
+   },
+   {
+    "kod": "GMP-200-230610",
+    "miktar": 32.0
+   },
+   {
+    "kod": "GMP-200-230611",
+    "miktar": 32.0
+   },
+   {
+    "kod": "GMP-200-230612",
+    "miktar": 32.0
+   },
+   {
+    "kod": "GMP-200-230613",
+    "miktar": 32.0
+   },
+   {
+    "kod": "GMP-200-230614",
+    "miktar": 32.0
+   },
+   {
+    "kod": "GMP-200-230615",
+    "miktar": 32.0
+   },
+   {
+    "kod": "GMP-200-230616",
+    "miktar": 32.0
+   },
+   {
+    "kod": "GMP-200-230617",
+    "miktar": 20.0
+   },
+   {
+    "kod": "GMP-200-230606",
+    "miktar": 64.0
+   },
+   {
+    "kod": "GMP-200-230630",
+    "miktar": 32.0
+   }
+  ],
+  "uyari": [],
+  "bilgi": [
+   "GMP-101-230022: çok hatlı reçete (5 hat) — girdiler tek hatta"
+  ]
+ },
+ {
+  "plan_no": "PLAN-08",
+  "fatura": "GEF2026000000053",
+  "fatura_tarihi": "2026-09-16",
+  "cari": "TEZ İLERİ TEKNOLOJİLER VE SAV.SAN.TİC.LTD.ŞTİ",
+  "emir_tarihi": "2026-09-15 09:00:00",
+  "aciklama": "PARMAK İZİ İNCELEME MERCEĞİ (LÜP) TEZ İLERİ TEKNOLOJİLER",
+  "surec_dipnot": "Fatura: GEF2026000000053 (16.09.2026) - TEZ İLERİ TEKNOLOJİLER VE SAV.SAN.TİC.LTD.ŞTİ",
+  "ana": [
+   {
+    "kod": "GMP-101-230010",
+    "miktar": 45.0,
+    "eksik": 40.0
+   }
+  ],
+  "ertelenen": [],
+  "yari_mamul": [
+   {
+    "kod": "GMP-200-260041",
+    "miktar": 45.0
+   },
+   {
+    "kod": "GMP-200-230286",
+    "miktar": 45.0
+   },
+   {
+    "kod": "GMP-200-230287",
+    "miktar": 45.0
+   },
+   {
+    "kod": "GMP-200-230288",
+    "miktar": 45.0
+   },
+   {
+    "kod": "GMP-200-230290",
+    "miktar": 45.0
+   },
+   {
+    "kod": "GMP-200-230291",
+    "miktar": 45.0
+   }
+  ],
+  "uyari": [],
+  "bilgi": [
+   "GMP-200-260041: reçetesiz, operasyon kartlarıyla YM hattı",
+   "GMP-200-230290: reçetesiz, operasyon kartlarıyla YM hattı"
+  ]
+ },
+ {
+  "plan_no": "PLAN-09",
+  "fatura": "GEF2026000000057",
+  "fatura_tarihi": "2026-10-01",
+  "cari": "Makine ve Kimya Endüstrisi A.Ş.",
+  "emir_tarihi": "2026-09-30 09:00:00",
+  "aciklama": "LAZER SİLAH SİSTEMİ ADLAS MKE MAKINE VE KIMYA",
+  "surec_dipnot": "Fatura: GEF2026000000057 (01.10.2026) - Makine ve Kimya Endüstrisi A.Ş.",
+  "ana": [
+   {
+    "kod": "GMP-101-230136",
+    "miktar": 1.0,
+    "eksik": 1.0
+   }
+  ],
+  "ertelenen": [],
+  "yari_mamul": [],
+  "uyari": [],
+  "bilgi": []
+ },
+ {
+  "plan_no": "PLAN-10",
+  "fatura": "GEF2026000000059",
+  "fatura_tarihi": "2026-10-02",
+  "cari": "FATİH EMİRDAĞ FAEM ELEKTRONİK",
+  "emir_tarihi": "2026-10-01 09:00:00",
+  "aciklama": "GEMVOICE IR-610 B VHF AKÜ BESLEMELİ ALICI FATİH EMİRDAĞ FAEM",
+  "surec_dipnot": "Fatura: GEF2026000000059 (02.10.2026) - FATİH EMİRDAĞ FAEM ELEKTRONİK",
+  "ana": [
+   {
+    "kod": "GMP-101-230094",
+    "miktar": 1.0,
+    "eksik": 1.0
+   }
+  ],
+  "ertelenen": [],
+  "yari_mamul": [
+   {
+    "kod": "YMGMKRT0075",
+    "miktar": 1.0
+   },
+   {
+    "kod": "YMGMKRT0076",
+    "miktar": 1.0
+   },
+   {
+    "kod": "YMGMKRT0077",
+    "miktar": 1.0
+   }
+  ],
+  "uyari": [],
+  "bilgi": []
+ },
+ {
+  "plan_no": "PLAN-11",
+  "fatura": "GEF2026000000062",
+  "fatura_tarihi": "2026-10-08",
+  "cari": "BİLİŞİM BİLGİSAYAR BEŞARETTİN TÜRK",
+  "emir_tarihi": "2026-10-07 09:00:00",
+  "aciklama": "GEMVOICE IR-610 VHF ALICI BİLİŞİM BİLGİSAYAR BEŞARETTİN",
+  "surec_dipnot": "Fatura: GEF2026000000062 (08.10.2026) - BİLİŞİM BİLGİSAYAR BEŞARETTİN TÜRK",
+  "ana": [
+   {
+    "kod": "GMP-101-230063",
+    "miktar": 5.0,
+    "eksik": 4.0
+   }
+  ],
+  "ertelenen": [],
+  "yari_mamul": [],
+  "uyari": [],
+  "bilgi": []
+ },
+ {
+  "plan_no": "PLAN-12",
+  "fatura": "GEF2026000000063",
+  "fatura_tarihi": "2026-10-16",
+  "cari": "FATİH EMİRDAĞ FAEM ELEKTRONİK",
+  "emir_tarihi": "2026-10-15 09:00:00",
+  "aciklama": "GEMVOICE IR-610 B ANONS ALICI (TELSİZSİZ) FATİH EMİRDAĞ FAEM",
+  "surec_dipnot": "Fatura: GEF2026000000063 (16.10.2026) - FATİH EMİRDAĞ FAEM ELEKTRONİK",
+  "ana": [
+   {
+    "kod": "GMP-101-230093",
+    "miktar": 20.0,
+    "eksik": 20.0
+   },
+   {
+    "kod": "GMP-101-260002",
+    "miktar": 40.0,
+    "eksik": 40.0
+   }
+  ],
+  "ertelenen": [],
+  "yari_mamul": [
+   {
+    "kod": "YMGMÇBK0001",
+    "miktar": 48.0
+   },
+   {
+    "kod": "YMGMKRT0004",
+    "miktar": 32.0
+   }
+  ],
+  "uyari": [],
+  "bilgi": []
+ },
+ {
+  "plan_no": "PLAN-13",
+  "fatura": "GEF2026000000065",
+  "fatura_tarihi": "2026-11-02",
+  "cari": "OTOKAR OTOMOTİV VE SAVUNMA SANAYİ A.Ş.",
+  "emir_tarihi": "2026-10-30 09:00:00",
+  "aciklama": "BORESIGHTER SP (OPTİK BORESİGHT) -7.62 MİL OTOKAR OTOMOTİV VE",
+  "surec_dipnot": "Fatura: GEF2026000000065 (02.11.2026) - OTOKAR OTOMOTİV VE SAVUNMA SANAYİ A.Ş.",
+  "ana": [
+   {
+    "kod": "GMP-101-230022",
+    "miktar": 42.0,
+    "eksik": 42.0
+   }
+  ],
+  "ertelenen": [],
+  "yari_mamul": [
+   {
+    "kod": "GMP-200-230602",
+    "miktar": 42.0
+   },
+   {
+    "kod": "GMP-200-230603",
+    "miktar": 42.0
+   },
+   {
+    "kod": "GMP-200-230604",
+    "miktar": 42.0
+   },
+   {
+    "kod": "GMP-200-230605",
+    "miktar": 84.0
+   },
+   {
+    "kod": "GMP-200-230607",
+    "miktar": 84.0
+   },
+   {
+    "kod": "GMP-200-230608",
+    "miktar": 84.0
+   },
+   {
+    "kod": "GMP-200-230609",
+    "miktar": 84.0
+   },
+   {
+    "kod": "GMP-200-230610",
+    "miktar": 42.0
+   },
+   {
+    "kod": "GMP-200-230611",
+    "miktar": 42.0
+   },
+   {
+    "kod": "GMP-200-230612",
+    "miktar": 42.0
+   },
+   {
+    "kod": "GMP-200-230613",
+    "miktar": 42.0
+   },
+   {
+    "kod": "GMP-200-230614",
+    "miktar": 42.0
+   },
+   {
+    "kod": "GMP-200-230615",
+    "miktar": 42.0
+   },
+   {
+    "kod": "GMP-200-230616",
+    "miktar": 42.0
+   },
+   {
+    "kod": "GMP-200-230617",
+    "miktar": 42.0
+   },
+   {
+    "kod": "GMP-200-230606",
+    "miktar": 84.0
+   },
+   {
+    "kod": "GMP-200-230630",
+    "miktar": 42.0
+   }
+  ],
+  "uyari": [],
+  "bilgi": [
+   "GMP-101-230022: çok hatlı reçete (5 hat) — girdiler tek hatta"
+  ]
+ },
+ {
+  "plan_no": "PLAN-14",
+  "fatura": "GEA2026000000105",
+  "fatura_tarihi": "2026-11-03",
+  "cari": "NAZAR ELEKTRONİK VE TAAHHÜT                  ORHAN DURAN",
+  "emir_tarihi": "2026-11-02 09:00:00",
+  "aciklama": "GEMVOICE IR-610 VHF ALICI NAZAR ELEKTRONİK VE",
+  "surec_dipnot": "Fatura: GEA2026000000105 (03.11.2026) - NAZAR ELEKTRONİK VE TAAHHÜT                  ORHAN DURAN",
+  "ana": [
+   {
+    "kod": "GMP-101-230063",
+    "miktar": 1.0,
+    "eksik": 1.0
+   }
+  ],
+  "ertelenen": [],
+  "yari_mamul": [
+   {
+    "kod": "YMGMKRT0004",
+    "miktar": 1.0
+   },
+   {
+    "kod": "YMGMÇBK0001",
+    "miktar": 1.0
+   }
+  ],
+  "uyari": [],
+  "bilgi": []
+ },
+ {
+  "plan_no": "PLAN-15",
+  "fatura": "GEA2026000000106",
+  "fatura_tarihi": "2026-11-03",
+  "cari": "OĞUZ YILMAZ",
+  "emir_tarihi": "2026-11-02 09:00:00",
+  "aciklama": "GEMVOICE IR-610 VHF ALICI OĞUZ YILMAZ",
+  "surec_dipnot": "Fatura: GEA2026000000106 (03.11.2026) - OĞUZ YILMAZ",
+  "ana": [
+   {
+    "kod": "GMP-101-230063",
+    "miktar": 1.0,
+    "eksik": 1.0
+   }
+  ],
+  "ertelenen": [],
+  "yari_mamul": [
+   {
+    "kod": "YMGMKRT0004",
+    "miktar": 1.0
+   },
+   {
+    "kod": "YMGMÇBK0001",
+    "miktar": 1.0
+   }
+  ],
+  "uyari": [],
+  "bilgi": []
+ },
+ {
+  "plan_no": "PLAN-16",
+  "fatura": "GEA2026000000107",
+  "fatura_tarihi": "2026-11-03",
+  "cari": "MELEKLİ BELEDİYE BAŞKANLIĞI",
+  "emir_tarihi": "2026-11-02 09:00:00",
+  "aciklama": "GEMVOICE IR-610 VHF ALICI MELEKLİ BELEDİYE BAŞKANLIĞI",
+  "surec_dipnot": "Fatura: GEA2026000000107 (03.11.2026) - MELEKLİ BELEDİYE BAŞKANLIĞI",
+  "ana": [
+   {
+    "kod": "GMP-101-230063",
+    "miktar": 4.0,
+    "eksik": 4.0
+   }
+  ],
+  "ertelenen": [],
+  "yari_mamul": [
+   {
+    "kod": "YMGMKRT0004",
+    "miktar": 4.0
+   },
+   {
+    "kod": "YMGMÇBK0001",
+    "miktar": 4.0
+   }
+  ],
+  "uyari": [],
+  "bilgi": []
+ },
+ {
+  "plan_no": "PLAN-17",
+  "fatura": "GEF2026000000067",
+  "fatura_tarihi": "2026-11-05",
+  "cari": "GENÇ TEKNOLOJİ ÜRÜNLERİ VEDAT GENÇ",
+  "emir_tarihi": "2026-11-04 09:00:00",
+  "aciklama": "GEMVOICE IR-610 VHF ALICI GENÇ TEKNOLOJİ ÜRÜNLERİ",
+  "surec_dipnot": "Fatura: GEF2026000000067 (05.11.2026) - GENÇ TEKNOLOJİ ÜRÜNLERİ VEDAT GENÇ",
+  "ana": [
+   {
+    "kod": "GMP-101-230063",
+    "miktar": 40.0,
+    "eksik": 40.0
+   },
+   {
+    "kod": "GMP-101-230064",
+    "miktar": 10.0,
+    "eksik": 10.0
+   }
+  ],
+  "ertelenen": [],
+  "yari_mamul": [
+   {
+    "kod": "YMGMKRT0004",
+    "miktar": 50.0
+   },
+   {
+    "kod": "YMGMÇBK0001",
+    "miktar": 50.0
+   }
+  ],
+  "uyari": [],
+  "bilgi": []
+ }
+]

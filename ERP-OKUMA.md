@@ -563,6 +563,106 @@ UretimRecete
 
 ---
 
+## Malzeme Talep Formu (CEO ERP — `MalzemeTalep`, 2026-11-06)
+
+> ⚠ Uygulamada bu ekrana yazan bir özellik **yok**. 2026-11-06'da kullanıcının açık isteğiyle SIK bağlantı elemanları için tek seferlik SQL ile **A-29 (Id 1230)** yazıldı ("sadece okuma" kuralına onaylı istisna). Ayrıntı: `OTURUM_DEVIR_SIK_MALZEME_TALEP_20261106.md`.
+
+### Tablolar
+
+| Tablo | Açıklama |
+|---|---|
+| `MalzemeTalep` | Başlık (belge no, tarih, durum, talep eden, depo, proje, açıklama) |
+| `MalzemeTalepDetay` | Satırlar (`MalzemeTalepId` → başlık) |
+| `MalzemeTalepDurum` | 1 Yeni Talep · 2 İncelemede · 3 Onaylandı · 4 Tamamlandı · 5 Reddedildi |
+| `MalzemeTalepDurum_Kullanici` | Durum bazında yetkili kullanıcılar |
+| `MalzemeTalepSiparisBaglantisi` | Talep satırı → sipariş bağlantısı (`MalzemeTalepDetayId`) |
+| `StokSiparis.MalzemeTalepId`, `StokTeklif.MalzemeTalepId` | Talepten oluşturulan sipariş/teklif |
+| `MalzemeTalepView` | Liste ekranının okuduğu view (durum adı ve cari ünvanı ile join) |
+
+Trigger yok. Ayrı bir belge numarası sayaç tablosu yok: `BelgeSiraNo`, seri içinde `MAX + 1` olarak veriliyor. Güncel seri `A` (A-1'den başlıyor); eski kayıtlarda seri NULL (son 191).
+
+### Başlık alanları (ERP'nin kendi oluşturduğu kayıtlardaki değerler)
+
+`BolgeId=2`, `DepoKartId=2` (Merkez), `YaziciSablonu='MalzemeTalep.repx'`, `BelgeSeriNo='A'`, `DurumId=1`, `PersonelId` → `StokPersonel` (18 = Savaş Adıgüzel, 28 = Tunahan Güler), `ProjeId` → `Proje` (80117 = "SABİT IŞIK 18 ADET"), `Aciklama = Dipnot = Not1` (aynı metin), tüm toplamlar 0, `Acik=0`, `CreatedBy` → `CeoCommon.dbo.Kullanici.UserId` (`BDE76801-…` = Savaş Adıgüzel, `CAFDFB52-…` = Nur Sema Sağlam; durum değişikliklerini genelde o yapıyor).
+
+**⚠ `ModificationTime` ve `ModifiedBy` NULL bırakılmamalı.** Yeni kayıtta `ModificationTime = CreationTime`, `ModifiedBy = CreatedBy` yazılmalı. NULL kalırsa CEO formda kayıt güncellenirken iyimser eşzamanlılık kontrolü (`@Original_ModificationTime`) NULL'u `DateTime.MinValue`'ya çevirir ve **"SqlDateTime taşması. 1/1/1753 … ile 12/31/9999 … arasında olmalı"** hatası verir (`DAL.MalzemeTalepDb.Update`). 213 kaydın içinde bu alanları NULL olan tek kayıt, SQL ile yazılan 1230'du.
+
+### Detay alanları
+
+- **`Turu=1` (stok kartlı satır):** `KartId` → `StokKarti.Id`, `KdvYuzdesi` = kartın `KdvOrani`, `StokBirimId` = kartın `StokBirim`, `Miktar = BirimKatsayi = KalanMiktar`, `Tutar=0`, `SatirKdvMatrahi=0`, `Yazdirma=0`, `SiraNo` 1'den başlayarak artar. `BirimFiyat` boş bırakılır (fiyatı satınalma girer).
+- **`Turu=5` (serbest satır):** `KartId` NULL; `Aciklama`'ya malzeme adı ya da ürün linki yazılır (kullanıcılar burada sıkça web linki kullanıyor). `Miktar` ve `KalanMiktar` dolu olur.
+- **`Turu=3`:** Az kullanılıyor (6 kayıt), incelenmedi.
+- `KalanMiktar`, talep siparişe dönüştükçe düşüyor; Tamamlandı durumundaki taleplerde 0.
+
+### Ekran davranışı
+
+- SQL ile eklenen kayıt, açık CEO oturumunda **görünmez**; CEO kapatılıp açılınca listede görünür (önbellek).
+- "Bu talep zaten istendi mi?" kontrolü için kullanıcı **son 2 ayın** taleplerine bakılmasını istedi (durum fark etmeksizin). Kontrolde alternatif/mükerrer stok kodları da taranmalı; aynı vida farklı kartlarla istenmiş olabiliyor (örn. M2x5 için `HMVİDA0031` / `HMVİDA0004`).
+
+---
+
+## Sene Sonu — Eksi Bakiyeli Reçeteler ve Fatura Bazlı Üretim Emri (`tools/sene_sonu_uretim/`, 2026-11-11)
+
+**Amaç:** Satılıp üretim girişi yapılmamış (bakiyesi eksi) reçeteli mamulleri, eksiye düşüren **satış faturasının içeriğiyle birebir** üretim emri açarak kapatmak; sonra alt malzemede eksiye düşenleri muhasebeye toplu bildirmek.
+
+**Scriptler** (hepsi `C:\yeni-erp`'den çalıştırılır):
+- `analiz.py <data.pkl>` — reçeteler, tüm kart bakiyeleri (Üretim Eksik Stok formülü), açık emirler → pickle.
+- `rapor.py`, `satis.py`, `plan.py <data.pkl> <xlsx>` — analiz Excel'i (1–11. sayfalar): kademeli net ihtiyaç (low-level code), ürün bazında satış-stok, eksiye düşüren hareketler, fatura bazlı plan.
+- `gen_plan.py <data.pkl> <plan.json>` — **fatura miktarıyla birebir** emir planı. Eksik miktar FIFO ile faturalara dağıtılır; eksiye düşüren her fatura = 1 emir, miktar = fatura miktarı. Yarı mamul satırı (HatTipi=2) kronolojik netlemeyle (eski fatura önce stoğu kullanır) eklenir. Emir tarihi = fatura tarihi − 1 gün (hafta sonu → Cuma). Çok hatlı reçete ve reçetesiz mamulde `uyari` dolar.
+- `emir_yaz.py <plan.json> PLAN-xx [--commit]` — tek emri yazar; `--commit` yoksa transaction geri alınır. Uyarılı plan, SeriNoTakibi açık kart veya aynı fatura için önceden açılmış emir (SurecDipnot'ta fatura no) varsa yazmaz.
+
+**CEO ERP üretim emri yapısı (yerel emirlerden çözüldü, salt okuma ile):**
+- `UretimEmri`: `Kodu = 'ŞİRKET.' + gün + ay + yıl (sıfırsız, OLUŞTURMA tarihi) + '-' + günlük sıra` (ör. 10.9.2026 → `ŞİRKET.1092026-1`). `UretimYontemi=1`, `UretimTeknigi=1`, `DurumId=3` (Devam Ediyor; 5=Tamamlandı), `Acik=0`, `PlanlananBas/Bitis = emir günü 00:01 / 23:59`, `CreatedBy=ModifiedBy`, `CreationTime=ModificationTime` (NULL bırakılmaz). Proje/Sipariş/Müşteri alanları yerel emirlerde de boş.
+- Açıklama düzeni: `"ÜRÜN ADI + CARİ"`. Biz `SurecDipnot`'a `Fatura: <no> (<tarih>) - <cari>` yazıyoruz (fatura izlenebilirliği + mükerrer koruması).
+- `UretimEmriHatPlani`: HatTipi=1 ana ürün, HatTipi=2 aynı emirde üretilen yarı mamul. `Miktar=1`, `TalepMiktari=üretilecek adet`, `Birim=TalepBirim=kart birimi`, `StokDepoId=2`, `sira`.
+- `UretimEmriHatPlaniGirdi`: aktif reçetenin `UretimReceteHatPlaniGirdi` satırlarının birebir kopyası — `Miktar` (birim başı), `TalepMiktar = Miktar × adet` (SabitMiktar ise Miktar), `StokBirim=BirimId`, `StokDepoId=DepoId`, `FireOrani`, `SabitMiktar`, `GarantiKapsami=GarantiKapsaminda`, `Yazilmasin=0`. 230063'te yerel emirle 27/27 satır aynı çıktı.
+- `UretimEmriTarihce`: `'Üretim emri hareketi durumu değişti.Eski durum : BOŞ Yeni durum : Devam Ediyor'`, `YeniUretimDurumId=3`, `IsOnay=0`.
+- **Stok hareketi yazılmaz.** 16 (Üretimden Giriş) / 17 (Üretime Çıkış) hareketleri CEO'da hat tamamlanınca oluşur ve `UretimEmriHatPlaniStokHareketleri` (UretimHatPlaniTuru 0=giriş, 1=çıkış) ile bağlanır. "Devam Ediyor" emirde bile tamamlanmış YM hatlarının hareketleri olabilir.
+- Dört tabloda Id IDENTITY, trigger yok.
+
+**Yazılan emirler (2026-11-11, hepsi Devam Ediyor, stok hareketi yok):**
+
+| Kod | Id | Plan | Emir tarihi | Fatura | Ürün(ler) |
+|---|---|---|---|---|---|
+| ŞİRKET.11112026-1 | 210908 | PLAN-15 (deneme, kullanıcı CEO'da onayladı) | 02.11.2026 | GEA2026000000106 Oğuz Yılmaz | 230063 ×1 + YM 0004/ÇBK0001 ×1 |
+| ŞİRKET.11112026-2 | 210916 | PLAN-04 | 01.07.2026 | GEF2026000000040 5. Ana Bakım | 230129 ×1 + 8 YM (GMP-200-2405xx/2406xx) |
+| ŞİRKET.11112026-3 | 210917 | PLAN-06 | 31.07.2026 | GEA2026000000077 İznik Bld. | 230064 ×10 |
+| ŞİRKET.11112026-4 | 210918 | PLAN-09 | 30.09.2026 | GEF2026000000057 MKE | 230136 ADLAS ×1 (506 girdi: 391 stok + 115 masraf) |
+| ŞİRKET.11112026-5 | 210919 | PLAN-11 | 07.10.2026 | GEF2026000000062 Bilişim | 230063 ×5 |
+| ŞİRKET.11112026-6 | 210920 | PLAN-14 | 02.11.2026 | GEA2026000000105 Nazar | 230063 ×1 + YM ×1 |
+| ŞİRKET.11112026-7 | 210921 | PLAN-16 | 02.11.2026 | GEA2026000000107 Melekli Bld. | 230063 ×4 + YM ×4 |
+| ŞİRKET.11112026-8 | 210922 | PLAN-17 | 04.11.2026 | GEF2026000000067 Genç Teknoloji | 230063 ×40 + 230064 ×10 + YM ×50 |
+
+| ŞİRKET.11112026-9 | 210927 | PLAN-05 (çok hatlı deneme, onaylandı) | 02.07.2026 | GEF2026000000042 Otokar | 230022 ×37 + 14 YM |
+| ŞİRKET.11112026-10 | 210933 | PLAN-02 | 07.04.2026 | GEA2026000000037 Caracal | 230032 ×1 |
+| ŞİRKET.11112026-11 | 210934 | PLAN-07 | 01.09.2026 | GEF2026000000051 Otokar | 230022 ×32 + 17 YM |
+| ŞİRKET.11112026-12 | 210935 | PLAN-08 | 15.09.2026 | GEF2026000000053 TEZ | 230010 Lüp ×45 + 6 YM |
+| ŞİRKET.11112026-13 | 210936 | PLAN-12 (kısmi) | 15.10.2026 | GEF2026000000063 FAEM | 260002 ×40 + YM; **230093 ×20 reçete gelince bu emre eklenecek** |
+| ŞİRKET.11112026-14 | 210937 | PLAN-13 | 30.10.2026 | GEF2026000000065 Otokar | 230022 ×42 + 17 YM (fatura 42; notta seri 0094–0136 = 43) |
+
+**Düzeltilen yerel emir:** `ŞİRKET.1092026-3` (TUSAŞ, Devam Ediyor) sira 5 `KartId` 230013 (L v04) → 230027 (L v01) — fatura GEF2026000000032 ile birebir; satırda stok hareketi yoktu. Not: aynı emrin 230016 satırında girdiler iki kez yazılmış (96 satır, çoğu mükerrer) — dokunulmadı.
+
+**Çok hatlı reçete kuralı:** CEO, reçeteden emir açınca her reçete hattının KARTINI üretir (230022 reçetesi → 230016 + 230033; 230027 reçetesi → 230013). Bu yüzden ana hat = satılan mamul (230022/230027), girdiler tüm hatlardan düzleştirilir; başka hatta girdi olarak tüketilen hat kartı (230027'de 240502) alt hat sayılır. Reçetesi olmayan ama `KOD:XX` operasyon kartı olan parça eksikse operasyon kartlarıyla HatTipi=2 satırı açılır (yerel Lüp emri ŞİRKET.2442025-14 düzeni). Tipi=0 girdisiz alt hat kayıtları (Lüp YM'leri) hat sayılmaz.
+
+**Bilinçli dokunulmayan:** 230063 eski açık emirleri Bilişim `1092026-1` (×10) ve AES `962026-25` (×5) — muhasebe mailinde not edilecek.
+
+| ŞİRKET.11112026-15 | 210940 | PLAN-01 | 24.12.2025 | GEA2025000000119 Van Bld. | 230111 ×1 + YM KRT0066/0078 |
+| ŞİRKET.11112026-16 | 210941 | PLAN-10 | 01.10.2026 | GEF2026000000059 FAEM | 230094 ×1 + YM KRT0075/76/77 |
+
+`ŞİRKET.11112026-13` (FAEM) sonradan `emir_esitle.py` ile 230093 ×20 eklendi, YM KRT0004 11→32, ÇBK0001 27→48.
+
+**Yazılan reçeteler (2026-11-11, `recete_yaz.py`):** 230111 (Id 110346, kaynak emir ŞİRKET.912026-2), 230094 (110347, kaynak 25102021-10), 230093 (110348, kaynak 2172020-4). Hat = ürünün kendisi (Tipi=1), girdiler kaynak emrin birim başı miktarları. Pasif kartlar kullanıcı kararıyla değiştirildi: HMGMDDAL009→YMGMÇBK0001, HMGMDDAL086→YMGMDPK0001, HMGMDDAL002 (diplik takım)→YMGMÇBK0001+YMGMDPK0001. `UretimReceteHatPlaniGirdi.Yazdirma` NOT NULL — `sw/erp_handler.py` bu alanı yazmıyor (default'a güveniyor).
+
+**TUSAŞ emri ŞİRKET.1092026-3 ek düzeltmeleri (`tusas_duzelt.py`):** 230016 satırındaki girdiler 230016 reçetesinden iki kat gelmişti (reçetenin kendisi 96 satır/47 tekil) → 48 mükerrer girdi silindi; 230027 için 8 YM (2405xx + 240677) ve 230016 için 5 YM (230605 ×2, 230610/612/613/614) hattı eklendi.
+
+**Muhasebe listesi (`muhasebe_eksi_liste.py` → `muhasebe_eksi_malzeme_20261111.xlsx`):** emirler tamamlandığında bakiye = bugünkü bakiye + hat üretimleri − girdi tüketimleri (Tipi≠2). Sonuç: 91 satın alma kalemi (~509 bin ₺) + 46 operasyon kartı (~208 bin ₺) eksiye düşer; yarı mamul eksisi yok. Ek sayfalar: emirlerle ilgisiz 4 eksi kart, notlar.
+
+**Mükerrer girdili aktif reçeteler (düzeltilmedi):** 230016, 230033, 230037, 230038, 230040, 230107, GMP-300-230001, MMPBIŞIK01, MMSBIŞIK002, YMPKIŞIK003, YMTKANCA01.
+
+**Açık konular:** çok hatlı reçeteler (230022, 230027, Lüp yarı mamulleri) için hat eşlemesi henüz yapılmadı; reçetesiz mamuller 230093/094/111; TUSAŞ açık emrinde v04↔v01 farkı; Caracal 230032 kapalı emir girişsiz; Bilişim/AES açık 230063 emirleri.
+
+---
+
 ## Sıradaki Geliştirmeler
 
 1. **PDF gömme** — teknik resim PDF'lerini `StokKarti.DokumanPath`'e bağlama
