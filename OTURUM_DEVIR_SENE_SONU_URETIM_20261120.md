@@ -1,8 +1,9 @@
 # Oturum Devri — Sene Sonu Üretim Emirleri: KAPANIŞ TAMAMLANDI
 
 **Tarih:** 2026-11-20 · **Önceki devir:** `OTURUM_DEVIR_SENE_SONU_URETIM_20261111.md` (emirlerin açılışı, kararlar)
-**Son commit:** `a6bcab6`. Bu oturumda yazılan scriptler ve `ERP-OKUMA.md` **commit edilmedi, push yapılmadı.**
+**Son commit:** `9be920c` (push edildi). §9 ve §10 sonradan eklendi, henüz commit edilmedi.
 **Durum:** ✅ 16 sene sonu emrinin hepsi **Tamamlandı**. Sene sonu emirlerinin girdi kartlarında eksi bakiye yok. Açık kalan küçük işler §7'de.
+**▶ DEVAM NOKTASI: §10 (güncel), ayrıntı §9.** Son tarih 27.11.2026 (eksik üretimler), sayım 30.11.2026. Bekleyen kararlar: 3 eski emir (muhasebe mi, hemen kapanış mı), 230093 ve HAV-HPB0001 için yeni emir.
 
 ---
 
@@ -123,3 +124,86 @@ Hepsi `--commit` verilmezse rollback (deneme) çalışır. `tamamla_dene.py` esk
 - 2025 kapsam dışı (fatura ve emir analizlerinde yalnız 2026).
 - Faturayla uyumsuz emir silinir. Faturası henüz kesilmemiş ama kesilecek emir (`2082026-1`) silinmez.
 - Yazma işlemlerinde önce deneme (rollback), sonuç gösterilir, sonra `--commit`; her yazmada JSON yedek.
+
+## 9. ▶ Devam noktası: kalan 4 açık emir (2026-11-20, son durum)
+
+Sene sonu emirleri bittikten sonra ERP'de **4 emir Devam Ediyor (DurumId=3)** durumunda kaldı. Bunlar sene sonu kapsamına girmemişti, çünkü ürünlerinin bakiyesi eksi değildi.
+
+| Emir | Ürün | Fatura | Bakiye (bugün) | Kapanırsa | Karar |
+|---|---|---|---|---|---|
+| `ŞİRKET.1862026-10` RSTEK (emir tarihi 07.06.2026) | GMP-101-230030 Boresighter SP 12X ×1 (1 hat) | GEF2026000000029, 08.06.2026, RSTEK ×1 | 0 | +1 | **Kapatılacak** (kullanıcı: "doğru, artıya geçmeli") |
+| `ŞİRKET.1862026-7` RSTEK (08.06.2026) | GMP-101-230044 120-122 mm adaptör ×1 (1 ana + 7 YM hattı) | GEF2026000000029, 08.06.2026, RSTEK ×1 | 0 | +1 | **Kapatılacak** |
+| `ŞİRKET.1862026-8` Unirobotics (18.06.2026) | GMP-101-230035 12,7 mm mil ×5 (1 hat) | GEF2026000000028, 04.06.2026, Unirobotics ×5 | +5 | +10 | **Kapatılacak** |
+| `ŞİRKET.2082026-1` Portatif Işık Kaynağı-30 (20.08.2026) | GMP-101-230107 ×45 (13 hat) | henüz kesilmedi | 0 | +45 | **Açık kalacak**: fatura kesilince kapatılacak; 230107 reçetesi iki kat, kapatmadan önce girdileri düzelt |
+
+**Engel:** İlk üç emrin girdileri hiçbir depoda yok, bugün itibarıyla bile. Ürünler fiziksel olarak üretilmiş, ama parça girişleri ERP'de yapılmamış.
+- `1862026-10`: 23 kalem eksik, ~10.127 ₺ (12X gövde/prizma/paralaks parçaları, lens grupları YMB-V00-R00-23001/23002, aksesuar SPORTAKS004, kılavuz 240660, o-ring, vida…)
+- `1862026-7`: 28 kalem eksik, ~4.733 ₺ (rulmanlar SKF6195 ×3 ve 240606, pimler, imbus vidalar, çene montajı YMB-V00-R00-23008 ×3, YM operasyon kartları :50/:90/:115…)
+- `1862026-8`: 2 kalem eksik, ~7 ₺ (HM.İNX.VİD.017 ×5, HMÇLKISH007 3,75)
+- Liste: `C:\yeni-erp\uc_emir_eksik_kalemler_20261120.xlsx` (gitignore'da, commit edilmez)
+- Masraf ön izlemesi: `-10` ve `-7`'de doldurulacak masraf yok. `-8`'de 2 satır yazılabilir (4.250 ₺; 5 satır zaten dolu). Henüz yazılmadı.
+
+**Kullanıcıya sunulan seçenekler (cevap bekleniyor):**
+1. **(Önerilen) Muhasebe yolu:** Liste muhasebeye gönderilir; girişler **07.06.2026'dan önce** tarihli yapılır. Sonra `masraf_doldur.py --emir` (`-8`) ve `toplu_kapat.py` ile üç emir emir tarihleriyle kapatılır. İstenirse muhasebe mail metni hazırlanacak.
+2. **Hemen kapanış:** Şimdi kapatılır, 53 kalem eksiye düşer (son alış fiyatıyla maliyetlenir), muhasebe sonradan düzeltir. Bunun için `toplu_kapat.py`'deki "yeni eksi oluşursa dur" kontrolünü bilerek gevşetmek gerekir.
+
+**Kapanış için teknik notlar:**
+- `toplu_kapat.py`'nin `PLAN` listesi sabit. Bu üç emir için PLAN'a eklenmeli: `('ŞİRKET.1862026-10','07.06.2026')`, `('ŞİRKET.1862026-7','08.06.2026')`, `('ŞİRKET.1862026-8','18.06.2026')`. Ya da `--plan` parametresi eklenmeli.
+- `masraf_doldur.py` ve `mukerrer_masraf_sil.py` varsayılan olarak yalnız `SurecDipnot LIKE 'Fatura:%'` emirlerini tarar. Bu üç emir için `masraf_doldur.py --emir X` kullan; `mukerrer_masraf_sil.py` için sorgu kapsamını genişlet.
+- Unirobotics emri faturadan (04.06) sonra tarihli (18.06). Kullanıcı bu haliyle kabul etti.
+
+**Bundan sonra sırayla:**
+1. Kullanıcının seçimine göre üç emri kapat → `kapanis_karsilastir.py` benzeri doğrulama + bakiye kontrolü (beklenen: 230030 +1, 230044 +1, 230035 +10).
+2. §7'deki açık işler: 230093 (FAEM ×50) ve HAV-HPB0001 (Ford ×43) için yeni emir kararı; talep 115 iptali; muhasebeye bildirimler; kalan 10 iki kat reçete (önce 230107).
+
+## 10. ▶ GÜNCEL DEVAM NOKTASI: Kalite maili ve sayım takvimi (2026-11-20, oturum sonu)
+
+Kalite bölümünden gelen mail (özet):
+- **27.11.2026 Cuma'ya kadar** eksik üretimler CEO'da tamamlanmış olmalı, birim fiyatlar kontrol edilerek. Muhasebe muhatabı **Fatma Hanım**; gerekirse Muhammet dahil edilir.
+- **Stok sayımı 30.11.2026 Pazartesi** başlıyor (mailde "30.11.2027" yazıyor; 2027'de 30.11 Salı → yazım hatası). Sayımı **İsmail** yönetecek, **İbrahim Bey** dahil; kalite sorumlusu sayımda depoda olacak.
+- Sayımdan önce sayım gününden dönem sonuna kadarki **sipariş durumları** çıkarılıp üretim için gereken malzemeler ayrılacak.
+- Depo sayımından sonra **Ar-Ge malzemeleri** sayımı planlanacak.
+
+**27.11'e kadar yapılacak üretimler:**
+
+| İş | Durum |
+|---|---|
+| 16 sene sonu emri | ✅ Tamamlandı (birim fiyatlar depo bazlı FIFO ile CEO yöntemine uygun) |
+| RSTEK `1862026-10`, RSTEK `1862026-7`, Unirobotics `1862026-8` | ⏳ 53 kalem girdi eksik (~14,9 bin ₺) → §9; muhasebe mi, hemen kapanış mı, kullanıcı kararı bekleniyor |
+| GMP-101-230093 FAEM ×50 (GEF2026000000073, 13.11) | ⏳ Yeni emir açılması onay bekliyor |
+| HAV-HPB0001 Ford ×43 (GEF2026000000070, 10.11) | ⏳ Yeni emir açılması onay bekliyor |
+| `2082026-1` Portatif Işık ×45 | Fatura kesilmeden açık; 27.11 öncesi kesilirse listeye girer (önce 230107 iki kat reçete düzeltmesi) |
+
+**Kullanıcıya önerilen sıra (onaylanmadı; "sonra devam edeceğiz" dendi):**
+1. Üç eski emir için karar + **Fatma Hanım'a tek muhasebe maili**. İçeriği:
+   - 53 eksik kalem (`uc_emir_eksik_kalemler_20261120.xlsx`), giriş tarihi 07.06.2026'dan önce olmalı.
+   - 240570 / 240602 fiyat teyidi (1.615 / 2.500 ₺).
+   - 230016 iki kat düzeltmesiyle stoğa geri dönen 14 kalem (§7.5).
+   - Kapanış tarihi ileri alınan 4 emir (`-2` 16.10, `-9` / `-11` 21.10, `-12` 06.10).
+   - Talep 115'in gereksiz olduğu.
+2. 230093 ve HAV-HPB0001 için fatura birebir emir aç (fatura−1 gün) → `masraf_doldur.py --emir` → `toplu_kapat.py` (PLAN'a ekle).
+3. Sayım hazırlığı (hafta içi):
+   - (a) açık satış siparişleri + 30.11'den dönem sonuna kadarki üretim ihtiyacı → malzeme ayırma raporu;
+   - (b) depo bazlı yazdırılabilir sayım listeleri (kod, ad, birim, ERP bakiyesi; depo bakiyesi k23 dahil hesaplanmalı); Ar-Ge için de;
+   - (c) sayım sonrası fark raporu (tutar bazlı).
+
+Bellek: `project_stok_sayimi_2026.md` (takvim), `project_sene_sonu_eksi_recete.md` (iş geçmişi).
+
+## 11. Kural + hazırlık (2026-11-20, §10'dan sonra)
+
+- **KURAL (kullanıcı):** Yarı mamul ve hammadde stokları eksiye düşürülmez → üç eski emir için yalnız **muhasebe yolu**. "Hemen kapatma" seçeneği iptal.
+- **HAV-HPB0001 (Ford ×43, emir tarihi 09.11.2026):** reçete tek hat, 2 girdi; hepsi yeterli, mükerrer yok, masraf yok → **hemen açılıp kapatılabilir** (kullanıcı onayı bekleniyor). Fatura birebir → bakiye −27 → +16.
+- **GMP-101-230093 (FAEM ×50, emir tarihi 12.11.2026):** reçete tek hat, 24 girdi. YMGMKRT0004 ×50 ve YMGMÇBK0001 ×50 eksik → aynı emirde YM hattı olarak üretilecek (girdileri yeterli). 7 hammadde/sarf eksik (HMGMDDAL120 50, HMGMKBL0095 0,25, HMGMKLM0004 100, SARF0000006 50, SARF0000001 578, SARF0000003 300, SARF0000021 50) → muhasebe girişi gerekiyor. Perçin ANONS'ta (depo düzeltmesi otomatik).
+- **Muhasebe listesi:** `C:\yeni-erp\muhasebe_eksik_giris_20261120.xlsx`. 60 satır: üç eski emir (53) + 230093 (7). Tahmini ≈18,1 bin ₺; 29 satırda alış fiyatı yok, fiyatı muhasebe belirleyecek. Mail taslağı kullanıcıya verildi (Fatma Hanım'a).
+- **Muhasebe girişi gelince:** `muhasebe_kontrol.py "muhasebe_eksik_giris_20261120.xlsx"` ile kontrol (sayfa adı farklı; gerekirse uyarla) → 3 eski emir + 230093 emrini aç/kapat (`toplu_kapat.py` PLAN'a ekle).
+
+## 12. Sayım öncesi liste (2026-11-20)
+
+`tools/sene_sonu_uretim/sayim_oncesi_liste.py` (salt okuma) → `sayim_oncesi_liste_20261120.xlsx`:
+- **1-Sayım Fazlası Girişi:** tek fiş, Merkez, tarih ≤ 06.06.2026; 60 kalem (3 eski emir + 230093), ≈18,1 bin ₺ + 29 fiyatsız kalem.
+- **2-Sayım Eksiği Çıkışı:** tek fiş, sayımdan önce; 230016 iki kat düzeltmesi × SYM202600003 çakışan 14 kalem; düşülecek = min(iade, SYM) → ≈24,1 bin ₺.
+- **3-Yapılacak Üretimler:** A (faturalı, kayıt eksik: 3 eski emir, HAV ×43 hazır, 230093 ×50) + B (açık satış siparişlerinden: 230107 ×45 = 2082026-1, HAV ×100, 230063 ×15, KRT0004 ×11, 230085 ×40, 230111 ×3, 230093 ×50, 230036 ×7, 230129 ×1). Haziran öncesi siparişler "hâlâ geçerli mi" teyit bekliyor. Reçetesiz: 230115, 230136-1.
+- **3a:** B grubunun eksik malzemeleri (sıralı düşümle).
+- **Karar (kullanıcı):** Muhasebe yalnız sayım fazlası girişini yapacak (`muhasebe_eklenecek_kalemler_20261120.xlsx`, 60 kalem, tarih ≤ 06.06.2026). Fazla görünen 14 kalem için çıkış yapılmayacak, yıl sonu sayımında düzelecek. Dosya 20.11.2026'da muhasebeye gönderildi.
+- `fatura_uretim_fark.py` → `fatura_uretim_fark_20261120.xlsx`: 31 reçeteli ürün; bekleyen 5 iş kapanınca eksi kalan ürün yok.
+- **Sıradaki:** muhasebe girişi gelince `muhasebe_kontrol.py` ile doğrula → 1862026-10 / -7 / -8 kapat, 230093 ×50 emrini aç-kapat. HAV ×43 onay bekliyor.
