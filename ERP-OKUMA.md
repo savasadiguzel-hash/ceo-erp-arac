@@ -710,6 +710,20 @@ python tools/etiket/etiket.py --coz S326552                              # okutu
 
 **Henüz doğrulanmadı (yazıcı gelince):** yerleşik font 0'ın Türkçe karakterleri (`ğ ş İ ı`) basıp basmadığı. Basmazsa `--font E:TT0003M_.TTF` ya da yazıcıya yüklenecek bir Unicode font kullanılacak. `^BQ` QR'ın üst boşluk kayması da kontrol edilecek. PNG önizleme Arial Narrow ile yapılan yaklaşık bir çizimdir. Önizlemedeki Code128'i betik kendisi çizer ve bağımsız bir okuyucuyla test edilmedi. Gerçek barkodu yazıcı kendisi kodlar.
 
+**Durum (2026-11-23): planlama aşaması.** Kullanıcı kararı: önce aşağıdaki kararlar alınacak, betik üzerinde ondan sonra çalışılacak.
+
+**Aday sarf malzemesi:**
+- **Etiket:** Labelika 70×30 kuşe (ribonsepeti.com), akrilik yapışkan, 40 mm kuka, ruloda 1.500 adet, en az 14 rulo, 138 ₺ + KDV. Fiyatın birimi (rulo mu) teyit edilecek. Termal transfer, ribon gerekiyor. ZT231'e uygun: kuka 25–76 mm, basılabilir en fazla genişlik 104 mm, rulo dış çapı en fazla 203 mm.
+  - Satıcıya sorulacak: tek sıra mı, dışa sarım mı, etiketler arası boşluk var mı.
+  - Yağlı, ıslak ortamda ya da doğrudan metal parçada kuşe yerine PP etiket kullanılmalı.
+- **Ribon:** ZT231 için 1" (25,4 mm) kuka, **dışa sarım (ink-out)**, 300 veya 450 mt (en fazla 450 mt), 70 ya da 80 mm genişlik, tercihen wax-resin. 74 mt'lik kısa ribonlar masaüstü yazıcılar içindir, ZT231'e uymaz. 300 mt ribon yaklaşık 9.000 adet 70×30 etikete yeter.
+
+**Alınacak kararlar:**
+- **Donanım:** yazıcı 203 mi 300 dpi mı (30x15 gibi küçük etiket gerekiyorsa 300); 2D okuyucu kablolu mu kablosuz mu, Türkçe Q klavye ayarı var mı; tek etiket ölçüsü mü, küçük parçalar için ikinci bir ölçü de mi; kuşe mi PP mi; wax mı wax-resin mi.
+- **Etiket içeriği:** şu an QR, Code128, kod, ad ve birim var. Proje, depo veya tarih gibi alanlar eklenecek mi?
+- **Süreç:** kapsam (bakiyeli 2.970 kart mı, hareket görmüş tüm kartlar mı); yeni stok girişinde etiketi kim ve ne zaman basacak; etiket nereye yapışacak (parça, kutu/poşet, raf); raf/lokasyon etiketi olacak mı.
+- **Program:** okut-gör ve sayım modu ekranları; ayrı program mı, yeni sekme mi; ERP'ye yazma (Barkod1, depo hareketleri) ileride düşünülecek mi.
+
 **Sonraki adımlar:** etiket ölçüsü ve içeriği kesinleşince sabitlenecek. Okut-gör ekranı (kart, depo bakiyeleri, reçete kullanımı) ve sayım modu (yerel kayıt, ERP bakiyesiyle fark raporu) yapılacak; ERP'ye yazma yok.
 
 ---
