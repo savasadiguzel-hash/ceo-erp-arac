@@ -330,6 +330,7 @@ main.py / config.py / config.json / build.bat / setup.iss / create_installer.bat
 db/      baglanti.py, sorgular.py
 logic/   maliyet.py, excel.py, excel_is_emri.py, pdf_is_emri.py, mamul_agaci_excel_oku.py
 tools/   fatura_eslestir.py, mutabakat.py, satilip_uretilmemis.py
+         etiket/etiket.py (Zebra ZPL stok etiketi + PNG önizleme; cikti/ git dışı)
 ui/      ana_pencere.py, maliyet.py, mamul_agaci_tab.py, tarama.py, eslestirme.py, rapor.py
          tab_satis_faturalari.py, tab_erp_aktar.py, tab_sw.py, tab_uretim_raporu.py
          tab_fatura_eslestir.py, tab_recete_sorgula.py, tab_stok_hazirla.py
@@ -680,6 +681,36 @@ Trigger yok. Ayrı bir belge numarası sayaç tablosu yok: `BelgeSiraNo`, seri i
 İşveren maliyeti = `BrutKazanc + SgkIsverenPrimi + IssizlikIsverenPrimi − teşvikler`. `[507]` GEMPA ÖZEL firmasında 35 kişilik kopya kart var, hesaplanmış bordro yok.
 
 **`\\Win-3fatbi9rqaa\ceo` klasörü:** Ceo.exe v8.17.0.4 (DevExpress 20.2, EF6, CefSharp); `data\` altında SQL veri dosyaları (61 mdf; `CeoCommon_1.LDF` ≈ 33 GB); `Yedek\` (son `504.bak` 05.10.2026, dönem DB yedekleri 16.03.2026); `Scripts\` (CeoCommon/Firma/Donem/View/Menu şema scriptleri); `CustomScripts\MRP\`; `Log\` (günlük Ceo/Common/Datakontrol logları); `*Design\` (rapor tasarımları). ⚠ `Ceo.exe.config` içinde `sa` bağlantı dizesi şifresiyle düz metin olarak duruyor.
+
+---
+
+## Barkod / Stok Etiketi (`tools/etiket/`, 2026-11-23, salt okuma)
+
+Hedef donanım Zebra ZT231 (ZPL, Ethernet, 9100 portu) ve 2D okuyucu. Etiketlerde QR ve Code128 birlikte kullanılır. Etiket ölçüsü henüz kesin değil, betik ölçüyü parametre olarak alır.
+
+**Barkod içeriği = `S` + `StokKarti.Id` (6 hane)**, örneğin `S326552`. İçerik stok kodunun kendisi değil, çünkü:
+- aktif kodların 915'inde Türkçe karakter, 162'sinde boşluk var; 2 kodda kontrol karakteri (`S<0x1F>_H66488S5`), 1 kodda uzun tire (`NR 6028 – 2R2`), 3 kodda `\` var;
+- kod uzunluğu 2 ile 37 karakter arasında değişiyor; 37 karakterlik bir kod Code128'de 8–9 cm ediyor;
+- okuyucu klavye taklidi yaptığı için Türkçe Q düzende `İŞÇ:-/_` karakterleri bozuk gelebiliyor;
+- `CLF6045NIT-470M-D` kodu iki ayrı aktif kartta mükerrer.
+
+Kullanıcı kararı (2026-11-23): stok kodlarına ve adlarına şimdilik dokunulmayacak. `Barkod1` ve `Barkod2` (StokKarti) ile `StokBarkod` tablosu boş, onlara da yazılmıyor. Kod, ad ve birim etikete okunur yazı olarak basılır. Önekler ileride başka etiket türlerine genişletilebilir: `R` raf/lokasyon, `E` iş emri.
+
+**Kapsam:** 11.743 aktif kartın 9.397'si hareket görmüş, 2.970'inin bakiyesi sıfırdan büyük (`stok_guncel_bakiyeleri`). `RafNumarasi` alanı neredeyse boş, sadece 1 kartta dolu.
+
+```
+python tools/etiket/etiket.py --kod GMP-200-240431 --kod HMVİDA0015   # seçili kartlar
+python tools/etiket/etiket.py --bakiyeli --olcu 50x25 --png 0           # bakiyeli tüm kartlar
+python tools/etiket/etiket.py --id 326552 --olcu 30x15 --dpi 300
+python tools/etiket/etiket.py --kod X --yazici <IP>                      # doğrudan yazıcıya (9100)
+python tools/etiket/etiket.py --coz S326552                              # okutulan değer → kart
+```
+
+**Yerleşim:** Önce "yan" düzen denenir: QR solda; kod (kalın, sığması için küçültülür), ad (en fazla 3 satır), Code128 ve `S###### BİRİM` sağda. Code128 sağ sütuna sığmazsa "alt" düzene geçilir: barkod alt bantta tüm genişliğe yayılır. 70x30 ve 100x50'de yan düzen; 50x25, 40x20 ve 30x15'te (300 dpi) alt düzen kullanılır. 40x20 ve daha küçükte `S######` yazısı basılmaz, değer QR ve barkodun içinde zaten var. Code128 modülü 0,25 mm; sığmazsa 2 nokta. ZPL'de `^CI28` (UTF-8), `^FH` ile `\ ^ ~` kaçışı ve `^BC…,A` (otomatik mod) kullanılır.
+
+**Henüz doğrulanmadı (yazıcı gelince):** yerleşik font 0'ın Türkçe karakterleri (`ğ ş İ ı`) basıp basmadığı. Basmazsa `--font E:TT0003M_.TTF` ya da yazıcıya yüklenecek bir Unicode font kullanılacak. `^BQ` QR'ın üst boşluk kayması da kontrol edilecek. PNG önizleme Arial Narrow ile yapılan yaklaşık bir çizimdir. Önizlemedeki Code128'i betik kendisi çizer ve bağımsız bir okuyucuyla test edilmedi. Gerçek barkodu yazıcı kendisi kodlar.
+
+**Sonraki adımlar:** etiket ölçüsü ve içeriği kesinleşince sabitlenecek. Okut-gör ekranı (kart, depo bakiyeleri, reçete kullanımı) ve sayım modu (yerel kayıt, ERP bakiyesiyle fark raporu) yapılacak; ERP'ye yazma yok.
 
 ---
 

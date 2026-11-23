@@ -57,3 +57,6 @@ CEO-ERP-Araclar.spec
 
 dist/*.log
 dist/*.png
+
+# Etiket betiği çıktıları
+tools/etiket/cikti/
