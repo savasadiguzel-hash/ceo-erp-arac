@@ -686,7 +686,7 @@ Trigger yok. Ayrı bir belge numarası sayaç tablosu yok: `BelgeSiraNo`, seri i
 
 ## Barkod / Stok Etiketi (`tools/etiket/`, 2026-11-23, salt okuma)
 
-Hedef donanım Zebra ZT231 (ZPL, Ethernet, 9100 portu) ve 2D okuyucu. Etiketlerde QR ve Code128 birlikte kullanılır. Etiket ölçüsü henüz kesin değil, betik ölçüyü parametre olarak alır.
+Alınan donanım Zebra ZD220t (ZPL, USB, 203 dpi) ve Zebra DS2278 2D okuyucudur (önceki hedef ZT231 idi). Etiketlerde QR ve Code128 birlikte kullanılır. Etiket ölçüsü henüz kesin değil, betik ölçüyü parametre olarak alır.
 
 **Barkod içeriği = `S` + `StokKarti.Id` (6 hane)**, örneğin `S326552`. İçerik stok kodunun kendisi değil, çünkü:
 - aktif kodların 915'inde Türkçe karakter, 162'sinde boşluk var; 2 kodda kontrol karakteri (`S<0x1F>_H66488S5`), 1 kodda uzun tire (`NR 6028 – 2R2`), 3 kodda `\` var;
@@ -710,7 +710,17 @@ python tools/etiket/etiket.py --coz S326552                              # okutu
 
 **Henüz doğrulanmadı (yazıcı gelince):** yerleşik font 0'ın Türkçe karakterleri (`ğ ş İ ı`) basıp basmadığı. Basmazsa `--font E:TT0003M_.TTF` ya da yazıcıya yüklenecek bir Unicode font kullanılacak. `^BQ` QR'ın üst boşluk kayması da kontrol edilecek. PNG önizleme Arial Narrow ile yapılan yaklaşık bir çizimdir. Önizlemedeki Code128'i betik kendisi çizer ve bağımsız bir okuyucuyla test edilmedi. Gerçek barkodu yazıcı kendisi kodlar.
 
-**Durum (2026-11-23): planlama aşaması.** Kullanıcı kararı: önce aşağıdaki kararlar alınacak, betik üzerinde ondan sonra çalışılacak.
+**SATIN ALMA KARARI (2026-11-23):** ZT231 yerine aşağıdaki set alınıyor:
+- **Yazıcı:** Zebra ZD220t: termal transfer, 203 dpi, yerel ZPL, **yalnızca USB** (Ethernet yok).
+- **Etiket:** Labelika 70×30 mm kuşe zarf etiketi (hepsiburada), ruloda 1.500 adet. Miktar aktif/bakiyeli stok sayısına göre belirlenecek.
+- **Okuyucu:** Zebra DS2278 kablosuz (Bluetooth) kit, stand ve USB ile.
+
+**Açık kalanlar:**
+- **Ribon listede yok.** ZD220t için 110 mm × 74 m wax veya wax-resin, 12,7 mm (0,5") kuka, dışa sarım alınmalı. 300/450 m'lik endüstriyel ribonlar bu yazıcıya uymaz.
+- **Etiket kukası:** ZD220t 12,7 ve 25,4 mm kuka alır. 38 mm ve üstü kukalar sorunlu olabilir; satıcıya sorulacak.
+- **USB yazdırma:** `etiket.py --yazici` şu an IP:9100'e gönderiyor. ZD220t'de Ethernet yok, bu yüzden Windows yazıcı kuyruğuna RAW ZPL gönderen bir seçenek eklenecek (yazıcı gelince).
+- **DS2278:** 123Scan ile Türkçe Q klavye ayarı yapılıp `S######` okuma testi yapılacak (iade süresi içinde).
+- Varsayılan ölçü 70x30 / 203 dpi'dir (yan düzen: QR + Code128 sağ sütunda).
 
 **Aday sarf malzemesi:**
 - **Etiket:** Labelika 70×30 kuşe (ribonsepeti.com), akrilik yapışkan, 40 mm kuka, ruloda 1.500 adet, en az 14 rulo, 138 ₺ + KDV. Fiyatın birimi (rulo mu) teyit edilecek. Termal transfer, ribon gerekiyor. ZT231'e uygun: kuka 25–76 mm, basılabilir en fazla genişlik 104 mm, rulo dış çapı en fazla 203 mm.
