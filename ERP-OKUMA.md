@@ -710,7 +710,7 @@ python tools/etiket/etiket.py --coz S326552                              # okutu
 
 **Henüz doğrulanmadı (yazıcı gelince):** yerleşik font 0'ın Türkçe karakterleri (`ğ ş İ ı`) basıp basmadığı. Basmazsa `--font E:TT0003M_.TTF` ya da yazıcıya yüklenecek bir Unicode font kullanılacak. `^BQ` QR'ın üst boşluk kayması da kontrol edilecek. PNG önizleme Arial Narrow ile yapılan yaklaşık bir çizimdir. Önizlemedeki Code128'i betik kendisi çizer ve bağımsız bir okuyucuyla test edilmedi. Gerçek barkodu yazıcı kendisi kodlar.
 
-**SATIN ALMA KARARI (2026-11-23):** ZT231 yerine aşağıdaki set alınıyor:
+**SİPARİŞ EDİLDİ (2026-11-23):** ZT231 yerine aşağıdaki set alındı:
 - **Yazıcı:** Zebra ZD220t: termal transfer, 203 dpi, yerel ZPL, **yalnızca USB** (Ethernet yok).
 - **Etiket:** Labelika 70×30 mm kuşe zarf etiketi (hepsiburada), ruloda 1.500 adet. Miktar aktif/bakiyeli stok sayısına göre belirlenecek.
 - **Okuyucu:** Zebra DS2278 kablosuz (Bluetooth) kit, stand ve USB ile.
