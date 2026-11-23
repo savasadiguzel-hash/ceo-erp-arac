@@ -716,7 +716,7 @@ python tools/etiket/etiket.py --coz S326552                              # okutu
 - **Okuyucu:** Zebra DS2278 kablosuz (Bluetooth) kit, stand ve USB ile.
 
 **Açık kalanlar:**
-- **Ribon listede yok.** ZD220t için 110 mm × 74 m wax veya wax-resin, 12,7 mm (0,5") kuka, dışa sarım alınmalı. 300/450 m'lik endüstriyel ribonlar bu yazıcıya uymaz.
+- **Ribon:** Dijital Barkod Wax Ribon 110 × 74 m, wax out, 1/2" kuka (hepsiburada) eklendi. Bir ribon yaklaşık 2.200 etiket basar, sayısı etiket rulosu sayısına göre belirlenir.
 - **Etiket kukası:** ZD220t 12,7 ve 25,4 mm kuka alır. 38 mm ve üstü kukalar sorunlu olabilir; satıcıya sorulacak.
 - **USB yazdırma:** `etiket.py --yazici` şu an IP:9100'e gönderiyor. ZD220t'de Ethernet yok, bu yüzden Windows yazıcı kuyruğuna RAW ZPL gönderen bir seçenek eklenecek (yazıcı gelince).
 - **DS2278:** 123Scan ile Türkçe Q klavye ayarı yapılıp `S######` okuma testi yapılacak (iade süresi içinde).
