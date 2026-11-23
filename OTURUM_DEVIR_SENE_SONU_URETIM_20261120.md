@@ -207,3 +207,10 @@ Bellek: `project_stok_sayimi_2026.md` (takvim), `project_sene_sonu_eksi_recete.m
 - **Karar (kullanıcı):** Muhasebe yalnız sayım fazlası girişini yapacak (`muhasebe_eklenecek_kalemler_20261120.xlsx`, 60 kalem, tarih ≤ 06.06.2026). Fazla görünen 14 kalem için çıkış yapılmayacak, yıl sonu sayımında düzelecek. Dosya 20.11.2026'da muhasebeye gönderildi.
 - `fatura_uretim_fark.py` → `fatura_uretim_fark_20261120.xlsx`: 31 reçeteli ürün; bekleyen 5 iş kapanınca eksi kalan ürün yok.
 - **Sıradaki:** muhasebe girişi gelince `muhasebe_kontrol.py` ile doğrula → 1862026-10 / -7 / -8 kapat, 230093 ×50 emrini aç-kapat. HAV ×43 onay bekliyor.
+
+## 13. Fiyatsız kalemler tamamlandı (2026-11-23)
+
+- `tools/sene_sonu_uretim/fiyatsiz_tamamla.py` → `muhasebe_eklenecek_kalemler_FIYATLI_20261123.xlsx`: 26 fiyatsız kaleme önerilen fiyat yazıldı. Kur farkı: TL ÷ alış günü USD × bugünkü USD (USD 50,4028 / EUR 55,2974). Genel toplam ≈35.203 ₺.
+- **Karar (kullanıcı):** Mükerrer girdiler üretim emrinden çıkarılacak, muhasebe listesine girmez. Listeden çıkan 3 kalem (1862026-10): YMB-V00-R00-23001, YMB-V00-R00-23002, SPORTAKS004. Ana liste 57 kalem.
+- Kullanıcı dosyada kendi düzenlemelerini yapıp 23.11.2026'da muhasebeye gönderdi (gönderilen son hali bizde değil).
+- **Sıradaki:** muhasebe girişi gelince `muhasebe_kontrol.py` ile doğrula → 1862026-10'dan 3 mükerrer girdiyi çıkar (YAZMA, onay gerekli) → -7 / -8 / -10 ve 230093 ×50 emirlerini kapat. Açık konu: YMB-V00-R00-23008 ×3 (1862026-7) mükerrer mi, ürün sorumlusuna sorulacak.
