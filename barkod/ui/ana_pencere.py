@@ -3,8 +3,8 @@
 Okuyucu klavye kaması (HID) modunda çalışır: barkodu okutma kutusuna yazar
 ve Enter gönderir. Cihaz yokken kutuya S468311 + Enter yazmak aynı işi görür.
 
-Faz 1 modları (ERP'ye YAZMAZ): Sorgula, Sayım.
-Faz 2+ (Giriş / Çıkış / Transfer / Reçete) henüz kapalı.
+Modlar: Sorgula, Sayım (ERP'ye yazmaz) · Giriş 20 / Çıkış 21 / Transfer 23 (CEO'ya fiş YAZAR,
+önce "Kontrol et" deneme yazımı, sonra onaylı "Kaydet") · Reçeteye ekle (henüz kapalı).
 """
 from __future__ import annotations
 
@@ -190,9 +190,6 @@ class SayimSayfasi(QWidget):
         h.addWidget(QLabel('Depo:'))
         self.depo = QComboBox(); self.depo.setMinimumWidth(260)
         h.addWidget(self.depo)
-        h.addWidget(QLabel('Sayan:'))
-        self.sayan = QLineEdit(); self.sayan.setMaximumWidth(160)
-        h.addWidget(self.sayan)
         self.b_yeni = QPushButton('Yeni sayım'); self.b_yeni.clicked.connect(self.yeni)
         self.b_devam = QPushButton('Yarım kalanı aç'); self.b_devam.clicked.connect(self.devam)
         self.b_excel = QPushButton('Excel'); self.b_excel.clicked.connect(self.excel)
@@ -232,7 +229,6 @@ class SayimSayfasi(QWidget):
     def _butonlar(self):
         var = self.oturum is not None
         self.depo.setEnabled(not var)
-        self.sayan.setEnabled(not var)
         self.b_yeni.setEnabled(not var)
         self.b_devam.setEnabled(not var)
         for b in (self.b_excel, self.b_bitir, self.b_duzelt, self.b_sil):
@@ -243,9 +239,13 @@ class SayimSayfasi(QWidget):
         from barkod.sayim import SayimOturumu
         if not self.p.conn:
             return
-        self.oturum = SayimOturumu.yeni(self.depo.currentData(), self.depo.currentText(), self.sayan.text().strip())
+        sayan = self.p.kullanici_adi()          # sayan = sağ üstte seçili CEO kullanıcısı
+        if not sayan:
+            QMessageBox.information(self, 'Sayım', 'Önce sağ üstten Kullanıcı seçin.')
+            return
+        self.oturum = SayimOturumu.yeni(self.depo.currentData(), self.depo.currentText(), sayan)
         self._yenile(); self._butonlar()
-        self.durum.emit(f'Sayım başladı: {self.oturum.depo_adi}. Okutmaya başlayın.')
+        self.durum.emit(f'Sayım başladı: {self.oturum.depo_adi} · sayan {sayan}. Okutmaya başlayın.')
 
     def devam(self):
         from barkod.sayim import SayimOturumu, acik_oturumlar
@@ -363,14 +363,16 @@ class SayimSayfasi(QWidget):
 
 # ───────────────────────── ana pencere ─────────────────────────
 class BarkodPencere(QMainWindow):
-    MODLAR = [('Sorgula', True), ('Sayım', True), ('Giriş', False), ('Çıkış', False),
-              ('Transfer', False), ('Reçeteye ekle', False)]
+    MODLAR = [('Sorgula', True), ('Sayım', True), ('Giriş', True), ('Çıkış', True),
+              ('Transfer', True), ('Reçeteye ekle', False)]
+    FIS_MODLARI = {2: 20, 3: 21, 4: 23}   # mod düğmesi → fiş türü
 
     def __init__(self):
         super().__init__()
         self.conn = None
         self.depo_adlari: dict = {}
         self._t = None
+        self._kart_cache: dict[int, dict] = {}
         self.setWindowTitle('CEO Barkod')
         self.resize(1180, 820)
         self.setStyleSheet(_STIL)
@@ -389,6 +391,10 @@ class BarkodPencere(QMainWindow):
         self.grup.button(0).setChecked(True)
         self.grup.buttonClicked[int].connect(self._mod_degisti)
         ust.addStretch()
+        ust.addWidget(QLabel('Kullanıcı:'))
+        self.kullanici = QComboBox(); self.kullanici.setMinimumWidth(190); self.kullanici.setFocusPolicy(Qt.ClickFocus)
+        self.kullanici.currentIndexChanged.connect(self._kullanici_secildi)
+        ust.addWidget(self.kullanici)
         self.bag = QLabel('Bağlanıyor…'); self.bag.setStyleSheet('color:#757575;')
         ust.addWidget(self.bag)
         lay.addLayout(ust)
@@ -406,6 +412,11 @@ class BarkodPencere(QMainWindow):
         self.sayim.durum.connect(self._durum)
         self.sayfalar.addWidget(self.sorgula)
         self.sayfalar.addWidget(self.sayim)
+        from barkod.ui.hareket import HareketSayfasi
+        self.hareket = {}
+        for mod, islem in self.FIS_MODLARI.items():
+            sy = HareketSayfasi(self, islem); sy.durum.connect(self._durum)
+            self.hareket[mod] = sy; self.sayfalar.addWidget(sy)   # sayfa indeksi = mod
         lay.addWidget(self.sayfalar, 1)
         self.setCentralWidget(merkez)
 
@@ -424,13 +435,46 @@ class BarkodPencere(QMainWindow):
         self.conn = conn
         self.depo_adlari = depolar(conn)
         self.sayim.depolari_doldur(self.depo_adlari)
+        for sy in self.hareket.values():
+            sy.depolari_doldur(self.depo_adlari)
+        from barkod.ayar import ayar_oku, kullanicilar
+        secili = ayar_oku().get('kullanici_guid')
+        self.kullanici.blockSignals(True)
+        self.kullanici.addItem('— seçin —', None)
+        for g, ad in kullanicilar(conn):
+            self.kullanici.addItem(ad, g)
+        if secili:
+            self.kullanici.setCurrentIndex(max(0, self.kullanici.findData(secili)))
+        self.kullanici.blockSignals(False)
         self.bag.setText('<span style="color:#2e7d32">● CEO bağlı</span>')
         self.okut.setEnabled(True); self.okut.setFocus()
 
+    # ── ortak ──
+    def _kullanici_secildi(self, _):
+        from barkod.ayar import ayar_yaz
+        ayar_yaz(kullanici_guid=self.kullanici.currentData())
+
+    def kullanici_guid(self):
+        return self.kullanici.currentData()
+
+    def kullanici_adi(self) -> str:
+        return self.kullanici.currentText() if self.kullanici.currentData() else ''
+
+    def mesgul(self) -> bool:
+        return bool(self._t and self._t.isRunning())
+
+    def kart_ozet(self, kid: int) -> dict:
+        if kid not in self._kart_cache:
+            from barkod.sorgu import kart_ozetleri
+            self._kart_cache.update(kart_ozetleri(self.conn, [kid]))
+        return self._kart_cache[kid]
+
     # ── mod ──
     def _mod_degisti(self, i: int):
-        if i <= 1:
+        if i < self.sayfalar.count():
             self.sayfalar.setCurrentIndex(i)
+        if i in self.FIS_MODLARI and not self.kullanici_guid():
+            self._durum('Fiş yazmak için sağ üstten Kullanıcı seçin.')
         self.okut.setFocus()
 
     # ── okutma ──
@@ -453,6 +497,11 @@ class BarkodPencere(QMainWindow):
                 self._durum('Sorgu bitmeden sayım okutulamaz, tekrar okutun.')
                 self._geri_bildirim(False); return
             self._geri_bildirim(self.sayim.okut(deger))
+        elif mod in self.hareket:
+            if self.mesgul():
+                self._durum('Sorgu bitmeden okutulamaz, tekrar okutun.')
+                self._geri_bildirim(False); return
+            self._geri_bildirim(self.hareket[mod].okut(deger))
         self.okut.setFocus()
 
     def _sorgu_bitti(self, k, deger):

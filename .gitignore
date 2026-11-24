@@ -60,3 +60,9 @@ dist/*.png
 
 # Etiket betiği çıktıları
 tools/etiket/cikti/
+
+# Barkod programı yerel verileri
+barkod_ayar.json
+barkod_fis_gunlugu.jsonl
+barkod_sayim/
+barkod.log

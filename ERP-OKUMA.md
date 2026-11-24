@@ -778,6 +778,30 @@ python tools/etiket/etiket.py --coz S326552                              # okutu
 **Fazlar:**
 - **Faz 1 BİTTİ (2026-11-24):** Sorgula + Sayım + etiket USB çıkışı. ERP'ye yazmaz.
 - **Faz 2:** Giriş / Çıkış / Transfer doğrudan stok fişi (kullanıcı kararı). **Fiş türleri (kullanıcı, 2026-11-24): serbest giriş = 20 Sayım fazlası, serbest çıkış = 21 Sayım eksiği, transfer = 23.** Kalıp `tools/sene_sonu_uretim/hat_kapat.py`'den alınacak, önizleme + onay, eksiye düşürmez.
+- **Faz 2 YAZILDI (2026-11-24), henüz gerçek fiş yazılmadı:**
+  - `barkod/fis.py`:
+    - `taslak_hazirla(conn, islem, depo, karsi_depo, tarih, [(kart_id, miktar, elle_fiyat|None)], notlar, kullanici_guid)` hesaplar ve kontrol eder, yazmaz.
+    - `fis_yaz(conn, taslak, commit)`: tek transaction; `commit=False` deneme modudur (yazar, kontrol eder, ROLLBACK).
+  - **Kalıp:**
+    - Başlık: `BelgeSeriNo` (20 `SYM`, 21 `SYMCKS`, 23 boş). `BelgeSiraNo` = aynı tür+serinin en son (Id'ce) fişinin numarası + 1, `UPDLOCK`.
+    - 20/21'de `BelgeTarihi` gece yarısıdır. 23'te bugünse oluşturma anı, geçmiş tarihse 12:00.
+    - Başlıkta ve detayda `DepoKartId`/`KarsiDepoKartId` yazılır.
+    - Detaylar tek tek eklenir. Her execute'tan sonra `_bosalt` ile bekleyen sonuçlar tüketilir: eski `{SQL Server}` sürücüsü MARS desteklemiyor, yoksa "Bağlantı diğer bir hstmt sonuçları ile meşgul" hatası verir.
+  - **Maliyet:** 21/23'te kaynak depoda depo bazlı FIFO (`hat_kapat.py` ile aynı). 20'de fiyatı >0 olan son giriş/transfer birim fiyatı; elle düzeltilebilir.
+  - **Engeller:**
+    - Pasif kart, birimsiz kart, miktar ≤ 0.
+    - Çıkış/transferde kaynak depo bakiyesi (belge tarihi ve bugünün küçüğü) yetersizse. Örnek: Merkez perçin −232 → engellendi.
+    - Transferde aynı depo seçilmişse.
+    - Kullanıcı yoksa ya da açıklama boşsa; açıklamada "Claude" geçemez.
+  - **Yazım sonrası kontroller** (sorun varsa ROLLBACK):
+    - Şirket bakiyesi beklenen kadar değişmeli (20 +, 21 −, 23 0).
+    - `StokKumulatif` değişimi beklenene eşit olmalı (önceden farklı olan kartlar için önce/sonra farkı; ±0,011).
+    - Kaynak depo eksiye düşmemeli.
+  - **Ekran** (`barkod/ui/hareket.py`): Giriş / Çıkış / Transfer sayfaları; sağ üstte CEO kullanıcısı seçimi (`CeoCommon.dbo.Kullanici`, `barkod_ayar.json`'da hatırlanır).
+    - "Kontrol et" deneme yazımı yapar. "CEO'ya kaydet" özet onayı alır, yeniden hesaplar, sonra COMMIT eder.
+    - Liste, depo veya tarih değişince kontrol düşer.
+    - Kaydedilen her fiş `barkod_fis_gunlugu.jsonl`'a da yazılır.
+  - **Deneme testleri:** 23 ANONS→Merkez, 21 Merkez, 20 Merkez (elle fiyat dahil) temiz geçti. Kalıcı kayıt 0. Geri alınan denemeler Id boşluğu bırakır (zararsız).
 - **Faz 3:** Reçeteye ekleme.
 - **Faz 4:** İrsaliye ile mal kabul kontrolü.
 - Plan: `~/.claude/plans/barkod-projesinde-…md`.
