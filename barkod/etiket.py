@@ -100,6 +100,45 @@ def depo_bakiyeli_kartlar(conn, depo_id: int | None = None) -> list[Kart]:
     return sonuc
 
 
+def depo_kartlari(conn, depo_id: int | None = None) -> list[Kart]:
+    """Etiket listesi için AKTİF kartlar — bakiye 0 ve eksi dahil.
+
+    depo_id verilirse: o depoda (transfer hedefi dahil) hiç hareketi olmuş aktif kartlar,
+    bakiye o deponun bakiyesidir. depo_id None ise: tüm aktif stok kartları, bakiye şirket toplamıdır.
+    """
+    from barkod.sorgu import depo_bakiyeleri, kart_ozetleri
+    from db.baglanti import cursor_ctx
+
+    with cursor_ctx(conn) as cur:
+        if depo_id is not None:
+            cur.execute("""
+                SELECT DISTINCT shd.IslemKartId
+                FROM StokHareketDetay shd
+                JOIN StokHareket sh ON sh.Id = shd.HareketId
+                WHERE shd.Turu = 1 AND shd.Aktif = 1 AND sh.Aktif = 1 AND shd.IslemKartId IS NOT NULL
+                  AND (COALESCE(shd.DepoKartId, sh.DepoKartId) = ?
+                       OR (sh.IslemKodu = 23 AND COALESCE(shd.KarsiDepoKartId, sh.KarsiDepoKartId) = ?))
+            """, depo_id, depo_id)
+        else:
+            cur.execute("SELECT Id FROM StokKarti WHERE Aktif = 1")
+        idler = [int(r[0]) for r in cur.fetchall()]
+    if not idler:
+        return []
+
+    bakiye: dict[int, float] = {}
+    for (kid, _), m in depo_bakiyeleri(conn, depo_id=depo_id).items():
+        bakiye[kid] = bakiye.get(kid, 0.0) + m
+
+    ozetler = kart_ozetleri(conn, idler)
+    sonuc = [
+        Kart(kid, oz['kodu'], oz['adi'], oz['birim'], round(bakiye.get(kid, 0.0), 6), True)
+        for kid, oz in ozetler.items()
+        if oz.get('aktif')
+    ]
+    sonuc.sort(key=lambda k: k.kodu)
+    return sonuc
+
+
 # ───────────────────────── Code128 (önizleme + genişlik hesabı) ─────────────────────────
 _C128 = ("212222 222122 222221 121223 121322 131222 122213 122312 132212 221213 "
          "221312 231212 112232 122132 122231 113222 123122 123221 223211 221132 "

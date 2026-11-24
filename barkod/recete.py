@@ -161,6 +161,86 @@ def hat_girdileri_getir(conn, hat_plani_id: int) -> list[dict]:
     } for r in rows]
 
 
+def _sorgu(conn, sql: str, *param) -> list:
+    with cursor_ctx(conn) as cur:
+        cur.execute(sql, *param)
+        return cur.fetchall()
+
+
+def recete_etiket_kalemleri(conn, recete_id: int, cok_seviye: bool = True, mamul_dahil: bool = True,
+                            max_seviye: int = 8) -> tuple[list[dict], list[str]]:
+    """Etiket basımı için reçetedeki fiziksel stok parçaları (YALNIZ OKUR).
+
+    Dönüş: ([{'kart_id', 'miktar' (1 mamül için toplam), 'seviye'}], atlanan_operasyon_kodlari)
+      - Masraf girdileri (Tipi=2) alınmaz; StokKarti tarafına girilmiş `P:XX` operasyon kodları da atlanır.
+      - Çok hatlı reçetede hat grubu kartları (alt montaj) da listeye eklenir, bileşenleri zaten aynı reçetededir.
+      - cok_seviye=True ise kendi aktif reçetesi olan bileşenler özyinelemeli açılır (döngü korumalı).
+    """
+    r = _sorgu(conn, "SELECT Kodu FROM UretimRecete WHERE Id = ?", recete_id)
+    if not r:
+        return [], []
+    kok_kodu = (r[0][0] or '').strip()
+    toplam: dict[int, dict] = {}
+    atlanan: set[str] = set()
+
+    def _ekle(kid: int, miktar: float, seviye: int):
+        k = toplam.get(kid)
+        if k:
+            k['miktar'] += miktar
+            k['seviye'] = min(k['seviye'], seviye)
+        else:
+            toplam[kid] = {'kart_id': kid, 'miktar': miktar, 'seviye': seviye}
+
+    def _recete_bul(kodu: str) -> int | None:
+        rr = _sorgu(conn, """
+            SELECT MIN(ur.Id) FROM UretimRecete ur
+            WHERE ur.Kodu = ? AND (ur.KullanimDisi IS NULL OR ur.KullanimDisi = 0)
+              AND EXISTS (SELECT 1 FROM UretimReceteHatPlani hp WHERE hp.UretimReceteId = ur.Id)
+        """, kodu)
+        return int(rr[0][0]) if rr and rr[0][0] is not None else None
+
+    def _gez(rid: int, rkodu: str, carpan: float, seviye: int, yol: frozenset):
+        girdiler = _sorgu(conn, """
+            SELECT g.KartId, sk.Kodu, SUM(ISNULL(g.Miktar, 0))
+            FROM UretimReceteHatPlani hp
+            JOIN UretimReceteHatPlaniGirdi g ON g.UretimReceteHatPlaniId = hp.Id
+            JOIN StokKarti sk ON sk.Id = g.KartId
+            WHERE hp.UretimReceteId = ? AND g.Tipi = 1 AND g.KartId IS NOT NULL
+            GROUP BY g.KartId, sk.Kodu
+        """, rid)
+        gruplar = _sorgu(conn, """
+            SELECT DISTINCT hp.KartId, sk.Kodu
+            FROM UretimReceteHatPlani hp
+            JOIN StokKarti sk ON sk.Id = hp.KartId
+            WHERE hp.UretimReceteId = ? AND hp.KartId IS NOT NULL
+        """, rid)
+        grup_idler = {int(k) for k, kd in gruplar if (kd or '').strip() != rkodu}
+        girdi_idler = {int(k) for k, _, _ in girdiler}
+        for kid in grup_idler - girdi_idler:
+            _ekle(kid, carpan, seviye)
+        for kid, kodu, m in girdiler:
+            kid, kodu = int(kid), (kodu or '').strip()
+            if kodu.count(':') == 1:
+                atlanan.add(kodu)
+                continue
+            mm = float(m or 0) * carpan
+            _ekle(kid, mm, seviye)
+            # Hat grubu kartlarının bileşenleri zaten bu reçetede → tekrar açılmaz
+            if cok_seviye and seviye < max_seviye and kid not in grup_idler and kodu not in yol:
+                alt = _recete_bul(kodu)
+                if alt:
+                    _gez(alt, kodu, mm if mm > 0 else carpan, seviye + 1, yol | {kodu})
+
+    _gez(recete_id, kok_kodu, 1.0, 1, frozenset({kok_kodu}))
+    if mamul_dahil:
+        mk = _sorgu(conn, "SELECT TOP 1 Id FROM StokKarti WHERE Kodu = ? AND Aktif = 1", kok_kodu)
+        if mk:
+            toplam.pop(int(mk[0][0]), None)
+            toplam[int(mk[0][0])] = {'kart_id': int(mk[0][0]), 'miktar': 1.0, 'seviye': 0}
+    sonuc = sorted(toplam.values(), key=lambda x: x['seviye'])
+    return sonuc, sorted(atlanan)
+
+
 # ───────────────────────── taslak hazırlama ─────────────────────────
 def recete_taslak_hazirla(
     conn,

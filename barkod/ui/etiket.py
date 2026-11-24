@@ -2,7 +2,8 @@
 
 CEO ERP'den YALNIZCA OKUR.
 Özellikler:
-  - 30.11 Sayım hazırlığı: seçili depoda (veya tüm şirkette) bakiyesi > 0 olan aktif kartları tek tıkla yükleme.
+  - Kartları Getir: seçili depoda hareketi olan (veya tüm şirketteki) aktif kartları bakiye 0 / eksi dahil yükleme.
+  - Reçeteden Getir: mamül reçetesindeki fiziksel parçaları (isteğe bağlı tüm alt seviyeler) listeye ekleme.
   - Barkod okutarak veya stok kodu yazarak listeye kart ekleme / etiket adedini artırma.
   - Kod/ad arama filtresi, görünenleri seçme/kaldırma, kopya adedi düzenleme.
   - Seçili satır için gerçek oranlı canlı PNG önizleme (QR + Code128 + kod/ad/birim).
@@ -11,21 +12,22 @@ CEO ERP'den YALNIZCA OKUR.
 from __future__ import annotations
 
 import logging
+import math
 from datetime import datetime
 from pathlib import Path
 
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from PyQt5.QtGui import QColor, QPixmap
 from PyQt5.QtWidgets import (
-    QAbstractItemView, QApplication, QCheckBox, QComboBox, QDialog, QFileDialog,
-    QGroupBox, QHBoxLayout, QHeaderView, QInputDialog, QLabel, QLineEdit,
-    QMessageBox, QPushButton, QSpinBox, QSplitter, QTableWidget, QTableWidgetItem,
-    QVBoxLayout, QWidget,
+    QAbstractItemView, QApplication, QButtonGroup, QCheckBox, QComboBox, QCompleter, QDialog,
+    QDialogButtonBox, QFileDialog, QGroupBox, QHBoxLayout, QHeaderView, QInputDialog, QLabel,
+    QLineEdit, QMessageBox, QPushButton, QRadioButton, QSpinBox, QSplitter, QTableWidget,
+    QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
 from barkod.ayar import ayar_oku, ayar_yaz
 from barkod.etiket import (
-    HAZIR_OLCULER, Kart, barkod_degeri, depo_bakiyeli_kartlar, kurulu_yazicilar,
+    HAZIR_OLCULER, Kart, barkod_degeri, depo_kartlari, kurulu_yazicilar,
     olcu_coz, png_bytes_uret, toplu_zpl_uret, usb_yaziciya_gonder,
     varsayilan_zebra_bul, yerlesim_hesapla,
 )
@@ -102,7 +104,7 @@ def _onizleme_ciz(kart: Kart | None, olcu_metni: str, dpi: int,
 
 
 # ───────────────────────── arka plan yükleyici ─────────────────────────
-class _BakiyeliYukleThread(QThread):
+class _KartYukleThread(QThread):
     bitti = pyqtSignal(list, str)   # (list[Kart], depo_etiketi)
     hata = pyqtSignal(str)
 
@@ -116,7 +118,7 @@ class _BakiyeliYukleThread(QThread):
             from config import DB_DEFAULTS
             from db.baglanti import baglanti_ctx
             with baglanti_ctx(**DB_DEFAULTS) as conn:
-                kartlar = depo_bakiyeli_kartlar(conn, self._depo_id)
+                kartlar = depo_kartlari(conn, self._depo_id)
             self.bitti.emit(kartlar, self._etiket)
         except Exception as e:
             self.hata.emit(f'{type(e).__name__}: {e}')
@@ -288,6 +290,90 @@ class EtiketTekliDialog(QDialog):
             self.accept()
 
 
+# ───────────────────────── reçeteden etiket listesi penceresi ─────────────────────────
+_ADET_BIRIMLERI = {'ADET', 'AD', 'ADT', 'PCS'}
+
+
+class ReceteEtiketDialog(QDialog):
+    """Mamül reçetesi seçtirir; seçenekleri döndürür (YALNIZ OKUR)."""
+
+    def __init__(self, parent, mamuller: list[dict]):
+        super().__init__(parent)
+        self.setWindowTitle('Reçeteden Etiket Listesi')
+        self.setMinimumWidth(560)
+        lay = QVBoxLayout(self)
+
+        lay.addWidget(QLabel('Mamül (kod veya ad yazarak arayın):'))
+        self.mamul = QComboBox()
+        self.mamul.setEditable(True)
+        self.mamul.setInsertPolicy(QComboBox.NoInsert)
+        for m in mamuller:
+            ek = f"  ({m['hat_sayisi']} hat)" if m['hat_sayisi'] > 1 else ''
+            self.mamul.addItem(f"{m['kodu']} - {m['adi']}{ek}", m['recete_id'])
+        tam = self.mamul.completer()
+        tam.setCompletionMode(QCompleter.PopupCompletion)
+        tam.setFilterMode(Qt.MatchContains)
+        tam.setCaseSensitivity(Qt.CaseInsensitive)
+        self.mamul.setCurrentIndex(-1)
+        lay.addWidget(self.mamul)
+
+        self.cok_seviye = QCheckBox('Alt reçeteleri de aç (tüm seviyeler)')
+        self.cok_seviye.setChecked(True)
+        lay.addWidget(self.cok_seviye)
+        self.mamul_dahil = QCheckBox('Mamülün kendisine de etiket ekle')
+        self.mamul_dahil.setChecked(True)
+        lay.addWidget(self.mamul_dahil)
+
+        g = QGroupBox('Etiket adedi')
+        gv = QVBoxLayout(g)
+        self.r_bir = QRadioButton('Her parçaya 1 etiket')
+        self.r_bir.setChecked(True)
+        h = QHBoxLayout()
+        self.r_miktar = QRadioButton('Reçete miktarı × üretim adedi:')
+        self.uretim = QSpinBox()
+        self.uretim.setRange(1, 1000)
+        self.uretim.setValue(1)
+        self.uretim.setEnabled(False)
+        self.r_miktar.toggled.connect(self.uretim.setEnabled)
+        h.addWidget(self.r_miktar)
+        h.addWidget(self.uretim)
+        h.addStretch()
+        bg = QButtonGroup(self)
+        bg.addButton(self.r_bir)
+        bg.addButton(self.r_miktar)
+        gv.addWidget(self.r_bir)
+        gv.addLayout(h)
+        not_lbl = QLabel('<span style="color:#666">ADET dışındaki birimlerde (KG, METRE…) her parçaya 1 etiket basılır. '
+                         'Masraf ve <b>:XX</b> operasyon kodları listeye alınmaz.</span>')
+        not_lbl.setWordWrap(True)
+        gv.addWidget(not_lbl)
+        lay.addWidget(g)
+
+        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        bb.button(QDialogButtonBox.Ok).setText('Listeye Ekle')
+        bb.accepted.connect(self._kabul)
+        bb.rejected.connect(self.reject)
+        lay.addWidget(bb)
+
+    def _kabul(self):
+        if self.recete_id() is None:
+            QMessageBox.information(self, 'Reçete', 'Listeden bir mamül seçin.')
+            return
+        self.accept()
+
+    def recete_id(self) -> int | None:
+        idx = self.mamul.findText(self.mamul.currentText())
+        return self.mamul.itemData(idx) if idx >= 0 else None
+
+    def mamul_metni(self) -> str:
+        return self.mamul.currentText().split(' - ')[0].strip()
+
+    def etiket_adedi(self, miktar: float, birim: str) -> int:
+        if self.r_bir.isChecked() or (birim or '').strip().upper() not in _ADET_BIRIMLERI:
+            return 1
+        return max(1, min(500, math.ceil(miktar * self.uretim.value() - 1e-9)))
+
+
 # ───────────────────────── ana Etiket sayfası (30.11 Sayım Hazırlığı + Günlük Etiket) ─────────────────────────
 class EtiketSayfasi(QWidget):
     durum = pyqtSignal(str)
@@ -298,7 +384,7 @@ class EtiketSayfasi(QWidget):
         self.p = pencere
         self._satirlar: dict[int, dict] = {}   # kart_id → {'kart': Kart, 'adet': int, 'secili': bool}
         self._sira: list[int] = []
-        self._yukleme_thread: _BakiyeliYukleThread | None = None
+        self._yukleme_thread: _KartYukleThread | None = None
         self._dolduruluyor = False
 
         ay = _etiket_ayarlari_oku()
@@ -352,7 +438,7 @@ class EtiketSayfasi(QWidget):
         lay.addWidget(g_yaz)
 
         # ── Üst 2: Sayım Hazırlığı (Depodan Yükle) & Arama ──
-        g_kaynak = QGroupBox('30.11 Sayım Hazırlığı / Kart Seçimi')
+        g_kaynak = QGroupBox('Kart Seçimi')
         hk = QHBoxLayout(g_kaynak)
         hk.addWidget(QLabel('Depo:'))
         self.depo = QComboBox()
@@ -360,11 +446,21 @@ class EtiketSayfasi(QWidget):
         self.depo.setFocusPolicy(Qt.ClickFocus)
         hk.addWidget(self.depo)
 
-        self.b_depodan = QPushButton('Bakiyeli Kartları Getir (> 0)')
+        self.b_depodan = QPushButton('Kartları Getir')
         self.b_depodan.setFocusPolicy(Qt.NoFocus)
         self.b_depodan.setStyleSheet(_MAVI_BTN)
+        self.b_depodan.setToolTip('Seçili depoda hareketi olan tüm aktif kartlar (bakiye 0 ve eksi dahil).\n'
+                                  'TÜM DEPOLAR: tüm aktif stok kartları.')
         self.b_depodan.clicked.connect(self.depodan_yukle)
         hk.addWidget(self.b_depodan)
+
+        self.b_recete = QPushButton('Reçeteden Getir…')
+        self.b_recete.setFocusPolicy(Qt.NoFocus)
+        self.b_recete.setStyleSheet(_MAVI_BTN)
+        self.b_recete.setToolTip('Bir mamül reçetesindeki parçaları listeye ekler.\n'
+                                 'Bakiye sütunu seçili depoya göre gösterilir.')
+        self.b_recete.clicked.connect(self.receteden_yukle)
+        hk.addWidget(self.b_recete)
 
         hk.addSpacing(12)
         hk.addWidget(QLabel('Ara:'))
@@ -474,7 +570,7 @@ class EtiketSayfasi(QWidget):
     def depolari_doldur(self, depolar: dict):
         self.depo.blockSignals(True)
         self.depo.clear()
-        self.depo.addItem('00 - TÜM DEPOLAR (Şirket bakiyesi > 0)', 0)
+        self.depo.addItem('00 - TÜM DEPOLAR (tüm aktif kartlar)', 0)
         for i, ad in depolar.items():
             self.depo.addItem(ad, i)
         idx = self.depo.findData(2)
@@ -549,28 +645,17 @@ class EtiketSayfasi(QWidget):
             return
         if self._yukleme_thread and self._yukleme_thread.isRunning():
             return
-        if self._satirlar:
-            cevap = QMessageBox.question(
-                self, 'Bakiyeli kartları yükle',
-                'Mevcut liste temizlenip seçili depodaki bakiyeli kartlar yüklensin mi?\n'
-                '(Hayır derseniz mevcut listenin üzerine eklenir.)',
-                QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel,
-                QMessageBox.Yes,
-            )
-            if cevap == QMessageBox.Cancel:
-                return
-            if cevap == QMessageBox.Yes:
-                self._satirlar.clear()
-                self._sira.clear()
+        if not self._liste_temizle_sor('Kartları getir', 'seçili depodaki kartlar'):
+            return
 
         secim = self.depo.currentData()
         depo_id = None if not secim else int(secim)
         etiket = self.depo.currentText()
         self.b_depodan.setEnabled(False)
         QApplication.setOverrideCursor(Qt.WaitCursor)
-        self.durum.emit(f'Bakiyeli kartlar yükleniyor: {etiket}…')
+        self.durum.emit(f'Kartlar yükleniyor: {etiket}…')
 
-        self._yukleme_thread = _BakiyeliYukleThread(depo_id, etiket)
+        self._yukleme_thread = _KartYukleThread(depo_id, etiket)
         self._yukleme_thread.bitti.connect(self._depodan_yuklendi)
         self._yukleme_thread.hata.connect(self._depodan_hata)
         self._yukleme_thread.start()
@@ -587,7 +672,96 @@ class EtiketSayfasi(QWidget):
             else:
                 self._satirlar[k.id]['kart'] = k
         self._tabloyu_yenile(sec_kid=self._sira[0] if self._sira else None)
-        self.durum.emit(f'{depo_etiketi}: {len(kartlar)} bakiyeli kart bulundu ({eklenen} yeni eklendi).')
+        eksi = sum(1 for k in kartlar if k.bakiye < -1e-9)
+        sifir = sum(1 for k in kartlar if abs(k.bakiye) <= 1e-9)
+        self.durum.emit(f'{depo_etiketi}: {len(kartlar)} kart bulundu ({eklenen} yeni eklendi; '
+                        f'{eksi} eksi, {sifir} sıfır bakiyeli).')
+        self.p.okut.setFocus()
+
+    def _liste_temizle_sor(self, baslik: str, ne: str) -> bool:
+        """Liste doluysa temizle / üzerine ekle / vazgeç sorar. Devam edilecekse True."""
+        if not self._satirlar:
+            return True
+        cevap = QMessageBox.question(
+            self, baslik,
+            f'Mevcut liste temizlenip {ne} yüklensin mi?\n'
+            '(Hayır derseniz mevcut listenin üzerine eklenir.)',
+            QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel,
+            QMessageBox.Yes,
+        )
+        if cevap == QMessageBox.Cancel:
+            return False
+        if cevap == QMessageBox.Yes:
+            self._satirlar.clear()
+            self._sira.clear()
+        return True
+
+    def receteden_yukle(self):
+        if not self.p.conn:
+            QMessageBox.information(self, 'Etiket', 'Veritabanı bağlantısı henüz kurulmadı, birkaç saniye bekleyin.')
+            return
+        from barkod.recete import aktif_mamuller, recete_etiket_kalemleri
+        from barkod.sorgu import depo_bakiyeleri, kart_ozetleri
+        try:
+            QApplication.setOverrideCursor(Qt.WaitCursor)
+            mamuller = aktif_mamuller(self.p.conn)
+        except Exception as e:
+            QMessageBox.critical(self, 'Reçete', f'Reçeteler okunamadı:\n{type(e).__name__}: {e}')
+            return
+        finally:
+            QApplication.restoreOverrideCursor()
+
+        dlg = ReceteEtiketDialog(self, mamuller)
+        if dlg.exec_() != QDialog.Accepted:
+            return
+        if not self._liste_temizle_sor('Reçeteden getir', 'reçete parçaları'):
+            return
+
+        secim = self.depo.currentData()
+        depo_id = None if not secim else int(secim)
+        try:
+            QApplication.setOverrideCursor(Qt.WaitCursor)
+            kalemler, atlanan = recete_etiket_kalemleri(
+                self.p.conn, int(dlg.recete_id()),
+                cok_seviye=dlg.cok_seviye.isChecked(), mamul_dahil=dlg.mamul_dahil.isChecked())
+            idler = [k['kart_id'] for k in kalemler]
+            ozet = kart_ozetleri(self.p.conn, idler)
+            bak: dict[int, float] = {}
+            for (kid, _), m in depo_bakiyeleri(self.p.conn, idler, depo_id=depo_id).items():
+                bak[kid] = bak.get(kid, 0.0) + m
+        except Exception as e:
+            QMessageBox.critical(self, 'Reçete', f'Reçete okunamadı:\n{type(e).__name__}: {e}')
+            return
+        finally:
+            QApplication.restoreOverrideCursor()
+
+        eklenen, pasif, toplam_etiket = 0, 0, 0
+        for k in kalemler:
+            oz = ozet.get(k['kart_id'])
+            if not oz:
+                continue
+            if not oz['aktif']:
+                pasif += 1
+            kart = Kart(k['kart_id'], oz['kodu'], oz['adi'], oz['birim'],
+                        round(bak.get(k['kart_id'], 0.0), 6), oz['aktif'])
+            adet = dlg.etiket_adedi(k['miktar'], oz['birim'])
+            toplam_etiket += adet
+            if kart.id in self._satirlar:
+                self._satirlar[kart.id]['kart'] = kart
+                self._satirlar[kart.id]['adet'] += adet
+                self._satirlar[kart.id]['secili'] = True
+            else:
+                self._satirlar[kart.id] = {'kart': kart, 'adet': adet, 'secili': True}
+                self._sira.append(kart.id)
+                eklenen += 1
+        self._tabloyu_yenile(sec_kid=self._sira[0] if self._sira else None)
+        ek = []
+        if atlanan:
+            ek.append(f'{len(atlanan)} operasyon kodu atlandı')
+        if pasif:
+            ek.append(f'{pasif} PASİF kart (kırmızı)')
+        self.durum.emit(f'{dlg.mamul_metni()}: {len(kalemler)} parça, {toplam_etiket} etiket '
+                        f'({eklenen} yeni satır)' + (f' — {", ".join(ek)}' if ek else '') + '.')
         self.p.okut.setFocus()
 
     def _depodan_hata(self, hata: str):
@@ -624,6 +798,10 @@ class EtiketSayfasi(QWidget):
                 if not k.aktif:
                     for c in range(1, len(self.SUTUN)):
                         self.tablo.item(r, c).setForeground(QColor('#c62828'))
+                elif k.bakiye < -1e-9:
+                    self.tablo.item(r, 5).setForeground(QColor('#c62828'))
+                elif abs(k.bakiye) <= 1e-9:
+                    self.tablo.item(r, 5).setForeground(QColor('#9e9e9e'))
 
                 gizli = bool(q and q not in k.kodu.casefold() and q not in k.adi.casefold()
                              and q not in barkod_degeri(kid).casefold())
