@@ -88,17 +88,29 @@ class SayimOturumu:
         self.kaydet()
 
 
-def acik_oturumlar() -> list[Path]:
-    """Bitirilmemiş oturum dosyaları (yeniden açılabilir), en yeni önce."""
+def oturumlar(yalniz_acik: bool = False) -> list[dict]:
+    """Kayıtlı sayım oturumları (en yeni önce). yalniz_acik=True ise bitmemişler.
+
+    Her öğe: {yol, baslangic, depo_adi, kalem, sayan, bitti}.
+    """
     sonuc = []
     for p in sorted(sayim_dizini().glob('sayim_*.json'), reverse=True):
         try:
             with open(p, encoding='utf-8') as f:
-                if not json.load(f).get('bitis'):
-                    sonuc.append(p)
+                d = json.load(f)
         except Exception:
-            pass
+            continue
+        if yalniz_acik and d.get('bitis'):
+            continue
+        sonuc.append({'yol': p, 'baslangic': d.get('baslangic', ''), 'depo_adi': d.get('depo_adi', ''),
+                      'kalem': len(d.get('satirlar', {})), 'sayan': d.get('sayan', ''),
+                      'bitti': bool(d.get('bitis'))})
     return sonuc
+
+
+def acik_oturumlar() -> list[Path]:
+    """Geriye dönük: bitirilmemiş oturum dosyaları."""
+    return [o['yol'] for o in oturumlar(yalniz_acik=True)]
 
 
 def excel_yaz(conn, oturum: SayimOturumu, yol: str | Path, sayilmayanlari_ekle: bool = True) -> Path:
@@ -136,7 +148,7 @@ def excel_yaz(conn, oturum: SayimOturumu, yol: str | Path, sayilmayanlari_ekle: 
         ws2.append(['Barkod', 'Stok Kodu', 'Stok Adı', 'Birim', 'Sistem'])
         for c in ws2[2]:
             c.font = kalin
-        eksik = [kid for kid, m in sistem.items() if m > 1e-6 and str(kid) not in oturum.satirlar]
+        eksik = [kid for kid, m in sistem.items() if abs(m) > 1e-6 and str(kid) not in oturum.satirlar]
         oz = kart_ozetleri(conn, eksik)
         for kid in sorted(eksik, key=lambda i: oz.get(i, {}).get('kodu', '')):
             o = oz.get(kid, {})

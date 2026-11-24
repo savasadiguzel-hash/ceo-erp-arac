@@ -20,7 +20,7 @@ from PyQt5.QtWidgets import (
     QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
-from barkod.kod import barkod_degeri, okutma_coz
+from barkod.kod import barkod_degeri, coz, coz_mesaj
 
 _STIL = """
 QMainWindow,QWidget{font-family:'Segoe UI';font-size:13px;background:#f0f2f5;}
@@ -78,18 +78,26 @@ class _BaglanThread(QThread):
 
 
 class _SorguThread(QThread):
-    bitti = pyqtSignal(object, str)
+    # (kart|None, deger, durum)  — durum: 'ok'|'yok'|'mukerrer'
+    bitti = pyqtSignal(object, str, str)
     hata = pyqtSignal(str)
 
-    def __init__(self, conn, deger: str):
+    def __init__(self, deger: str):
         super().__init__()
-        self._conn, self._deger = conn, deger
+        self._deger = deger
 
     def run(self):
+        # Ana iş parçacığının paylaşımlı bağlantısını kullanmaz; kendi kısa
+        # ömürlü bağlantısını açar (eşzamanlı kullanım/çakışma olmaz).
         try:
+            from config import DB_DEFAULTS
+            from db.baglanti import baglanti_ctx
+            from barkod.kod import coz
             from barkod.sorgu import kart_bilgi
-            kid = okutma_coz(self._conn, self._deger)
-            self.bitti.emit(kart_bilgi(self._conn, kid) if kid else None, self._deger)
+            with baglanti_ctx(**DB_DEFAULTS) as conn:
+                kid, durum = coz(conn, self._deger)
+                k = kart_bilgi(conn, kid) if kid else None
+            self.bitti.emit(k, self._deger, durum)
         except Exception as e:
             self.hata.emit(f'{type(e).__name__}: {e}')
 
@@ -165,8 +173,8 @@ class SorgulaSayfasi(QWidget):
             self.t_hareket.setItem(r, 4, _hucre(h['miktar'], True))
             self.t_hareket.setItem(r, 5, _hucre(h['notlar']))
 
-    def bulunamadi(self, deger: str):
-        self.baslik.setText(f'<b style="color:#c62828;font-size:18px">Tanınmayan barkod / kod: {deger}</b>')
+    def bulunamadi(self, mesaj: str):
+        self.baslik.setText(f'<b style="color:#c62828;font-size:18px">{mesaj}</b>')
         for t in (self.t_depo, self.t_recete, self.t_hareket):
             t.setRowCount(0)
 
@@ -191,7 +199,7 @@ class SayimSayfasi(QWidget):
         self.depo = QComboBox(); self.depo.setMinimumWidth(260)
         h.addWidget(self.depo)
         self.b_yeni = QPushButton('Yeni sayım'); self.b_yeni.clicked.connect(self.yeni)
-        self.b_devam = QPushButton('Yarım kalanı aç'); self.b_devam.clicked.connect(self.devam)
+        self.b_devam = QPushButton('Sayım aç'); self.b_devam.clicked.connect(self.devam)
         self.b_excel = QPushButton('Excel'); self.b_excel.clicked.connect(self.excel)
         self.b_bitir = QPushButton('Bitir'); self.b_bitir.clicked.connect(self.bitir)
         for b in (self.b_yeni, self.b_devam, self.b_excel, self.b_bitir):
@@ -238,6 +246,7 @@ class SayimSayfasi(QWidget):
     def yeni(self):
         from barkod.sayim import SayimOturumu
         if not self.p.conn:
+            QMessageBox.information(self, 'Sayım', 'Bağlantı henüz kurulmadı, birkaç saniye bekleyin.')
             return
         sayan = self.p.kullanici_adi()          # sayan = sağ üstte seçili CEO kullanıcısı
         if not sayan:
@@ -248,18 +257,21 @@ class SayimSayfasi(QWidget):
         self.durum.emit(f'Sayım başladı: {self.oturum.depo_adi} · sayan {sayan}. Okutmaya başlayın.')
 
     def devam(self):
-        from barkod.sayim import SayimOturumu, acik_oturumlar
-        dosyalar = acik_oturumlar()
-        if not dosyalar:
-            QMessageBox.information(self, 'Sayım', 'Yarım kalmış sayım yok.'); return
-        adlar = []
-        for p in dosyalar:
-            o = SayimOturumu.yukle(p)
-            adlar.append(f'{o.baslangic} · {o.depo_adi} · {len(o.satirlar)} kalem · {o.sayan}')
-        sec, ok = QInputDialog.getItem(self, 'Yarım kalan sayım', 'Oturum:', adlar, 0, False)
-        if ok:
-            self.oturum = SayimOturumu.yukle(dosyalar[adlar.index(sec)])
-            self._yenile(); self._butonlar()
+        from barkod.sayim import SayimOturumu, oturumlar
+        liste = oturumlar()
+        if not liste:
+            QMessageBox.information(self, 'Sayım', 'Kayıtlı sayım yok.'); return
+        adlar = [f"{'[BİTTİ] ' if o['bitti'] else ''}{o['baslangic']} · {o['depo_adi']} · "
+                 f"{o['kalem']} kalem · {o['sayan']}" for o in liste]
+        sec, ok = QInputDialog.getItem(self, 'Sayım aç', 'Oturum (bitmiş olanlar yeniden açılır):', adlar, 0, False)
+        if not ok:
+            return
+        self.oturum = SayimOturumu.yukle(liste[adlar.index(sec)]['yol'])
+        if self.oturum.bitis:                 # biten oturumu açmak = yeniden devam
+            self.oturum.bitis = ''
+            self.oturum.kaydet()
+        self._yenile(); self._butonlar()
+        self.durum.emit(f'Sayım açıldı: {self.oturum.depo_adi} · {len(self.oturum.satirlar)} kalem.')
 
     def bitir(self):
         if not self.oturum:
@@ -295,9 +307,9 @@ class SayimSayfasi(QWidget):
         if not self.oturum:
             self.durum.emit('Önce "Yeni sayım" başlatın.')
             return False
-        kid = okutma_coz(self.p.conn, deger)
+        kid, durum = coz(self.p.conn, deger)
         if not kid:
-            self.durum.emit(f'Tanınmayan barkod / kod: {deger}')
+            self.durum.emit(coz_mesaj(durum, deger))
             return False
         k = self._kart(kid)
         miktar = 1.0
@@ -488,7 +500,7 @@ class BarkodPencere(QMainWindow):
             if self._t and self._t.isRunning():
                 self._durum('Önceki sorgu sürüyor…'); return
             self._durum(f'Sorgulanıyor: {deger}')
-            self._t = _SorguThread(self.conn, deger)
+            self._t = _SorguThread(deger)
             self._t.bitti.connect(self._sorgu_bitti)
             self._t.hata.connect(lambda e: (self._geri_bildirim(False), self._durum(e)))
             self._t.start()
@@ -504,10 +516,12 @@ class BarkodPencere(QMainWindow):
             self._geri_bildirim(self.hareket[mod].okut(deger))
         self.okut.setFocus()
 
-    def _sorgu_bitti(self, k, deger):
+    def _sorgu_bitti(self, k, deger, durum):
         if k is None:
-            self.sorgula.bulunamadi(deger); self._geri_bildirim(False)
-            self._durum(f'Tanınmayan barkod / kod: {deger}')
+            from barkod.kod import coz_mesaj
+            msg = coz_mesaj(durum, deger)
+            self.sorgula.bulunamadi(msg); self._geri_bildirim(False)
+            self._durum(msg)
         else:
             self.sorgula.goster(k, self.depo_adlari); self._geri_bildirim(True)
             self._durum(f'{k.kodu} · toplam {k.toplam_bakiye:g} {k.birim}')

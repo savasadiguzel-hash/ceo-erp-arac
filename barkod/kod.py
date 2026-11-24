@@ -25,12 +25,14 @@ def barkod_coz(deger: str) -> int | None:
     return None
 
 
-def okutma_coz(conn, deger: str) -> int | None:
-    """Barkod (S######) ya da elle yazılmış stok kodu → aktif StokKarti.Id.
+def coz(conn, deger: str) -> tuple[int | None, str]:
+    """Barkod (S######) ya da elle yazılmış stok kodu → (StokKarti.Id, durum).
 
-    Önce barkod biçimi denenir; olmazsa birebir stok kodu (büyük/küçük harf
-    duyarsız, kenar boşlukları kırpılmış) aranır. Birden çok aktif kart
-    aynı koda sahipse (bilinen mükerrerler) None döner — barkod kullanılmalı.
+    durum: 'ok' | 'yok' | 'mukerrer'.
+    Barkod biçimi önce denenir (Id'ye birebir, pasif kart da olabilir).
+    Elle kodda: önce tek AKTİF kart; aktif yoksa tek PASİF kart. Birden çok
+    aday varsa 'mukerrer' (barkod okutulmalı). Böylece barkod ve elle kod aynı
+    kartı çözer (pasif dâhil).
     """
     from db.baglanti import cursor_ctx
 
@@ -39,10 +41,29 @@ def okutma_coz(conn, deger: str) -> int | None:
         if kid is not None:
             cur.execute("SELECT Id FROM StokKarti WHERE Id = ?", kid)
             r = cur.fetchone()
-            return int(r[0]) if r else None
+            return (int(r[0]), 'ok') if r else (None, 'yok')
         kod = (deger or '').strip()
         if not kod:
-            return None
-        cur.execute("SELECT Id FROM StokKarti WHERE Aktif = 1 AND UPPER(LTRIM(RTRIM(Kodu))) = UPPER(?)", kod)
+            return (None, 'yok')
+        cur.execute("SELECT Id, Aktif FROM StokKarti WHERE UPPER(LTRIM(RTRIM(Kodu))) = UPPER(?)", kod)
         rr = cur.fetchall()
-        return int(rr[0][0]) if len(rr) == 1 else None
+        aktif = [r for r in rr if r[1]]
+        if len(aktif) == 1:
+            return (int(aktif[0][0]), 'ok')
+        if len(aktif) > 1:
+            return (None, 'mukerrer')
+        if len(rr) == 1:          # aktif yok, tek pasif kart
+            return (int(rr[0][0]), 'ok')
+        return (None, 'mukerrer' if len(rr) > 1 else 'yok')
+
+
+def coz_mesaj(durum: str, deger: str) -> str:
+    return {
+        'yok': f'Tanınmayan barkod / kod: {deger}',
+        'mukerrer': f'Bu kod birden çok kartta var; barkodu okutun: {deger}',
+    }.get(durum, '')
+
+
+def okutma_coz(conn, deger: str) -> int | None:
+    """Geriye dönük sade sarmalayıcı: yalnız Id döndürür (çözülemezse None)."""
+    return coz(conn, deger)[0]

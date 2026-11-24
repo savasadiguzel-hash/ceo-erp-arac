@@ -802,6 +802,7 @@ python tools/etiket/etiket.py --coz S326552                              # okutu
     - Liste, depo veya tarih değişince kontrol düşer.
     - Kaydedilen her fiş `barkod_fis_gunlugu.jsonl`'a da yazılır.
   - **Deneme testleri:** 23 ANONS→Merkez, 21 Merkez, 20 Merkez (elle fiyat dahil) temiz geçti. Kalıcı kayıt 0. Geri alınan denemeler Id boşluğu bırakır (zararsız).
+- **Faz 1-2 düzeltmeleri (2026-11-24 inceleme):** (1) sayım Excel'i eksi bakiyeli sayılmayanları da gösterir (`abs`); (2) biten sayım "Sayım aç" ile yeniden açılıp Excel alınır (`oturumlar()`); (3) mükerrer kod → "barkodu okutun" mesajı (`kod.py` `coz`/`coz_mesaj`, "yok"/"mukerrer" ayrımı); (4) bağlantı öncesi "Yeni sayım" uyarısı; (5) elle yazılan kod da pasif kartı bulur (barkodla tutarlı); (6) sorgu iş parçacığı kendi kısa ömürlü bağlantısını açar (paylaşımlı bağlantı çakışması biter). `okutma_coz` geriye dönük korundu.
 - **Faz 3:** Reçeteye ekleme.
 - **Faz 4:** İrsaliye ile mal kabul kontrolü.
 - Plan: `~/.claude/plans/barkod-projesinde-…md`.
