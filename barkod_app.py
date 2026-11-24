@@ -3,7 +3,7 @@
   python barkod_app.py
 
 CEO ERP Araçları'ndan bağımsızdır; yalnız ortak DB katmanını (config.py, db/)
-kullanır. Faz 1: Sorgula + Sayım (ERP'ye yazmaz).
+kullanır. Modlar: Sorgula, Sayım, Giriş/Çıkış/Transfer (20/21/23), Etiket, Reçeteye ekle.
 """
 import logging
 import sys

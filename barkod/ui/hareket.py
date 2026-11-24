@@ -16,7 +16,7 @@ from PyQt5.QtWidgets import (
 )
 
 from barkod.fis import ISLEMLER, fis_yaz, taslak_hazirla
-from barkod.kod import barkod_degeri, okutma_coz
+from barkod.kod import barkod_degeri, coz, coz_mesaj
 from barkod.sorgu import TRANSFER
 
 _YESIL = "background:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #2e7d32,stop:1 #43a047);color:white;font-size:14px;"
@@ -100,9 +100,9 @@ class HareketSayfasi(QWidget):
 
     # ── liste ──
     def okut(self, deger: str) -> bool:
-        kid = okutma_coz(self.p.conn, deger)
+        kid, drm = coz(self.p.conn, deger)
         if not kid:
-            self.durum.emit(f'Tanınmayan barkod / kod: {deger}'); return False
+            self.durum.emit(coz_mesaj(drm, deger)); return False
         k = self.p.kart_ozet(kid)
         if not k['aktif']:
             self.durum.emit(f"{k['kodu']} PASİF kart — fişe eklenmez"); return False

@@ -3,8 +3,8 @@
 Okuyucu klavye kaması (HID) modunda çalışır: barkodu okutma kutusuna yazar
 ve Enter gönderir. Cihaz yokken kutuya S468311 + Enter yazmak aynı işi görür.
 
-Modlar: Sorgula, Sayım (ERP'ye yazmaz) · Giriş 20 / Çıkış 21 / Transfer 23 (CEO'ya fiş YAZAR,
-önce "Kontrol et" deneme yazımı, sonra onaylı "Kaydet") · Reçeteye ekle (henüz kapalı).
+Modlar: Sorgula, Sayım, Etiket (ERP'ye yazmaz) · Giriş 20 / Çıkış 21 / Transfer 23 / Reçeteye ekle
+(CEO'ya YAZAR; önce "Kontrol et" deneme yazımı ve ROLLBACK, sonra onaylı "CEO'ya kaydet").
 """
 from __future__ import annotations
 
@@ -104,15 +104,26 @@ class _SorguThread(QThread):
 
 # ───────────────────────── Sorgula sayfası ─────────────────────────
 class SorgulaSayfasi(QWidget):
-    def __init__(self):
+    def __init__(self, pencere: 'BarkodPencere'):
         super().__init__()
+        self.p = pencere
+        self._son_kart = None
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
+        ust_bar = QHBoxLayout()
         self.baslik = QLabel('Bir barkod okutun.')
         self.baslik.setWordWrap(True)
         self.baslik.setTextFormat(Qt.RichText)
         self.baslik.setStyleSheet('background:white;border:1px solid #c5cae9;border-radius:8px;padding:10px;font-size:15px;')
-        lay.addWidget(self.baslik)
+        ust_bar.addWidget(self.baslik, 1)
+        self.b_etiket = QPushButton('Etiket Bas…')
+        self.b_etiket.setFocusPolicy(Qt.NoFocus)
+        self.b_etiket.setMinimumHeight(52)
+        self.b_etiket.setMinimumWidth(140)
+        self.b_etiket.setEnabled(False)
+        self.b_etiket.clicked.connect(self._etiket_bas)
+        ust_bar.addWidget(self.b_etiket)
+        lay.addLayout(ust_bar)
 
         sp = QSplitter(Qt.Vertical)
         ust = QSplitter(Qt.Horizontal)
@@ -129,6 +140,8 @@ class SorgulaSayfasi(QWidget):
 
     def goster(self, k, depo_adlari: dict):
         from barkod.sorgu import islem_adi  # noqa: F401
+        self._son_kart = k
+        self.b_etiket.setEnabled(True)
         durum = '' if k.aktif else ' <span style="color:#c62828">(PASİF KART)</span>'
         self.baslik.setText(
             f'<b style="font-size:20px;color:#1a237e">{k.kodu}</b>{durum}<br>{k.adi}<br>'
@@ -174,9 +187,21 @@ class SorgulaSayfasi(QWidget):
             self.t_hareket.setItem(r, 5, _hucre(h['notlar']))
 
     def bulunamadi(self, mesaj: str):
+        self._son_kart = None
+        self.b_etiket.setEnabled(False)
         self.baslik.setText(f'<b style="color:#c62828;font-size:18px">{mesaj}</b>')
         for t in (self.t_depo, self.t_recete, self.t_hareket):
             t.setRowCount(0)
+
+    def _etiket_bas(self):
+        if not self._son_kart:
+            return
+        from barkod.etiket import Kart
+        from barkod.ui.etiket import EtiketTekliDialog
+        k = self._son_kart
+        EtiketTekliDialog(
+            self.p, Kart(k.id, k.kodu, k.adi, k.birim, k.toplam_bakiye, k.aktif)
+        ).exec_()
 
 
 # ───────────────────────── Sayım sayfası ─────────────────────────
@@ -215,9 +240,10 @@ class SayimSayfasi(QWidget):
         self.ozet = QLabel('Oturum yok.')
         self.ozet.setStyleSheet('font-weight:bold;color:#3949ab;')
         h2.addWidget(self.ozet)
+        self.b_etiket = QPushButton('Seçiliye etiket'); self.b_etiket.clicked.connect(self.etiket_bas)
         self.b_duzelt = QPushButton('Seçili adedi düzelt'); self.b_duzelt.clicked.connect(self.duzelt)
         self.b_sil = QPushButton('Seçili satırı sil'); self.b_sil.clicked.connect(self.sil)
-        for b in (self.b_duzelt, self.b_sil):
+        for b in (self.b_etiket, self.b_duzelt, self.b_sil):
             b.setFocusPolicy(Qt.NoFocus); h2.addWidget(b)
         lay.addLayout(h2)
 
@@ -239,7 +265,7 @@ class SayimSayfasi(QWidget):
         self.depo.setEnabled(not var)
         self.b_yeni.setEnabled(not var)
         self.b_devam.setEnabled(not var)
-        for b in (self.b_excel, self.b_bitir, self.b_duzelt, self.b_sil):
+        for b in (self.b_excel, self.b_bitir, self.b_etiket, self.b_duzelt, self.b_sil):
             b.setEnabled(var)
 
     # ── oturum ──
@@ -353,6 +379,16 @@ class SayimSayfasi(QWidget):
         if QMessageBox.question(self, 'Sil', f"{s['kodu']} sayımdan silinsin mi?") == QMessageBox.Yes:
             self.oturum.sil(kid); self._yenile()
 
+    def etiket_bas(self):
+        kid = self._secili_kid()
+        if kid is None or not self.oturum:
+            return
+        from barkod.etiket import Kart
+        from barkod.ui.etiket import EtiketTekliDialog
+        s = self.oturum.satirlar[str(kid)]
+        EtiketTekliDialog(self.p, Kart(kid, s['kodu'], s['adi'], s['birim'], s['miktar'], True)).exec_()
+        self.p.okut.setFocus()
+
     def _yenile(self, vurgu: int | None = None):
         self.tablo.setRowCount(0)
         if not self.oturum:
@@ -376,8 +412,10 @@ class SayimSayfasi(QWidget):
 # ───────────────────────── ana pencere ─────────────────────────
 class BarkodPencere(QMainWindow):
     MODLAR = [('Sorgula', True), ('Sayım', True), ('Giriş', True), ('Çıkış', True),
-              ('Transfer', True), ('Reçeteye ekle', False)]
+              ('Transfer', True), ('Etiket', True), ('Reçeteye ekle', True)]
     FIS_MODLARI = {2: 20, 3: 21, 4: 23}   # mod düğmesi → fiş türü
+    ETIKET_MODU = 5
+    RECETE_MODU = 6
 
     def __init__(self):
         super().__init__()
@@ -419,7 +457,7 @@ class BarkodPencere(QMainWindow):
         lay.addWidget(self.okut)
 
         self.sayfalar = QStackedWidget()
-        self.sorgula = SorgulaSayfasi()
+        self.sorgula = SorgulaSayfasi(self)
         self.sayim = SayimSayfasi(self)
         self.sayim.durum.connect(self._durum)
         self.sayfalar.addWidget(self.sorgula)
@@ -429,6 +467,14 @@ class BarkodPencere(QMainWindow):
         for mod, islem in self.FIS_MODLARI.items():
             sy = HareketSayfasi(self, islem); sy.durum.connect(self._durum)
             self.hareket[mod] = sy; self.sayfalar.addWidget(sy)   # sayfa indeksi = mod
+        from barkod.ui.etiket import EtiketSayfasi
+        self.etiket = EtiketSayfasi(self)
+        self.etiket.durum.connect(self._durum)
+        self.sayfalar.addWidget(self.etiket)                      # sayfa indeksi = 5 (ETIKET_MODU)
+        from barkod.ui.recete import ReceteSayfasi
+        self.recete = ReceteSayfasi(self)
+        self.recete.durum.connect(self._durum)
+        self.sayfalar.addWidget(self.recete)                      # sayfa indeksi = 6 (RECETE_MODU)
         lay.addWidget(self.sayfalar, 1)
         self.setCentralWidget(merkez)
 
@@ -449,6 +495,8 @@ class BarkodPencere(QMainWindow):
         self.sayim.depolari_doldur(self.depo_adlari)
         for sy in self.hareket.values():
             sy.depolari_doldur(self.depo_adlari)
+        self.etiket.depolari_doldur(self.depo_adlari)
+        self.recete.mamulleri_yukle()
         from barkod.ayar import ayar_oku, kullanicilar
         secili = ayar_oku().get('kullanici_guid')
         self.kullanici.blockSignals(True)
@@ -485,8 +533,8 @@ class BarkodPencere(QMainWindow):
     def _mod_degisti(self, i: int):
         if i < self.sayfalar.count():
             self.sayfalar.setCurrentIndex(i)
-        if i in self.FIS_MODLARI and not self.kullanici_guid():
-            self._durum('Fiş yazmak için sağ üstten Kullanıcı seçin.')
+        if (i in self.FIS_MODLARI or i == self.RECETE_MODU) and not self.kullanici_guid():
+            self._durum('Kayıt yapmak için sağ üstten Kullanıcı seçin.')
         self.okut.setFocus()
 
     # ── okutma ──
@@ -514,6 +562,16 @@ class BarkodPencere(QMainWindow):
                 self._durum('Sorgu bitmeden okutulamaz, tekrar okutun.')
                 self._geri_bildirim(False); return
             self._geri_bildirim(self.hareket[mod].okut(deger))
+        elif mod == self.ETIKET_MODU:
+            if self.mesgul():
+                self._durum('Sorgu bitmeden okutulamaz, tekrar okutun.')
+                self._geri_bildirim(False); return
+            self._geri_bildirim(self.etiket.okut(deger))
+        elif mod == self.RECETE_MODU:
+            if self.mesgul():
+                self._durum('Sorgu bitmeden okutulamaz, tekrar okutun.')
+                self._geri_bildirim(False); return
+            self._geri_bildirim(self.recete.okut(deger))
         self.okut.setFocus()
 
     def _sorgu_bitti(self, k, deger, durum):
