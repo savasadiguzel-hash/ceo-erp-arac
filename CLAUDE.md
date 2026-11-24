@@ -24,6 +24,7 @@
 - **DB:** SQL Server `WIN-3FATBI9RQAA\CEO1`, `DATABASE=504`, kullanıcı `sa`
 - **Kural:** CEO ERP'de SADECE OKUMA. Yazma yalnızca stok kartı akışında.
 - **Yapı:** 6 sekme — Mamül Ağacı / Maliyet / SW Kodlama / Stok Kartı Aktar / Satış Faturaları / Üretim Eksik Stok
+- **CEO Barkod ayrı programdır** (`barkod_app.py` + `barkod/`): ERP Araçları'na sekme olarak GÖMÜLMEZ; yalnız `config.py` ve `db/` ortak. Test: `python barkod_app.py` (izin gerektirir).
 
 ## İzin Gerektiren İşlemler
 

@@ -10,7 +10,8 @@ Stok kodu, adı ve birimi etikete okunur yazı olarak basılır.
   python tools/etiket/etiket.py --kod GMP-200-240431 --kod AKTRMİK0001
   python tools/etiket/etiket.py --bakiyeli --limit 20 --olcu 50x25
   python tools/etiket/etiket.py --id 468311 --olcu 40x20 --dpi 300
-  python tools/etiket/etiket.py --kod X --yazici 192.168.1.50   (yazıcıya gönderir)
+  python tools/etiket/etiket.py --kod X --usb                    (USB Zebra'ya gönderir)
+  python tools/etiket/etiket.py --kod X --yazici 192.168.1.50   (ağdaki yazıcıya gönderir)
   python tools/etiket/etiket.py --coz S468311                     (okutulan değeri karta çevirir)
 
 Çıktı: tools/etiket/cikti/etiketler_<zaman>.zpl  ve  onizleme_*.png
@@ -27,7 +28,6 @@ from datetime import datetime
 KOK = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 sys.path.insert(0, KOK)
 
-ONEK = 'S'                      # stok kartı etiketi öneki (ileride R=raf, E=iş emri)
 FONT_DIZIN = r'C:\Windows\Fonts'
 
 
@@ -40,16 +40,8 @@ class Kart:
     birim: str
 
 
-def barkod_degeri(kart_id: int) -> str:
-    return f'{ONEK}{kart_id:06d}'
-
-
-def barkod_coz(deger: str) -> int | None:
-    """Okutulan değeri StokKarti.Id'ye çevirir; tanınmazsa None."""
-    d = (deger or '').strip().upper()
-    if len(d) >= 2 and d[0] == ONEK and d[1:].isdigit():
-        return int(d[1:])
-    return None
+# Barkod içeriği ortak modülden (ayrı Barkod programıyla aynı kural)
+from barkod.kod import barkod_coz, barkod_degeri  # noqa: E402,F401
 
 
 def kartlari_oku(conn, kodlar=(), idler=(), bakiyeli=False, limit=None) -> list[Kart]:
@@ -281,6 +273,37 @@ def yaziciya_gonder(ip: str, zpl: str, port: int = 9100) -> None:
         s.sendall(zpl.encode('utf-8'))
 
 
+def usb_yazici_bul(ad: str | None = None) -> str:
+    """Windows'a kurulu yazıcı adı. ad verilmezse adında Zebra/ZD geçen ilk yazıcı."""
+    import win32print
+    kurulu = [p[2] for p in win32print.EnumPrinters(
+        win32print.PRINTER_ENUM_LOCAL | win32print.PRINTER_ENUM_CONNECTIONS)]
+    if ad:
+        if ad not in kurulu:
+            raise SystemExit(f'Yazıcı bulunamadı: {ad} | Kurulu: {kurulu}')
+        return ad
+    aday = [p for p in kurulu if 'zebra' in p.lower() or 'zd2' in p.lower() or 'zdesigner' in p.lower()]
+    if not aday:
+        raise SystemExit(f'Zebra yazıcı bulunamadı; --usb "<yazıcı adı>" verin. | Kurulu: {kurulu}')
+    return aday[0]
+
+
+def usb_yaziciya_gonder(yazici: str, zpl: str) -> None:
+    """ZPL'i Windows yazıcı kuyruğuna RAW olarak gönderir (USB ZD220t)."""
+    import win32print
+    h = win32print.OpenPrinter(yazici)
+    try:
+        win32print.StartDocPrinter(h, 1, ('CEO etiket', None, 'RAW'))
+        try:
+            win32print.StartPagePrinter(h)
+            win32print.WritePrinter(h, zpl.encode('utf-8'))
+            win32print.EndPagePrinter(h)
+        finally:
+            win32print.EndDocPrinter(h)
+    finally:
+        win32print.ClosePrinter(h)
+
+
 # ───────────────────────── PNG önizleme ─────────────────────────
 def _pil_font(h: int, kalin=False):
     from PIL import ImageFont
@@ -350,12 +373,14 @@ def main():
     ap.add_argument('--id', action='append', type=int, default=[], help='StokKarti.Id')
     ap.add_argument('--bakiyeli', action='store_true', help='bakiyesi > 0 olan tüm aktif kartlar')
     ap.add_argument('--limit', type=int)
-    ap.add_argument('--olcu', default='50x25', help='etiket ölçüsü mm, GxY (varsayılan 50x25)')
+    ap.add_argument('--olcu', default='70x30', help='etiket ölçüsü mm, GxY (varsayılan 70x30 — Labelika)')
     ap.add_argument('--dpi', type=int, default=203, choices=[203, 300])
     ap.add_argument('--font', default='0', help="ZPL yazı tipi: '0' ya da yazıcıdaki dosya, örn E:TT0003M_.TTF")
     ap.add_argument('--png', type=int, default=30, help='en fazla kaç PNG önizleme (0 = yok)')
     ap.add_argument('--cikti', default=os.path.join(os.path.dirname(__file__), 'cikti'))
-    ap.add_argument('--yazici', help='Zebra IP adresi — verilirse ZPL doğrudan gönderilir')
+    ap.add_argument('--yazici', help='Zebra IP adresi — verilirse ZPL ağ üzerinden gönderilir')
+    ap.add_argument('--usb', nargs='?', const='', default=None,
+                    help='USB (Windows) yazıcıya RAW gönder; ad verilmezse Zebra otomatik bulunur')
     ap.add_argument('--coz', help='okutulan barkod değerini karta çevir (örn S468311)')
     a = ap.parse_args()
 
@@ -401,6 +426,10 @@ def main():
     if a.yazici:
         yaziciya_gonder(a.yazici, zpl)
         print(f'Yazıcıya gönderildi: {a.yazici}:9100')
+    if a.usb is not None:
+        ad = usb_yazici_bul(a.usb or None)
+        usb_yaziciya_gonder(ad, zpl)
+        print(f'USB yazıcıya gönderildi: {ad}')
 
 
 if __name__ == '__main__':

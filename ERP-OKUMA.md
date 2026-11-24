@@ -718,7 +718,7 @@ python tools/etiket/etiket.py --coz S326552                              # okutu
 **Açık kalanlar:**
 - **Ribon:** Dijital Barkod Wax Ribon 110 × 74 m, wax out, 1/2" kuka (hepsiburada) eklendi. Bir ribon yaklaşık 2.200 etiket basar, sayısı etiket rulosu sayısına göre belirlenir.
 - **Etiket kukası:** ZD220t 12,7 ve 25,4 mm kuka alır. 38 mm ve üstü kukalar sorunlu olabilir; satıcıya sorulacak.
-- **USB yazdırma:** `etiket.py --yazici` şu an IP:9100'e gönderiyor. ZD220t'de Ethernet yok, bu yüzden Windows yazıcı kuyruğuna RAW ZPL gönderen bir seçenek eklenecek (yazıcı gelince).
+- **USB yazdırma:** EKLENDİ (2026-11-24): `etiket.py --usb [yazıcı adı]` ZPL'i Windows kuyruğuna RAW gönderir (`win32print`). Ad verilmezse adında Zebra/ZD/ZDesigner geçen yazıcı seçilir. Yazıcı gelince denenecek.
 - **DS2278:** 123Scan ile Türkçe Q klavye ayarı yapılıp `S######` okuma testi yapılacak (iade süresi içinde).
 - Varsayılan ölçü 70x30 / 203 dpi'dir (yan düzen: QR + Code128 sağ sütunda).
 
@@ -737,6 +737,51 @@ python tools/etiket/etiket.py --coz S326552                              # okutu
 **Sonraki adımlar:** etiket ölçüsü ve içeriği kesinleşince sabitlenecek. Okut-gör ekranı (kart, depo bakiyeleri, reçete kullanımı) ve sayım modu (yerel kayıt, ERP bakiyesiyle fark raporu) yapılacak; ERP'ye yazma yok.
 
 ---
+
+## CEO Barkod — Ayrı Program (`barkod_app.py`, `barkod/`, 2026-11-24)
+
+**Kullanıcı kararı:** barkod işlemleri CEO ERP Araçları'na gömülmeyecek, **ayrı bir program** olacak (ileride ayrı exe). Ortak kullandığı tek şey DB katmanı (`config.py`, `db/`). Ekran **depo PC'sinde personel** tarafından kullanılacak.
+
+**Çalıştırma:** `python barkod_app.py`. Okuyucu klavye kaması (HID) gibi çalışır: barkodu okutma kutusuna yazar ve Enter gönderir. Cihaz yokken `S468311` veya stok kodu yazıp Enter'a basmak aynı işi görür. Barkodda yalnız ASCII var (`S`+rakam), bu yüzden Türkçe Q düzeninden etkilenmez. `ş`/küçük harf de tolere edilir.
+
+| Dosya | İçerik |
+|---|---|
+| `barkod/kod.py` | `barkod_degeri`, `barkod_coz` (etiket.py de buradan import eder), `okutma_coz(conn, değer)`: barkod ya da birebir stok kodu → aktif kart Id. Mükerrer koda None döner. |
+| `barkod/sorgu.py` | `depo_bakiyeleri(conn, kart_idler=None, depo_id=None, tarih=None)` → `{(kart, depo): miktar}`; `kart_bilgi` (depo bakiyeleri, reçete kullanımı + adet + hat, dolaylı mamuller, son hareketler); `recete_kullanim`; `depolar`; `kart_ozetleri`; `ISLEM_ADI`. |
+| `barkod/sayim.py` | `SayimOturumu`: her okutmada JSON'a atomik kayıt (`<config klasörü>/barkod_sayim/`), yarım kalanı açma, `excel_yaz` (Sayım: sayılan/sistem/fark + Sayılmayanlar: depoda bakiyesi olup okutulmayanlar). |
+| `barkod/ui/ana_pencere.py` | `BarkodPencere`: mod düğmeleri (Sorgula, Sayım açık; Giriş/Çıkış/Transfer/Reçeteye ekle kapalı), büyük okutma kutusu (yeşil/kırmızı yanıp söner, hatada bip). |
+
+**Depo bazlı bakiye** (`depo_bakiyeleri`): satırdaki depo (`shd.DepoKartId`) başlıktan önceliklidir. 23'te `DepoKartId` çıkar, `KarsiDepoKartId` girer. Faturaya dönüşmüş irsaliye (`FaturaId` dolu) sayılmaz, kısmi fatura `FaturaDetayId` ile düşülür. Doğrulama (2026-11-24): 3.000 kartta depolar toplamı `stok_guncel_bakiyeleri` ile **birebir** (fark 0). Tüm depo×kart bakiyesi ~0,5 sn, tek kart sorgusu 0,3–1 sn.
+
+**Depolar (`StokDepoKarti`: Id, DepoNo, Adi, BolgeId, YetkiliPersonelId, LotsuzCikisaIzinVer, RafsizCikilmaz):** 2 MERKEZ DEPO, 3 ANONS, 4 PORTATİF, 10004 OPTES, 10005 LRF, 10006 LABİT, 10007 CEPTE ANONS, 10008 SABİT IŞIK KAYNAĞI, 10009 LADİT, 10010 ADLAS, 10011/10015 TEZ-ASSAN BOMBA TAŞIMA, 10012 BORESIGHT SP/KAMERALI/BORESIGHT L, 10013 LRF 6002, 10014 LABİT V02, 10016 ADLAS-T, 10017 ADLAS-MKE, 10018 LABİT-BARUTÇU, 10019 TLSS, 10020 TOP DÜRBÜNÜ, 10021 VERİCİ (21 aktif depo).
+
+### Barkod fiş kalıpları (Faz 0 keşfi, CEO'nun kendi yazdığı fişlerden)
+
+İşlem adları DB'de yok (enum Ceo.exe içinde). Giriş/çıkış yönü `dbo.StokHareketIsGiris(@tur)` fonksiyonunda. Kullanılan kodlar ve çıkarım:
+
+| Kod | Yön | Seri / örnek | Anlam (çıkarım) | Adet / son kullanım |
+|---|---|---|---|---|
+| 18 | çıkış | seri yok, Not "…FİRE OLDU", MusteriKartId + PersonelId dolu | Fire çıkışı | 11 / 2025-01 |
+| 19 | çıkış | `İRS`/`IRS`, Not "GARANTİ KAPSAMINA…" | Sarf / garanti çıkışı | 198 / 2024-12 |
+| 20 | giriş | `SYM`, Not "SAYIM FARKI GİRİŞLERİ" | Sayım fazlası girişi | 138 / 2026-06 |
+| 21 | çıkış | `SYMCKS` | Sayım eksiği çıkışı | 23 / 2025-12 |
+| 22 | giriş | seri yok, 2018 | Devir / sayım girişi (eski) | 11 / 2018 |
+| 23 | transfer | seri yok, BelgeSiraNo artan sayaç (435565…) | Depolar arası transfer | 101 / 2026-09 |
+
+**CEO'nun yazdığı alanlar** (sıfır/boş olmayanlar):
+- **Başlık (`StokHareket`):** `Aktif=1, IslemKodu, BelgeTarihi, BelgeSiraNo, DepoKartId, [KarsiDepoKartId], ToplamTutar=NetTutar, CreatedBy/ModifiedBy, MusteriBolgeId=2, HareketBolgeId=2, [Notlar], [BelgeSeriNo]`.
+- **Detay (`StokHareketDetay`):** `Aktif=1, Turu=1, HareketId, IslemKartId, StokBirimId, Miktar, BirimFiyat, Tutar, DepoKartId, [KarsiDepoKartId], BirimKatsayisi=Miktar, MaliyetTarihi=BelgeTarihi, MaliyetTutari=Tutar, IslemKodu (detayda da), KalanMiktar=Miktar, [KdvOrani], [DepoTransferTalepDetayId]`.
+- **Transfer (23):** `BelgeTarihi` saatli (oluşturma anı), BirimFiyat = maliyet. Talepten çevrildiyse `DepoTransferTalepDetayId` dolu.
+
+**CeoCommon.dbo.Kullanici:** `UserId` (GUID), `UserKod`, `Name`, `Surname`, `Active`; ayrıca `AndroidKey`, `CeoWebApkYetkilisi` alanları var. CEO'nun kendi mobil/web uygulaması olabilir (`StokHareket.IsMobil`, `StokKarti.MobildeGorunsun`); kullanımı 0 kayıt. **CEO firmasına soruldu (2026-11-24): mobil/barkod desteği YOK** → barkod işlemleri tamamen kendi programımızla yapılacak.
+
+**Fazlar:**
+- **Faz 1 BİTTİ (2026-11-24):** Sorgula + Sayım + etiket USB çıkışı. ERP'ye yazmaz.
+- **Faz 2:** Giriş / Çıkış / Transfer doğrudan stok fişi (kullanıcı kararı). **Fiş türleri (kullanıcı, 2026-11-24): serbest giriş = 20 Sayım fazlası, serbest çıkış = 21 Sayım eksiği, transfer = 23.** Kalıp `tools/sene_sonu_uretim/hat_kapat.py`'den alınacak, önizleme + onay, eksiye düşürmez.
+- **Faz 3:** Reçeteye ekleme.
+- **Faz 4:** İrsaliye ile mal kabul kontrolü.
+- Plan: `~/.claude/plans/barkod-projesinde-…md`.
+
 
 ## Sıradaki Geliştirmeler
 
