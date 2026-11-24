@@ -156,7 +156,7 @@ QR_MODUL = 21   # QR sürüm 1 (7 karakterlik S###### için yeter)
 
 
 def yerlesim_hesapla(gen_mm: float, yuk_mm: float, dpi: int, ornek_deger: str = 'S999999') -> Yerlesim:
-    """Solda QR kod, sağ sütunda stok kodu (üstte), stok adı (ortada) ve S###### BİRİM (altta)."""
+    """Solda QR kod, sağ sütunda stok kodu (üstte) ve stok adı (altında)."""
     dpm = dpi / 25.4
     W, H = round(gen_mm * dpm), round(yuk_mm * dpm)
     m = round(1.5 * dpm)
@@ -176,17 +176,15 @@ def yerlesim_hesapla(gen_mm: float, yuk_mm: float, dpi: int, ornek_deger: str = 
         uyari.append('QR için yer yetersiz — QR basılmadı')
     sag_gen = W - x0 - m
 
-    kod_h = max(round(2.4 * dpm), round(0.16 * H))
-    ad_h = max(round(2.0 * dpm), round(0.115 * H))
-    alt_h = max(round(1.7 * dpm), round(0.085 * H))
+    kod_h = max(round(2.5 * dpm), round(0.17 * H))
+    ad_h = max(round(2.1 * dpm), round(0.125 * H))
     y = m
     kod_yazi = (x0, y, kod_h, sag_gen)
-    y += kod_h + round(0.5 * dpm)
-    alt_sinir = H - m - alt_h - round(0.5 * dpm)
-    satir = max(1, min(4, (alt_sinir - y) // max(1, round(ad_h * 1.1))))
+    y += kod_h + round(0.6 * dpm)
+    alt_sinir = H - m
+    satir = max(1, min(5, (alt_sinir - y) // max(1, round(ad_h * 1.1))))
     ad_yazi = (x0, y, ad_h, sag_gen, satir)
-    alt_yazi = (x0, H - m - alt_h, alt_h, sag_gen) if alt_sinir > y else None
-    return Yerlesim(W, H, dpi, qr, None, kod_yazi, ad_yazi, alt_yazi, uyari, duzen='qr')
+    return Yerlesim(W, H, dpi, qr, None, kod_yazi, ad_yazi, None, uyari, duzen='qr')
 
 
 def _sigdir(metin: str, font_h: int, genislik: int, oran=0.52) -> int:
