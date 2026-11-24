@@ -139,115 +139,24 @@ def depo_kartlari(conn, depo_id: int | None = None) -> list[Kart]:
     return sonuc
 
 
-# ───────────────────────── Code128 (önizleme + genişlik hesabı) ─────────────────────────
-_C128 = ("212222 222122 222221 121223 121322 131222 122213 122312 132212 221213 "
-         "221312 231212 112232 122132 122231 113222 123122 123221 223211 221132 "
-         "221231 213212 223112 312131 311222 321122 321221 312212 322112 322211 "
-         "212123 212321 232121 111323 131123 131321 112313 132113 132311 211313 "
-         "231113 231311 112133 112331 132131 113123 113321 133121 313121 211331 "
-         "231131 213113 213311 213131 311123 311321 331121 312113 312311 332111 "
-         "314111 221411 431111 111224 111422 121124 121421 141122 141221 112214 "
-         "112412 122114 122411 142112 142211 241211 221114 413111 241112 134111 "
-         "111242 121142 121241 114212 124112 124211 411212 421112 421211 212141 "
-         "214121 412121 111143 111341 131141 114113 114311 411113 411311 113141 "
-         "114131 311141 411131 211412 211214 211232 2331112").split()
-assert all(sum(map(int, p)) == 11 for p in _C128[:106]) and sum(map(int, _C128[106])) == 13
-
-
-def code128_kodla(veri: str) -> list[int]:
-    """B kümesi + 4 ve üzeri çift rakam dizilerinde C kümesi (ZPL otomatik moduna yakın)."""
-    i, kod, set_ = 0, [], None
-    while i < len(veri):
-        j = i
-        while j < len(veri) and veri[j].isdigit():
-            j += 1
-        n = j - i
-        if n >= 4 or (n >= 2 and i == 0 and j == len(veri) and n % 2 == 0):
-            if n % 2:                       # tek sayıda rakam → ilkini B ile yaz
-                if set_ != 'B':
-                    kod.append(104 if set_ is None else 100); set_ = 'B'
-                kod.append(ord(veri[i]) - 32); i += 1
-            if set_ != 'C':
-                kod.append(105 if set_ is None else 99); set_ = 'C'
-            while i < j:
-                kod.append(int(veri[i:i + 2])); i += 2
-        else:
-            if set_ != 'B':
-                kod.append(104 if set_ is None else 100); set_ = 'B'
-            kod.append(ord(veri[i]) - 32); i += 1
-    kod.append((kod[0] + sum(k * n for n, k in enumerate(kod[1:], 1))) % 103)
-    kod.append(106)
-    return kod
-
-
-def code128_modul_sayisi(veri: str) -> int:
-    return sum(sum(map(int, _C128[k])) for k in code128_kodla(veri))
-
-
-# ───────────────────────── yerleşim ─────────────────────────
+# ───────────────────────── yerleşim (Yalnız QR) ─────────────────────────
 @dataclass
 class Yerlesim:
     gen: int; yuk: int; dpi: int
     qr: tuple | None            # (x, y, büyütme)
-    c128: tuple | None          # (x, y, modül, yükseklik)
+    c128: tuple | None          # geriye dönük uyumluluk için (her zaman None)
     kod_yazi: tuple             # (x, y, font_h, genişlik)
     ad_yazi: tuple              # (x, y, font_h, genişlik, satır)
     alt_yazi: tuple | None      # (x, y, font_h, genişlik)
     uyarilar: list
-    duzen: str = 'yan'
+    duzen: str = 'qr'
 
 
 QR_MODUL = 21   # QR sürüm 1 (7 karakterlik S###### için yeter)
 
 
 def yerlesim_hesapla(gen_mm: float, yuk_mm: float, dpi: int, ornek_deger: str = 'S999999') -> Yerlesim:
-    """Önce 'yan' düzen (QR solda, barkod sağ sütunda); barkod sığmazsa
-    'alt' düzen (barkod alt bantta tüm genişlikte); o da olmazsa yalnız QR."""
-    y = _yan_duzen(gen_mm, yuk_mm, dpi, ornek_deger)
-    if y.c128 is None:
-        alt = _alt_duzen(gen_mm, yuk_mm, dpi, ornek_deger)
-        if alt is not None:
-            return alt
-    return y
-
-
-def _alt_duzen(gen_mm, yuk_mm, dpi, ornek_deger) -> Yerlesim | None:
-    dpm = dpi / 25.4
-    W, H = round(gen_mm * dpm), round(yuk_mm * dpm)
-    m = round(1.5 * dpm)
-    mod = max(2, round(0.25 * dpm))
-    bar_gen = (code128_modul_sayisi(ornek_deger) + 20) * mod
-    if bar_gen > W - 2 * m:
-        mod = 2
-        bar_gen = (code128_modul_sayisi(ornek_deger) + 20) * mod
-        if bar_gen > W - 2 * m:
-            return None
-    c_h = max(round(3.5 * dpm), round(0.17 * H))
-    c128 = (m + 10 * mod, H - m - c_h, mod, c_h)
-    ust_H = c128[1] - round(1 * dpm) - m
-    mag = min(10, ust_H // QR_MODUL)
-    if mag < 2:
-        return None
-    qr_kenar = QR_MODUL * mag
-    qr = (m, m, mag)
-    x0 = m + qr_kenar + round(1.5 * dpm)
-    sag_gen = W - x0 - m
-    kod_h = max(round(2.2 * dpm), round(0.13 * H))
-    ad_h = max(round(1.8 * dpm), round(0.095 * H))
-    alt_h = max(round(1.6 * dpm), round(0.075 * H))
-    kod_yazi = (x0, m, kod_h, sag_gen)
-    ad_y = m + kod_h + round(0.4 * dpm)
-    satir = max(1, min(3, (m + ust_H - ad_y) // round(ad_h * 1.1)))
-    ad_yazi = (x0, ad_y, ad_h, sag_gen, satir)
-    bar_son = m + bar_gen
-    if W - m - bar_son >= round(10 * dpm):
-        alt_yazi = (bar_son + round(0.5 * dpm), c128[1] + (c_h - alt_h) // 2, alt_h, W - m - bar_son)
-    else:
-        alt_yazi = None
-    return Yerlesim(W, H, dpi, qr, c128, kod_yazi, ad_yazi, alt_yazi, [], duzen='alt')
-
-
-def _yan_duzen(gen_mm, yuk_mm, dpi, ornek_deger) -> Yerlesim:
+    """Solda QR kod, sağ sütunda stok kodu (üstte), stok adı (ortada) ve S###### BİRİM (altta)."""
     dpm = dpi / 25.4
     W, H = round(gen_mm * dpm), round(yuk_mm * dpm)
     m = round(1.5 * dpm)
@@ -267,29 +176,17 @@ def _yan_duzen(gen_mm, yuk_mm, dpi, ornek_deger) -> Yerlesim:
         uyari.append('QR için yer yetersiz — QR basılmadı')
     sag_gen = W - x0 - m
 
-    moduller = code128_modul_sayisi(ornek_deger) + 20
-    c128 = None
-    for mod in sorted({max(2, round(0.25 * dpm)), 2}, reverse=True):
-        if moduller * mod <= sag_gen:
-            c_h = max(round(4 * dpm), round(0.22 * H))
-            c128 = (x0 + 10 * mod, H - m - c_h - round(0.09 * H), mod, c_h)
-            break
-    if c128 is None:
-        uyari.append(f'Code128 sığmadı ({moduller * 2 / dpm:.1f} mm gerekir, '
-                     f'{sag_gen / dpm:.1f} mm var) — yalnız QR basıldı')
-
-    kod_h = max(round(2.2 * dpm), round(0.15 * H))
-    ad_h = max(round(1.8 * dpm), round(0.105 * H))
-    alt_h = max(round(1.6 * dpm), round(0.08 * H))
+    kod_h = max(round(2.4 * dpm), round(0.16 * H))
+    ad_h = max(round(2.0 * dpm), round(0.115 * H))
+    alt_h = max(round(1.7 * dpm), round(0.085 * H))
     y = m
     kod_yazi = (x0, y, kod_h, sag_gen)
     y += kod_h + round(0.5 * dpm)
-    alt_sinir = (c128[1] if c128 else H - m - alt_h - round(0.5 * dpm))
-    satir = max(1, min(3, (alt_sinir - y) // round(ad_h * 1.1)))
+    alt_sinir = H - m - alt_h - round(0.5 * dpm)
+    satir = max(1, min(4, (alt_sinir - y) // max(1, round(ad_h * 1.1))))
     ad_yazi = (x0, y, ad_h, sag_gen, satir)
-    alt_yazi = ((x0, c128[1] + c128[3] + round(0.4 * dpm), alt_h, sag_gen) if c128
-                else (x0, H - m - alt_h, alt_h, sag_gen))
-    return Yerlesim(W, H, dpi, qr, c128, kod_yazi, ad_yazi, alt_yazi, uyari, duzen='yan')
+    alt_yazi = (x0, H - m - alt_h, alt_h, sag_gen) if alt_sinir > y else None
+    return Yerlesim(W, H, dpi, qr, None, kod_yazi, ad_yazi, alt_yazi, uyari, duzen='qr')
 
 
 def _sigdir(metin: str, font_h: int, genislik: int, oran=0.52) -> int:
@@ -313,9 +210,6 @@ def zpl_uret(kart: Kart, y: Yerlesim, font: str = '0', adet: int = 1) -> str:
     if y.qr:
         x, yy, mag = y.qr
         p.append(f'^FO{x},{yy}^BQN,2,{mag}^FDMA,{deger}^FS')
-    if y.c128:
-        x, yy, mod, h = y.c128
-        p.append(f'^FO{x},{yy}^BY{mod}^BCN,{h},N,N,N,A^FD{deger}^FS')
     x, yy, h, w = y.kod_yazi
     h = _sigdir(kart.kodu, h, w)
     p.append(f'^FO{x},{yy}{_font(h, font)}^FB{w},1,0,L,0^FH\\^FD{_zpl_kacis(kart.kodu)}^FS')
@@ -432,14 +326,6 @@ def imaj_uret(kart: Kart, y: Yerlesim):
                           box_size=mag, border=0)
         q.add_data(deger); q.make(fit=False)
         img.paste(q.make_image().convert('L'), (x, yy))
-    if y.c128:
-        x, yy, mod, h = y.c128
-        for k in code128_kodla(deger):
-            for n, w in enumerate(_C128[k]):
-                w = int(w) * mod
-                if n % 2 == 0:
-                    d.rectangle([x, yy, x + w - 1, yy + h - 1], fill=0)
-                x += w
     x, yy, h, w = y.kod_yazi
     d.text((x, yy), kart.kodu, font=_pil_font(_sigdir(kart.kodu, h, w), True), fill=0)
     x, yy, h, w, satir = y.ad_yazi

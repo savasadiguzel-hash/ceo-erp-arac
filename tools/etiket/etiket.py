@@ -26,7 +26,7 @@ if KOK not in sys.path:
     sys.path.insert(0, KOK)
 
 from barkod.etiket import (  # noqa: E402,F401
-    Kart, Yerlesim, barkod_coz, barkod_degeri, code128_kodla, code128_modul_sayisi,
+    Kart, Yerlesim, barkod_coz, barkod_degeri,
     kartlari_oku, olcu_coz, png_uret, usb_yazici_bul, usb_yaziciya_gonder,
     yaziciya_gonder, yerlesim_hesapla, zpl_uret,
 )

@@ -686,7 +686,7 @@ Trigger yok. Ayrı bir belge numarası sayaç tablosu yok: `BelgeSiraNo`, seri i
 
 ## Barkod / Stok Etiketi (`tools/etiket/`, 2026-11-23, salt okuma)
 
-Alınan donanım Zebra ZD220t (ZPL, USB, 203 dpi) ve Zebra DS2278 2D okuyucudur (önceki hedef ZT231 idi). Etiketlerde QR ve Code128 birlikte kullanılır. Etiket ölçüsü henüz kesin değil, betik ölçüyü parametre olarak alır.
+Alınan donanım Zebra ZD220t (ZPL, USB, 203 dpi) ve Zebra DS2278 2D okuyucudur (önceki hedef ZT231 idi). Etiketlerde yalnızca QR kod kullanılır (2026-11-24 kararıyla çizgili Code128 barkod kaldırıldı). Etiket ölçüsü henüz kesin değil, betik ölçüyü parametre olarak alır.
 
 **Barkod içeriği = `S` + `StokKarti.Id` (6 hane)**, örneğin `S326552`. İçerik stok kodunun kendisi değil, çünkü:
 - aktif kodların 915'inde Türkçe karakter, 162'sinde boşluk var; 2 kodda kontrol karakteri (`S<0x1F>_H66488S5`), 1 kodda uzun tire (`NR 6028 – 2R2`), 3 kodda `\` var;
@@ -706,9 +706,9 @@ python tools/etiket/etiket.py --kod X --yazici <IP>                      # doğr
 python tools/etiket/etiket.py --coz S326552                              # okutulan değer → kart
 ```
 
-**Yerleşim:** Önce "yan" düzen denenir: QR solda; kod (kalın, sığması için küçültülür), ad (en fazla 3 satır), Code128 ve `S###### BİRİM` sağda. Code128 sağ sütuna sığmazsa "alt" düzene geçilir: barkod alt bantta tüm genişliğe yayılır. 70x30 ve 100x50'de yan düzen; 50x25, 40x20 ve 30x15'te (300 dpi) alt düzen kullanılır. 40x20 ve daha küçükte `S######` yazısı basılmaz, değer QR ve barkodun içinde zaten var. Code128 modülü 0,25 mm; sığmazsa 2 nokta. ZPL'de `^CI28` (UTF-8), `^FH` ile `\ ^ ~` kaçışı ve `^BC…,A` (otomatik mod) kullanılır.
+**Yerleşim (Yalnız QR — 2026-11-24):** Solda QR kod (`S######`), sağ sütunda üstte kalın/büyük stok kodu (sığması için otomatik küçültülür), ortada stok adı (en fazla 4 satır) ve en altta `S######   BİRİM` yer alır. Çizgili Code128 barkod kaldırıldığı için sağ sütundaki yazı alanı genişlemiş, küçük etiket ölçülerinde bile uyarı vermeden sığması sağlanmıştır. ZPL'de `^CI28` (UTF-8), `^FH` ile `\ ^ ~` kaçışı ve `^BQN,2,mag` kullanılır.
 
-**Henüz doğrulanmadı (yazıcı gelince):** yerleşik font 0'ın Türkçe karakterleri (`ğ ş İ ı`) basıp basmadığı. Basmazsa `--font E:TT0003M_.TTF` ya da yazıcıya yüklenecek bir Unicode font kullanılacak. `^BQ` QR'ın üst boşluk kayması da kontrol edilecek. PNG önizleme Arial Narrow ile yapılan yaklaşık bir çizimdir. Önizlemedeki Code128'i betik kendisi çizer ve bağımsız bir okuyucuyla test edilmedi. Gerçek barkodu yazıcı kendisi kodlar.
+**Henüz doğrulanmadı (yazıcı gelince):** yerleşik font 0'ın Türkçe karakterleri (`ğ ş İ ı`) basıp basmadığı. Basmazsa `--font E:TT0003M_.TTF` ya da yazıcıya yüklenecek bir Unicode font kullanılacak. `^BQ` QR'ın üst boşluk kayması da kontrol edilecek. PNG önizleme Arial Narrow ile yapılan yaklaşık bir çizimdir.
 
 **SİPARİŞ EDİLDİ (2026-11-23):** ZT231 yerine aşağıdaki set alındı:
 - **Yazıcı:** Zebra ZD220t: termal transfer, 203 dpi, yerel ZPL, **yalnızca USB** (Ethernet yok).
@@ -720,7 +720,7 @@ python tools/etiket/etiket.py --coz S326552                              # okutu
 - **Etiket kukası:** ZD220t 12,7 ve 25,4 mm kuka alır. 38 mm ve üstü kukalar sorunlu olabilir; satıcıya sorulacak.
 - **USB yazdırma:** EKLENDİ (2026-11-24): `etiket.py --usb [yazıcı adı]` ZPL'i Windows kuyruğuna RAW gönderir (`win32print`). Ad verilmezse adında Zebra/ZD/ZDesigner geçen yazıcı seçilir. Yazıcı gelince denenecek.
 - **DS2278:** 123Scan ile Türkçe Q klavye ayarı yapılıp `S######` okuma testi yapılacak (iade süresi içinde).
-- Varsayılan ölçü 70x30 / 203 dpi'dir (yan düzen: QR + Code128 sağ sütunda).
+- Varsayılan ölçü 70x30 / 203 dpi'dir (solda QR, sağda kod + ad + birim).
 
 **Aday sarf malzemesi:**
 - **Etiket:** Labelika 70×30 kuşe (ribonsepeti.com), akrilik yapışkan, 40 mm kuka, ruloda 1.500 adet, en az 14 rulo, 138 ₺ + KDV. Fiyatın birimi (rulo mu) teyit edilecek. Termal transfer, ribon gerekiyor. ZT231'e uygun: kuka 25–76 mm, basılabilir en fazla genişlik 104 mm, rulo dış çapı en fazla 203 mm.
@@ -730,7 +730,7 @@ python tools/etiket/etiket.py --coz S326552                              # okutu
 
 **Alınacak kararlar:**
 - **Donanım:** yazıcı 203 mi 300 dpi mı (30x15 gibi küçük etiket gerekiyorsa 300); 2D okuyucu kablolu mu kablosuz mu, Türkçe Q klavye ayarı var mı; tek etiket ölçüsü mü, küçük parçalar için ikinci bir ölçü de mi; kuşe mi PP mi; wax mı wax-resin mi.
-- **Etiket içeriği:** şu an QR, Code128, kod, ad ve birim var. Proje, depo veya tarih gibi alanlar eklenecek mi?
+- **Etiket içeriği:** şu an QR, kod, ad ve birim var. Proje, depo veya tarih gibi alanlar eklenecek mi?
 - **Süreç:** kapsam (bakiyeli 2.970 kart mı, hareket görmüş tüm kartlar mı); yeni stok girişinde etiketi kim ve ne zaman basacak; etiket nereye yapışacak (parça, kutu/poşet, raf); raf/lokasyon etiketi olacak mı.
 - **Program:** okut-gör ve sayım modu ekranları; ayrı program mı, yeni sekme mi; ERP'ye yazma (Barkod1, depo hareketleri) ileride düşünülecek mi.
 

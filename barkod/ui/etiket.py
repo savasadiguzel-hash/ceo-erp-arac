@@ -6,7 +6,7 @@ CEO ERP'den YALNIZCA OKUR.
   - Reçeteden Getir: mamül reçetesindeki fiziksel parçaları (isteğe bağlı tüm alt seviyeler) listeye ekleme.
   - Barkod okutarak veya stok kodu yazarak listeye kart ekleme / etiket adedini artırma.
   - Kod/ad arama filtresi, görünenleri seçme/kaldırma, kopya adedi düzenleme.
-  - Seçili satır için gerçek oranlı canlı PNG önizleme (QR + Code128 + kod/ad/birim).
+  - Seçili satır için gerçek oranlı canlı PNG önizleme (QR + kod/ad/birim).
   - Windows USB RAW yazdırma (`win32print`, Zebra ZD220t), tekli test baskısı ve ZPL dosyası kaydetme.
 """
 from __future__ import annotations
@@ -87,15 +87,9 @@ def _onizleme_ciz(kart: Kart | None, olcu_metni: str, dpi: int,
     hedef_lbl.setText('')
     hedef_lbl.setPixmap(pix.scaled(max_gen, max_yuk, Qt.KeepAspectRatio, Qt.SmoothTransformation))
 
-    bilesenler = []
-    if y.qr:
-        bilesenler.append('QR')
-    if y.c128:
-        bilesenler.append('Code128')
-    duzen_adi = 'Yan düzen' if y.duzen == 'yan' else 'Alt düzen'
-    satir1 = (f'<b>{kart.kodu}</b> · Barkod: <b>{barkod_degeri(kart.id)}</b><br>'
+    satir1 = (f'<b>{kart.kodu}</b> · QR: <b>{barkod_degeri(kart.id)}</b><br>'
               f'<span style="color:#555">{gen:g}×{yuk:g} mm · {dpi} dpi ({y.gen}×{y.yuk} nokta) · '
-              f'{duzen_adi} · {" + ".join(bilesenler) or "Yalnız yazı"}</span>')
+              f'{"QR + Yazı" if y.qr else "Yalnız yazı"}</span>')
     if y.uyarilar:
         uy = '<br>'.join(f'⚠ {u}' for u in y.uyarilar)
         satir1 += f'<br><span style="color:#c62828">{uy}</span>'
