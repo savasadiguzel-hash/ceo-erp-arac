@@ -14,7 +14,7 @@ from pathlib import Path
 from PyQt5.QtCore import Qt, QThread, QTimer, pyqtSignal
 from PyQt5.QtGui import QColor, QFont
 from PyQt5.QtWidgets import (
-    QAbstractItemView, QApplication, QButtonGroup, QCheckBox, QComboBox, QFileDialog,
+    QAbstractItemView, QApplication, QButtonGroup, QCheckBox, QComboBox, QDialog, QFileDialog,
     QGroupBox, QHBoxLayout, QHeaderView, QInputDialog, QLabel, QLineEdit, QMainWindow,
     QMessageBox, QPushButton, QSplitter, QStackedWidget, QStatusBar, QTableWidget,
     QTableWidgetItem, QVBoxLayout, QWidget,
@@ -409,6 +409,132 @@ class SayimSayfasi(QWidget):
                           f'{sum(s["miktar"] for s in satirlar):g} adet')
 
 
+# ───────────────────────── hakkında ─────────────────────────
+class HakkindaDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        from barkod import FIRMA, GELISTIRICI, SURUM, logo_yolu
+        self.setWindowTitle('Hakkında — CEO Barkod')
+        self.setFixedWidth(460)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(24, 20, 24, 18)
+        lay.setSpacing(10)
+        if logo_yolu():
+            from PyQt5.QtGui import QPixmap
+            lg = QLabel(); lg.setAlignment(Qt.AlignCenter)
+            lg.setPixmap(QPixmap(str(logo_yolu())).scaledToWidth(260, Qt.SmoothTransformation))
+            lg.setStyleSheet('background:white;border:1px solid #c5cae9;border-radius:8px;padding:10px;')
+            lay.addWidget(lg)
+        baslik = QLabel('CEO Barkod')
+        baslik.setStyleSheet('font-size:22px;font-weight:bold;color:#1a237e;')
+        lay.addWidget(baslik)
+        surum = QLabel(f'Sürüm {SURUM}')
+        surum.setStyleSheet('color:#9e9e9e;font-size:11px;')
+        lay.addWidget(surum)
+        metin = QLabel(
+            'Depo sorgulama, sayım, giriş / çıkış / transfer fişleri, etiket basımı ve '
+            'reçeteye parça ekleme işlemlerini barkodla yapmak için geliştirilmiştir.<br><br>'
+            f'<b>Firma:</b> {FIRMA}<br>'
+            f'<b>Geliştirici:</b> {GELISTIRICI}<br><br>'
+            f'© 2026 {FIRMA} Tüm hakları saklıdır.')
+        metin.setTextFormat(Qt.RichText); metin.setWordWrap(True)
+        metin.setStyleSheet('color:#37474f;font-size:12px;')
+        lay.addWidget(metin)
+        kapat = QPushButton('Kapat'); kapat.clicked.connect(self.accept)
+        lay.addWidget(kapat, 0, Qt.AlignRight)
+
+
+# ───────────────────────── yetki yönetimi ─────────────────────────
+class YetkiDialog(QDialog):
+    def __init__(self, parent, kullanicilar: list[tuple[str, str]]):
+        super().__init__(parent)
+        from barkod import yetki
+        self._y = yetki
+        self.setWindowTitle('Kullanıcı yetkileri')
+        self.resize(760, 520)
+        self._veri, hata = yetki.oku()
+        self._kul = kullanicilar
+        lay = QVBoxLayout(self)
+        lay.addWidget(QLabel('Giriş / Çıkış / Transfer / Reçete yetkisi verilen kullanıcıdan şifre istenir. '
+                             'Sorgula, Sayım ve Etiket herkese açıktır.'))
+        self.sutun = ['Kullanıcı'] + [ad for _, ad in yetki.EK_YETKILER] + ['Yönetici', 'Şifre']
+        self.tablo = QTableWidget(len(kullanicilar), len(self.sutun))
+        self.tablo.setHorizontalHeaderLabels(self.sutun)
+        self.tablo.verticalHeader().setVisible(False)
+        self.tablo.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.tablo.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.tablo.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
+        self.tablo.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        self._yeni_sifre: dict[str, str] = {}      # guid → yeni özet
+        n = len(yetki.EK_YETKILER)
+        for r, (g, ad) in enumerate(kullanicilar):
+            k = yetki.kayit(self._veri, g) or {}
+            it = QTableWidgetItem(ad); it.setData(Qt.UserRole, g); self.tablo.setItem(r, 0, it)
+            for c, (anahtar, _) in enumerate(yetki.EK_YETKILER, 1):
+                self.tablo.setItem(r, c, self._kutu(anahtar in (k.get('yetki') or [])))
+            self.tablo.setItem(r, n + 1, self._kutu(bool(k.get('yonetici'))))
+            self.tablo.setItem(r, n + 2, QTableWidgetItem('var' if k.get('sifre') else '—'))
+        lay.addWidget(self.tablo, 1)
+        alt = QHBoxLayout()
+        b_sifre = QPushButton('Seçiliye şifre belirle'); b_sifre.clicked.connect(self._sifre_belirle)
+        b_kaydet = QPushButton('Kaydet'); b_kaydet.clicked.connect(self._kaydet)
+        b_iptal = QPushButton('Kapat'); b_iptal.clicked.connect(self.reject)
+        alt.addWidget(b_sifre); alt.addStretch(); alt.addWidget(b_kaydet); alt.addWidget(b_iptal)
+        lay.addLayout(alt)
+        if hata:
+            lay.addWidget(QLabel(hata))
+
+    @staticmethod
+    def _kutu(isaretli: bool) -> QTableWidgetItem:
+        it = QTableWidgetItem()
+        it.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled)
+        it.setCheckState(Qt.Checked if isaretli else Qt.Unchecked)
+        return it
+
+    def _sifre_belirle(self):
+        r = self.tablo.currentRow()
+        if r < 0:
+            QMessageBox.information(self, 'Şifre', 'Önce bir kullanıcı satırı seçin.'); return
+        g = self.tablo.item(r, 0).data(Qt.UserRole)
+        s1, ok = QInputDialog.getText(self, 'Şifre', f'{self.tablo.item(r, 0).text()} için yeni şifre:',
+                                      QLineEdit.Password)
+        if not ok or not s1:
+            return
+        s2, ok = QInputDialog.getText(self, 'Şifre', 'Şifreyi tekrar girin:', QLineEdit.Password)
+        if not ok or s1 != s2:
+            QMessageBox.warning(self, 'Şifre', 'Şifreler uyuşmadı; değişmedi.'); return
+        self._yeni_sifre[g] = self._y.sifre_ozeti(s1)
+        self.tablo.item(r, len(self.sutun) - 1).setText('yeni (kaydedilince geçerli)')
+
+    def _kaydet(self):
+        y = self._y
+        veri, _ = y.oku()                      # başkası araya yazdıysa üstüne binmesin
+        kayitlar = veri.setdefault('kullanicilar', {})
+        n = len(y.EK_YETKILER)
+        for r, (g, ad) in enumerate(self._kul):
+            secilen = [a for c, (a, _) in enumerate(y.EK_YETKILER, 1)
+                       if self.tablo.item(r, c).checkState() == Qt.Checked]
+            yon = self.tablo.item(r, n + 1).checkState() == Qt.Checked
+            eski = dict(y.kayit(veri, g) or {})
+            ozet = self._yeni_sifre.get(g) or eski.get('sifre')
+            if (secilen or yon) and not ozet:
+                QMessageBox.warning(self, 'Yetki', f'{ad}: yetki verilen kullanıcıya şifre belirleyin.')
+                return
+            kayitlar.pop(g, None); kayitlar.pop(g.upper(), None)
+            if secilen or yon:
+                kayitlar[g.upper()] = {'ad': ad, 'yetki': secilen, 'yonetici': yon, 'sifre': ozet}
+        if not any(v.get('yonetici') for v in kayitlar.values()):
+            QMessageBox.warning(self, 'Yetki', 'En az bir yönetici kalmalı; kaydedilmedi.')
+            return
+        try:
+            y.yaz(veri)
+        except Exception as e:
+            QMessageBox.critical(self, 'Yetki', f'Yazılamadı:\n{type(e).__name__}: {e}')
+            return
+        QMessageBox.information(self, 'Yetki', 'Kaydedildi.')
+        self.accept()
+
+
 # ───────────────────────── ana pencere ─────────────────────────
 class BarkodPencere(QMainWindow):
     MODLAR = [('Sorgula', True), ('Sayım', True), ('Giriş', True), ('Çıkış', True),
@@ -423,6 +549,10 @@ class BarkodPencere(QMainWindow):
         self.depo_adlari: dict = {}
         self._t = None
         self._kart_cache: dict[int, dict] = {}
+        self._yetki_veri: dict = {'kullanicilar': {}}
+        self._aktif_yetki: set[str] = set()
+        self._yonetici = False
+        self._onceki_kullanici = 0
         self.setWindowTitle('CEO Barkod')
         self.resize(1180, 820)
         self.setStyleSheet(_STIL)
@@ -431,6 +561,15 @@ class BarkodPencere(QMainWindow):
         lay.setContentsMargins(12, 10, 12, 10)
 
         ust = QHBoxLayout()
+        from barkod import FIRMA, logo_yolu
+        self.setWindowTitle(f'CEO Barkod — {FIRMA}')
+        if logo_yolu():
+            from PyQt5.QtGui import QIcon, QPixmap
+            self.setWindowIcon(QIcon(str(logo_yolu())))
+            px = QPixmap(str(logo_yolu())).scaledToHeight(34, Qt.SmoothTransformation)
+            lg = QLabel(); lg.setPixmap(px); lg.setToolTip(FIRMA)
+            lg.setStyleSheet('background:white;border:1px solid #c5cae9;border-radius:6px;padding:3px 8px;')
+            ust.addWidget(lg)
         self.grup = QButtonGroup(self); self.grup.setExclusive(True)
         for i, (ad, acik) in enumerate(self.MODLAR):
             b = QPushButton(ad); b.setCheckable(True); b.setEnabled(acik); b.setFocusPolicy(Qt.NoFocus)
@@ -445,14 +584,26 @@ class BarkodPencere(QMainWindow):
         self.kullanici = QComboBox(); self.kullanici.setMinimumWidth(190); self.kullanici.setFocusPolicy(Qt.ClickFocus)
         self.kullanici.currentIndexChanged.connect(self._kullanici_secildi)
         ust.addWidget(self.kullanici)
+        self.b_yetki = QPushButton('Yetkiler…'); self.b_yetki.setFocusPolicy(Qt.NoFocus)
+        self.b_yetki.clicked.connect(self._yetki_duzenle); self.b_yetki.setVisible(False)
+        ust.addWidget(self.b_yetki)
         self.bag = QLabel('Bağlanıyor…'); self.bag.setStyleSheet('color:#757575;')
         ust.addWidget(self.bag)
+        b_hak = QPushButton('Hakkında'); b_hak.setFocusPolicy(Qt.NoFocus)
+        b_hak.clicked.connect(lambda: HakkindaDialog(self).exec_())
+        ust.addWidget(b_hak)
         lay.addLayout(ust)
 
         self.okut = QLineEdit()
         self.okut.setPlaceholderText('Barkodu okutun (ya da stok kodunu yazıp Enter)')
         self.okut.setStyleSheet(_OKUT_NORMAL)
         self.okut.returnPressed.connect(self._okutuldu)
+        # Okuyucu sonuna Enter göndermiyorsa: S###### biçimi yazıldıktan 150 ms sonra otomatik gönder
+        self._oto_enter = QTimer(self)
+        self._oto_enter.setSingleShot(True)
+        self._oto_enter.setInterval(150)
+        self._oto_enter.timeout.connect(self._oto_enter_tetikle)
+        self.okut.textChanged.connect(lambda _t: self._oto_enter.start())
         self.okut.setEnabled(False)
         lay.addWidget(self.okut)
 
@@ -498,21 +649,72 @@ class BarkodPencere(QMainWindow):
         self.etiket.depolari_doldur(self.depo_adlari)
         self.recete.mamulleri_yukle()
         from barkod.ayar import ayar_oku, kullanicilar
+        from barkod import yetki
         secili = ayar_oku().get('kullanici_guid')
         self.kullanici.blockSignals(True)
         self.kullanici.addItem('— seçin —', None)
         for g, ad in kullanicilar(conn):
             self.kullanici.addItem(ad, g)
-        if secili:
+        self._yetki_veri, yetki_hata = yetki.oku()
+        # Yetkili/yönetici kullanıcı açılışta otomatik seçilmez (şifre her seferinde sorulur)
+        if secili and not yetki.yukseltilmis_mi(yetki.kayit(self._yetki_veri, secili)):
             self.kullanici.setCurrentIndex(max(0, self.kullanici.findData(secili)))
         self.kullanici.blockSignals(False)
+        self._onceki_kullanici = self.kullanici.currentIndex()
+        self._yetkileri_uygula(set(yetki.VARSAYILAN), False)
+        if yetki_hata:
+            self._durum(yetki_hata)
         self.bag.setText('<span style="color:#2e7d32">● CEO bağlı</span>')
         self.okut.setEnabled(True); self.okut.setFocus()
 
     # ── ortak ──
-    def _kullanici_secildi(self, _):
+    def _kullanici_secildi(self, idx):
+        from barkod import yetki
         from barkod.ayar import ayar_yaz
-        ayar_yaz(kullanici_guid=self.kullanici.currentData())
+        guid = self.kullanici.currentData()
+        self._yetki_veri, yetki_hata = yetki.oku()      # her seçimde taze oku
+        k = yetki.kayit(self._yetki_veri, guid)
+        dogrulandi = False
+        if guid and yetki.sifre_gerekli(k):
+            sifre, tamam = QInputDialog.getText(self, 'Yetkili kullanıcı',
+                                                f'{self.kullanici.currentText()} için şifre:',
+                                                QLineEdit.Password)
+            if not tamam or not k.get('sifre') or not yetki.sifre_dogru(sifre, k['sifre']):
+                if tamam:
+                    QMessageBox.warning(self, 'Yetkili kullanıcı', 'Şifre yanlış.')
+                self.kullanici.blockSignals(True)
+                self.kullanici.setCurrentIndex(self._onceki_kullanici)
+                self.kullanici.blockSignals(False)
+                self._durum('Şifre doğrulanmadı; kullanıcı değişmedi.')
+                return
+            dogrulandi = True
+        self._onceki_kullanici = idx
+        self._yetkileri_uygula(yetki.yetkiler(k, dogrulandi), yetki.yonetici_mi(k, dogrulandi))
+        if yetki_hata:
+            self._durum(yetki_hata)
+        # yetkili kullanıcı sonraki açılışta otomatik seçilmesin
+        ayar_yaz(kullanici_guid=None if yetki.yukseltilmis_mi(k) else guid)
+
+    def _yetkileri_uygula(self, yetkiler: set, yonetici: bool):
+        from barkod.yetki import MOD_ANAHTAR
+        self._aktif_yetki = set(yetkiler)
+        self._yonetici = yonetici
+        self.b_yetki.setVisible(yonetici)
+        for i, anahtar in MOD_ANAHTAR.items():
+            b = self.grup.button(i)
+            izin = anahtar in self._aktif_yetki
+            b.setEnabled(izin)
+            b.setToolTip('' if izin else 'Bu sekme için yetkiniz yok')
+        if MOD_ANAHTAR[self.grup.checkedId()] not in self._aktif_yetki:
+            self.grup.button(0).setChecked(True)
+            self._mod_degisti(0)
+
+    def _yetki_duzenle(self):
+        if not self._yonetici:
+            return
+        kul = [(self.kullanici.itemData(i), self.kullanici.itemText(i))
+               for i in range(self.kullanici.count()) if self.kullanici.itemData(i)]
+        YetkiDialog(self, kul).exec_()
 
     def kullanici_guid(self):
         return self.kullanici.currentData()
@@ -538,12 +740,21 @@ class BarkodPencere(QMainWindow):
         self.okut.setFocus()
 
     # ── okutma ──
+    def _oto_enter_tetikle(self):
+        from barkod.kod import barkod_coz
+        d = self.okut.text().strip()
+        if len(d) >= 7 and barkod_coz(d) is not None:
+            self._okutuldu()
+
     def _okutuldu(self):
         deger = self.okut.text().strip()
         self.okut.clear()
         if not deger or not self.conn:
             return
         mod = self.grup.checkedId()
+        from barkod.yetki import MOD_ANAHTAR
+        if MOD_ANAHTAR.get(mod) not in self._aktif_yetki:
+            self._durum('Bu sekme için yetkiniz yok.'); return
         if mod == 0:
             if self._t and self._t.isRunning():
                 self._durum('Önceki sorgu sürüyor…'); return

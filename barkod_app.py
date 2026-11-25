@@ -12,8 +12,11 @@ from PyQt5.QtWidgets import QApplication
 
 
 def main():
-    logging.basicConfig(filename='barkod.log', level=logging.INFO,
-                        format='%(asctime)s %(levelname)s %(message)s')
+    # Log kullanıcı veri klasörüne yazılır (kurulu exe Program Files'a yazamaz)
+    from config import CONFIG_PATH
+    logging.basicConfig(filename=str(CONFIG_PATH.parent / 'barkod.log'), level=logging.INFO,
+                        format='%(asctime)s %(levelname)s %(message)s',
+                        force=True)   # config.py import sırasında log yazarsa kök logger önceden kurulmuş olur
     app = QApplication(sys.argv)
     app.setStyle('Fusion')
     from barkod.ui.ana_pencere import BarkodPencere

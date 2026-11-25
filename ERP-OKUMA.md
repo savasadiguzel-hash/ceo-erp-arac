@@ -323,6 +323,18 @@ yapıldığından (varsayılan Inno Setup davranışı), normal kullanıcı bu k
 
 ---
 
+## CEO Barkod (ayrı program — `barkod_app.py` + `barkod/`)
+
+ERP Araçları'ndan bağımsız; yalnız `config.py` ve `db/` ortak. Modlar: Sorgula, Sayım, Giriş/Çıkış/Transfer fişi, Etiket, Reçeteye ekle.
+
+- **Barkod içeriği:** `S` + StokKarti.Id (6 hane). Okuyucu Enter göndermezse `S######` yazılınca 150 ms sonra otomatik gönderilir.
+- **Yetki (`barkod/yetki.py`):** Giriş/Çıkış/Transfer/Reçete sekmeleri yalnız yetkili kullanıcıda açık (diğerlerinde soluk). Sorgula/Sayım/Etiket herkese açık. Yetkili kullanıcı şifre ile doğrulanır (PBKDF2 özeti). Dosya okunamazsa **en kısıtlı mod**. Yönetici "Yetkiler…" penceresinden yetki/şifre verir. Arayüz kilididir, DB güvenliği değildir.
+- **Yetki dosyası:** `barkod_yetki.json` — `config.json`'da `barkod_yetki_yolu` varsa orası, yoksa varsayılan `\\WIN-3FATBI9RQAA\ceo`. Dosya git'e girmez.
+- **Log:** `barkod.log` kullanıcı veri klasöründe (`%LOCALAPPDATA%\CEO ERP Araclar`), `force=True` ile kurulur (config.py import'ta log yazarsa kök logger önceden kurulur).
+- **Marka:** logo `assets/logo.jpeg` (exe'ye gömülü), simge `assets/barkod.ico`, "Hakkında" penceresi; `SURUM/FIRMA/GELISTIRICI` sabitleri `barkod/__init__.py`'de.
+- **Derleme:** `build_barkod.bat` → `dist/CEO-Barkod.exe`; kurulum: `create_installer_barkod.bat` (`setup_barkod.iss`, Inno Setup) → `dist/CEO-Barkod-Kurulum.exe`. Paylaşım kopyası: `\\192.168.1.156\fileserver\ORTAKALAN\Barkod_Soft`.
+- **Açık iş:** Zebra ZD220t gerçek baskı/kalibrasyon testi (etiketler 26.11.2026'da gelecek); test sonrası son derleme + paket + paylaşıma yeniden kopya.
+
 ## Klasör Yapısı
 
 ```
