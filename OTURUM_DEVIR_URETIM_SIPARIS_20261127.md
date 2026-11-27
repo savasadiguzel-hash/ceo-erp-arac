@@ -63,4 +63,17 @@ Fatma Hanım 23.11 listesini (`tarih ≤ 06.06.2026`) girince `muhasebe_kontrol.
 - `ŞİRKET.2082026-1` (`GMP-101-230107 ×45`, `#2053` TEZ İLERİ ×36): Faturası kesildiğinde kapatılacak *(kapatmadan önce `230107` iki kat reçete düzeltmesi yapılmalı)*.
 
 ### 4. Satıştan Teyit Bekleyen Eski 2026 Siparişleri
-- `#1964` Extra Otomasyon (10.06 — `HAV-HPB0001 ×115`, `230085 ×60`, `230111 ×3`), `#1974` Emergen (25.06 — `230063 ×58`), `#2040` Fatih Emirdağ (20.10 — `230093 ×50`, FAEM faturasıyla aynıysa kapatılmamış olabilir) hâlâ geçerli mi teyit edilecek.
+- `#1964` Extra Otomasyon (10.06 — `HAV-HPB0001 ×115`, `230085 ×60`, `230111 ×3`), `#1974` Emergen (25.06 — `230063 ×58`), `#2040` Fatih Emirdağ (20.10 — `230093 ×50`, FAEM faturasıyla aynıysa kapatılmamış olabilir) hâlâ geçerli mi teyit edilecek — kalite birimi satış ekibinden 2026 açık siparişlerinin temizlenmesini resmen istedi.
+
+---
+
+## 3. Netleşen 2027 Üretim / Satış / Fason İş Akışı (27.11.2026 Kalite Mailleri)
+
+Kalite birimiyle yüz yüze görüşme sonrası netleşen şirket içi akış:
+1. **Satış Sorumlusu:** 2026 açık satış siparişlerini gözden geçirip kapatılması gerekenleri kapatacak. Bundan sonra tüm satış siparişleri **ürün kodu, aksesuar kodu** içerecek şekilde CEO ERP'de açılacak (özel hususlar ayrıca maille bildirilecek). Üretimler yalnızca açılan satış siparişleri üzerinden yürüyecek.
+2. **Savaş Bey:** Açılan satış siparişlerini zamanında (geriye dönük değil) **üretim emrine** çevirecek; stok durumunu belirleyip **malzeme ihtiyaç taleplerini** açacak; seri üretim ürünlerde dış kaynakta (fasonda) ürettirilecek adetli listeyi **Muhammet Bey** ve **Nur Sema Hanım**'a yazılı (mail) iletecek.
+3. **Nur Sema Hanım:** Açılan malzeme taleplerine göre satınalma siparişlerini temin edecek.
+4. **Muhammet Bey:** Fason üretimlerin CEO ERP üzerinden işlenmesi ve yarı mamul stoğunun oluşturulmasını yönetecek.
+5. **Savaş Bey:** Fiziksel üretim tamamlandığında üretim emrini kapatıp ilgili satış sorumlusuna ve muhasebeye bilgi verecek.
+
+*(İleride öneri: `CEO ERP Araçları`'na salt-okuma "Açık Satış Siparişleri" görünümü eklenebilir.)*
