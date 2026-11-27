@@ -31,3 +31,7 @@ Kullanıcı komutu olmadan yapılmaz:
 - `git push`
 - `build.bat` (exe derleme)
 - `python main.py` (uygulama testi)
+
+## Mail Cevapları
+
+- Mail cevap taslaklarını alıntı çizgisi (`>`), ayırıcı çizgi (`---`) ve markdown biçimlendirmesi (`**`, `` ` ``) olmadan, doğrudan kopyalanıp maile yapıştırılabilecek düz metin olarak ver.
